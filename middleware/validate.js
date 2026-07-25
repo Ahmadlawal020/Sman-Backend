@@ -16,7 +16,9 @@ const validate =
         req.body = schemas.body.parse(req.body);
       }
       if (schemas.query) {
-        req.query = schemas.query.parse(req.query);
+        // Express 5 exposes req.query as a read-only getter, so it cannot be
+        // reassigned. Mutate the existing object in place instead.
+        Object.assign(req.query, schemas.query.parse(req.query));
       }
       if (schemas.params) {
         req.params = schemas.params.parse(req.params);
