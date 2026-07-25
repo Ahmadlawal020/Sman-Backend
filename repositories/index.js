@@ -1,0 +1,17 @@
+module.exports = {
+  adminRepo: require("./admin.repository"),
+  customerRepo: require("./customer.repository"),
+  truckRepo: require("./truck.repository"),
+  driverRepo: require("./driver.repository"),
+  depotRepo: require("./depot.repository"),
+  productRepo: require("./product.repository"),
+  pfiRepo: require("./pfi.repository"),
+  orderRepo: require("./order.repository"),
+  ticketRepo: require("./ticket.repository"),
+  depositRepo: require("./deposit.repository"),
+  deliveryCustomerRepo: require("./deliveryCustomer.repository"),
+  deliveryNoteRepo: require("./deliveryNote.repository"),
+  deliveryInventoryRepo: require("./deliveryInventory.repository"),
+  deliverySaleRepo: require("./deliverySale.repository"),
+  webhookEventRepo: require("./webhookEvent.repository"),
+};

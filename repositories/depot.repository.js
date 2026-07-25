@@ -1,0 +1,336 @@
+const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { db } = require("../config/db");
+const {
+  depots,
+  depotStaff,
+  depotProductCapacities,
+  depotProductPrices,
+  depotPriceHistory,
+  products,
+  admins,
+} = require("../db/schema");
+
+const findById = async (id) => {
+  const [row] = await db.select().from(depots).where(eq(depots.id, id)).limit(1);
+  return row || null;
+};
+
+const findByCode = async (code) => {
+  const [row] = await db
+    .select()
+    .from(depots)
+    .where(eq(depots.code, code))
+    .limit(1);
+  return row || null;
+};
+
+const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = [];
+
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(depots.name, pattern),
+        ilike(depots.code, pattern),
+        ilike(depots.city, pattern),
+        ilike(depots.state, pattern)
+      )
+    );
+  }
+
+  if (status && status !== "all") {
+    conditions.push(eq(depots.status, status));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(depots)
+      .where(whereClause)
+      .orderBy(desc(depots.createdAt))
+      .limit(limitNum)
+      .offset(offset),
+    db
+      .select({ total: count() })
+      .from(depots)
+      .where(whereClause),
+  ]);
+
+  return {
+    depots: rows,
+    pagination: {
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+    },
+  };
+};
+
+const create = async (data) => {
+  const [row] = await db.insert(depots).values(data).returning();
+  return row;
+};
+
+const update = async (id, data) => {
+  const [row] = await db
+    .update(depots)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(depots.id, id))
+    .returning();
+  return row || null;
+};
+
+const deleteById = async (id) => {
+  const [row] = await db.delete(depots).where(eq(depots.id, id)).returning();
+  return row || null;
+};
+
+// ─── Staff ───────────────────────────────────────────────────────────────────
+
+const getStaff = async (depotId) => {
+  const numericDepotId = parseInt(depotId, 10) || depotId;
+  const rows = await db
+    .select({
+      id: depotStaff.id,
+      adminId: depotStaff.adminId,
+      firstName: admins.firstName,
+      surname: admins.surname,
+      email: admins.email,
+    })
+    .from(depotStaff)
+    .leftJoin(admins, eq(depotStaff.adminId, admins.id))
+    .where(eq(depotStaff.depotId, numericDepotId));
+
+  return rows.map((r) => ({
+    ...r,
+    _id: String(r.adminId),
+  }));
+};
+
+const setStaff = async (depotId, adminIds) => {
+  const numericDepotId = parseInt(depotId, 10) || depotId;
+  await db.delete(depotStaff).where(eq(depotStaff.depotId, numericDepotId));
+  if (adminIds && adminIds.length > 0) {
+    await db
+      .insert(depotStaff)
+      .values(adminIds.map((adminId) => ({ depotId: numericDepotId, adminId: parseInt(adminId, 10) || adminId })));
+  }
+};
+
+// ─── Product Capacities ──────────────────────────────────────────────────────
+
+const getProductCapacities = async (depotId) => {
+  const numericDepotId = parseInt(depotId, 10) || depotId;
+  const rows = await db
+    .select({
+      id: depotProductCapacities.id,
+      productId: depotProductCapacities.productId,
+      capacity: depotProductCapacities.capacity,
+      productName: products.name,
+      productSku: products.sku,
+      productCategory: products.category,
+    })
+    .from(depotProductCapacities)
+    .leftJoin(products, eq(depotProductCapacities.productId, products.id))
+    .where(eq(depotProductCapacities.depotId, numericDepotId));
+
+  return rows.map((r) => ({
+    id: r.id,
+    productId: r.productId,
+    capacity: r.capacity,
+    productName: r.productName,
+    productSku: r.productSku,
+    productCategory: r.productCategory,
+    product: {
+      _id: String(r.productId),
+      id: String(r.productId),
+      name: r.productName || "Unknown Product",
+      sku: r.productSku || "",
+      category: r.productCategory || "",
+    },
+  }));
+};
+
+const upsertProductCapacity = async (depotId, productId, capacity) => {
+  const numericProductId = parseInt(productId, 10) || productId;
+  const [existing] = await db
+    .select()
+    .from(depotProductCapacities)
+    .where(
+      and(
+        eq(depotProductCapacities.depotId, depotId),
+        eq(depotProductCapacities.productId, numericProductId)
+      )
+    )
+    .limit(1);
+
+  if (existing) {
+    const [row] = await db
+      .update(depotProductCapacities)
+      .set({ capacity, updatedAt: new Date() })
+      .where(eq(depotProductCapacities.id, existing.id))
+      .returning();
+    return row;
+  }
+
+  const [row] = await db
+    .insert(depotProductCapacities)
+    .values({ depotId, productId: numericProductId, capacity })
+    .returning();
+  return row;
+};
+
+const decrementProductCapacity = async (depotId, productId, amount) => {
+  const numericProductId = parseInt(productId, 10) || productId;
+  const [row] = await db
+    .update(depotProductCapacities)
+    .set({
+      capacity: sql`${depotProductCapacities.capacity} - ${amount}`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(depotProductCapacities.depotId, depotId),
+        eq(depotProductCapacities.productId, numericProductId)
+      )
+    )
+    .returning();
+  return row || null;
+};
+
+const incrementProductCapacity = async (depotId, productId, amount) => {
+  const numericProductId = parseInt(productId, 10) || productId;
+  const [row] = await db
+    .update(depotProductCapacities)
+    .set({
+      capacity: sql`${depotProductCapacities.capacity} + ${amount}`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(depotProductCapacities.depotId, depotId),
+        eq(depotProductCapacities.productId, numericProductId)
+      )
+    )
+    .returning();
+  return row || null;
+};
+
+// ─── Product Prices ──────────────────────────────────────────────────────────
+
+const getProductPrices = async (depotId) => {
+  const rows = await db
+    .select({
+      id: depotProductPrices.id,
+      productId: depotProductPrices.productId,
+      currentPrice: depotProductPrices.currentPrice,
+      productName: products.name,
+      productSku: products.sku,
+      productCategory: products.category,
+    })
+    .from(depotProductPrices)
+    .leftJoin(products, eq(depotProductPrices.productId, products.id))
+    .where(eq(depotProductPrices.depotId, depotId));
+
+  return rows.map((r) => ({
+    id: r.id,
+    productId: r.productId,
+    currentPrice: parseFloat(r.currentPrice),
+    productName: r.productName,
+    productSku: r.productSku,
+    productCategory: r.productCategory,
+    product: {
+      _id: String(r.productId),
+      id: String(r.productId),
+      name: r.productName || "Unknown Product",
+      sku: r.productSku || "",
+      category: r.productCategory || "",
+    },
+  }));
+};
+
+const getProductPrice = async (depotId, productId) => {
+  const [row] = await db
+    .select()
+    .from(depotProductPrices)
+    .where(
+      and(
+        eq(depotProductPrices.depotId, depotId),
+        eq(depotProductPrices.productId, productId)
+      )
+    )
+    .limit(1);
+  return row || null;
+};
+
+const upsertProductPrice = async (depotId, productId, price) => {
+  const [existing] = await db
+    .select()
+    .from(depotProductPrices)
+    .where(
+      and(
+        eq(depotProductPrices.depotId, depotId),
+        eq(depotProductPrices.productId, productId)
+      )
+    )
+    .limit(1);
+
+  if (existing) {
+    const [row] = await db
+      .update(depotProductPrices)
+      .set({ currentPrice: price, updatedAt: new Date() })
+      .where(eq(depotProductPrices.id, existing.id))
+      .returning();
+    // Add price history
+    await db.insert(depotPriceHistory).values({
+      depotProductPriceId: existing.id,
+      price,
+    });
+    return row;
+  }
+
+  const [row] = await db
+    .insert(depotProductPrices)
+    .values({ depotId, productId, currentPrice: price })
+    .returning();
+  // Add price history
+  await db.insert(depotPriceHistory).values({
+    depotProductPriceId: row.id,
+    price,
+  });
+  return row;
+};
+
+const getPriceHistory = async (depotProductPriceId) => {
+  return db
+    .select()
+    .from(depotPriceHistory)
+    .where(eq(depotPriceHistory.depotProductPriceId, depotProductPriceId))
+    .orderBy(desc(depotPriceHistory.setAt));
+};
+
+module.exports = {
+  findById,
+  findByCode,
+  findAll,
+  create,
+  update,
+  deleteById,
+  getStaff,
+  setStaff,
+  getProductCapacities,
+  upsertProductCapacity,
+  decrementProductCapacity,
+  incrementProductCapacity,
+  getProductPrices,
+  getProductPrice,
+  upsertProductPrice,
+  getPriceHistory,
+};

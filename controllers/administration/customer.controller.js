@@ -1,0 +1,151 @@
+const asyncHandler = require("express-async-handler");
+const { customerRepo, orderRepo, depositRepo } = require("../../repositories");
+const { normalizePhone } = require("../../utils/helpers");
+
+const getCustomers = asyncHandler(async (req, res) => {
+  const { search, searchType, status, page = 1, limit = 50 } = req.query;
+
+  const result = await customerRepo.findAll({
+    search,
+    searchType,
+    status,
+    page,
+    limit,
+  });
+
+  res.json({ success: true, data: result });
+});
+
+const getCustomerById = asyncHandler(async (req, res) => {
+  const customer = await customerRepo.findById(req.params.id);
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  res.json({ success: true, data: { customer } });
+});
+
+const createCustomer = asyncHandler(async (req, res) => {
+  const { name, email, phone, companyName, address, status, balance, deposit, previousDeposit } = req.body;
+
+  if (!name || !phone) {
+    return res.status(400).json({
+      success: false,
+      message: "Name and phone are required",
+    });
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+
+  if (await customerRepo.existsByPhone(normalizedPhone)) {
+    return res.status(409).json({
+      success: false,
+      message: `A customer with phone ${normalizedPhone} already exists`,
+    });
+  }
+
+  if (email && email.trim()) {
+    if (await customerRepo.existsByEmail(email)) {
+      return res.status(409).json({
+        success: false,
+        message: `A customer with email ${email} already exists`,
+      });
+    }
+  }
+
+  const customer = await customerRepo.create({
+    name,
+    email: email || "",
+    phone: normalizedPhone,
+    companyName: companyName || "",
+    address: address || "",
+    status: status || "Active",
+    balance: String(balance ?? 0),
+    deposit: String(deposit ?? 0),
+    previousDeposit: String(previousDeposit ?? 0),
+  });
+
+  res.status(201).json({
+    success: true,
+    message: "Customer created successfully",
+    data: { customer },
+  });
+});
+
+const updateCustomer = asyncHandler(async (req, res) => {
+  const customer = await customerRepo.findById(req.params.id);
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  const allowedFields = [
+    "name", "email", "phone", "companyName", "address",
+    "status", "balance", "deposit", "previousDeposit",
+  ];
+
+  const updateData = {};
+  for (const field of allowedFields) {
+    if (req.body[field] !== undefined) {
+      updateData[field] = field === "phone" ? normalizePhone(req.body[field]) : req.body[field];
+    }
+  }
+
+  if (req.body.phone) {
+    const normalizedPhone = normalizePhone(req.body.phone);
+    if (await customerRepo.existsByPhone(normalizedPhone, customer.id)) {
+      return res.status(409).json({
+        success: false,
+        message: `Another customer with phone ${normalizedPhone} already exists`,
+      });
+    }
+  }
+
+  if (req.body.email && req.body.email.trim()) {
+    if (await customerRepo.existsByEmail(req.body.email, customer.id)) {
+      return res.status(409).json({
+        success: false,
+        message: `Another customer with email ${req.body.email} already exists`,
+      });
+    }
+  }
+
+  const updated = await customerRepo.update(customer.id, updateData);
+
+  res.json({
+    success: true,
+    message: "Customer updated successfully",
+    data: { customer: updated },
+  });
+});
+
+const deleteCustomer = asyncHandler(async (req, res) => {
+  const customer = await customerRepo.findById(req.params.id);
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  const [orderCount, depositCount] = await Promise.all([
+    orderRepo.findAll({ customer: customer.id, limit: 1 }).then((r) => r.pagination.total),
+    depositRepo.countByCustomer(customer.id),
+  ]);
+
+  const references = [];
+  if (orderCount > 0) references.push(`${orderCount} order(s)`);
+  if (depositCount > 0) references.push(`${depositCount} deposit(s)`);
+
+  if (references.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot delete customer: it is referenced by ${references.join(", ")}`,
+    });
+  }
+
+  await customerRepo.deleteById(customer.id);
+
+  res.json({ success: true, message: "Customer deleted successfully" });
+});
+
+module.exports = { getCustomers, getCustomerById, createCustomer, updateCustomer, deleteCustomer };

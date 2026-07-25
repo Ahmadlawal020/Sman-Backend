@@ -1,0 +1,100 @@
+const QRCode = require("qrcode");
+const { orderRepo, ticketRepo, customerRepo } = require("../repositories");
+const { sendTicketEmail } = require("./email.service");
+const { sendTicketSummarySMS } = require("./sms.service");
+
+const generateTicketForOrder = async (orderIdOrDoc) => {
+  try {
+    let order;
+    if (typeof orderIdOrDoc === "object" && orderIdOrDoc.id) {
+      order = orderIdOrDoc;
+    } else {
+      order = await orderRepo.findByIdFull(orderIdOrDoc);
+    }
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    const existingTicket = await ticketRepo.findByOrder(order.id);
+    if (existingTicket) {
+      return { success: true, ticket: existingTicket, message: "Ticket already generated" };
+    }
+
+    const suffix = order.orderNumber.replace("ORD-", "");
+    const ticketNumber = `TCK-${suffix}`;
+
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+
+    // Create ticket with placeholder QR
+    const savedTicket = await ticketRepo.create({
+      ticketNumber,
+      orderId: order.id,
+      status: "Active",
+      qrCodeDataUrl: "placeholder",
+    });
+
+    const qrCodeUrl = `${clientUrl}/ticket/details?id=${savedTicket.id}`;
+    const qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl, {
+      margin: 1,
+      width: 300,
+    });
+
+    const updatedTicket = await ticketRepo.update(savedTicket.id, {
+      qrCodeDataUrl,
+    });
+
+    const customer = await customerRepo.findById(order.customerId);
+    if (!customer) {
+      throw new Error("Customer not found for this order");
+    }
+
+    const ticketData = {
+      ticketNumber: updatedTicket.ticketNumber,
+      qrCodeDataUrl,
+      customerName: customer.name,
+      companyName: customer.companyName || "",
+      customerPhone: customer.phone || "",
+      customerEmail: customer.email || "",
+      productName: order.productName || "N/A",
+      productSku: order.productSku || "",
+      productCategory: order.productCategory || "",
+      quantity: order.quantity,
+      unit: order.productUnit || "Liters",
+      unitPrice: order.price,
+      orderNumber: order.orderNumber,
+      orderDate: order.createdAt,
+      depotName: order.depotName || "N/A",
+      depotCode: order.depotCode || "",
+      depotAddress: order.depotAddress || "",
+      state: order.state,
+      totalAmount: order.totalAmount,
+      deliveryType: order.deliveryType,
+      virtualAccountNumber: order.virtualAccountNumber || "",
+      virtualAccountBank: order.virtualAccountBank || "",
+    };
+
+    if (customer.email) {
+      try {
+        await sendTicketEmail(customer.email, ticketData);
+      } catch (emailErr) {
+        console.error("Failed to send ticket email:", emailErr.message);
+      }
+    }
+
+    if (customer.phone) {
+      try {
+        await sendTicketSummarySMS(customer.phone, ticketData);
+      } catch (smsErr) {
+        console.error("Failed to send ticket SMS:", smsErr.message);
+      }
+    }
+
+    return { success: true, ticket: updatedTicket };
+  } catch (error) {
+    console.error("Error in generateTicketForOrder:", error);
+    return { success: false, error: error.message };
+  }
+};
+
+module.exports = { generateTicketForOrder };

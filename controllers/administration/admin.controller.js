@@ -1,0 +1,195 @@
+const crypto = require("crypto");
+const asyncHandler = require("express-async-handler");
+const { adminRepo } = require("../../repositories");
+const { mapRolesToBackend } = require("../../config/roleMapping");
+const { sendPasswordSetupEmail } = require("../../services/email.service");
+
+const generateResetToken = () => {
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(rawToken)
+    .digest("hex");
+  return { rawToken, hashedToken };
+};
+
+const createAdmin = asyncHandler(async (req, res) => {
+  const { first_name, surname, other_names, email, phone_number, roles, suspended } = req.body;
+
+  if (!first_name || !surname || !email) {
+    return res.status(400).json({
+      success: false,
+      message: "First name, surname, and email are required",
+    });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const existing = await adminRepo.findByEmail(normalizedEmail);
+  if (existing) {
+    return res.status(409).json({
+      success: false,
+      message: "A user with this email already exists",
+    });
+  }
+
+  const { rawToken, hashedToken } = generateResetToken();
+
+  const backendRoles = roles && roles.length > 0
+    ? mapRolesToBackend(roles)
+    : ["admin"];
+
+  const admin = await adminRepo.create({
+    firstName: first_name.trim(),
+    surname: surname.trim(),
+    otherNames: (other_names || "").trim(),
+    email: normalizedEmail,
+    phoneNumber: phone_number || null,
+    roles: backendRoles,
+    suspended: suspended || false,
+    isPasswordSet: false,
+    passwordResetToken: hashedToken,
+    passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+
+  try {
+    await sendPasswordSetupEmail(normalizedEmail, rawToken, admin.firstName);
+  } catch (emailErr) {
+    console.error("Failed to send password setup email:", emailErr);
+  }
+
+  res.status(201).json({
+    success: true,
+    message: "User created successfully. A password setup email has been sent.",
+    data: {
+      id: admin.id,
+      email: admin.email,
+      firstName: admin.firstName,
+      surname: admin.surname,
+      roles: admin.roles,
+    },
+  });
+});
+
+const getAllAdmins = asyncHandler(async (req, res) => {
+  const { admins, pagination } = await adminRepo.findAll({ page: 1, limit: 1000 });
+
+  const safeAdmins = admins.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
+
+  res.json({
+    success: true,
+    data: { admins: safeAdmins },
+  });
+});
+
+const getAdminById = asyncHandler(async (req, res) => {
+  const admin = await adminRepo.findById(req.params.id);
+
+  if (!admin) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  const { password, refreshToken, passwordResetToken, passwordResetExpires, ...safeAdmin } = admin;
+
+  res.json({
+    success: true,
+    data: { admin: safeAdmin },
+  });
+});
+
+const updateAdmin = asyncHandler(async (req, res) => {
+  const { first_name, surname, other_names, email, phone_number, roles, suspended } = req.body;
+
+  const admin = await adminRepo.findById(req.params.id);
+  if (!admin) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  const updateData = {};
+  if (first_name) updateData.firstName = first_name.trim();
+  if (surname) updateData.surname = surname.trim();
+  if (other_names !== undefined) updateData.otherNames = (other_names || "").trim();
+  if (email) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await adminRepo.findByEmail(normalizedEmail);
+    if (existing && existing.id !== admin.id) {
+      return res.status(409).json({ success: false, message: "Email already in use" });
+    }
+    updateData.email = normalizedEmail;
+  }
+  if (phone_number !== undefined) updateData.phoneNumber = phone_number || null;
+  if (roles && roles.length > 0) updateData.roles = mapRolesToBackend(roles);
+  if (suspended !== undefined) updateData.suspended = suspended;
+
+  const updated = await adminRepo.update(admin.id, updateData);
+
+  res.json({
+    success: true,
+    message: "User updated successfully",
+    data: {
+      id: updated.id,
+      email: updated.email,
+      firstName: updated.firstName,
+      surname: updated.surname,
+      roles: updated.roles,
+    },
+  });
+});
+
+const deleteAdmin = asyncHandler(async (req, res) => {
+  const admin = await adminRepo.findById(req.params.id);
+  if (!admin) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  await adminRepo.deleteById(req.params.id);
+
+  res.json({
+    success: true,
+    message: "User deleted successfully",
+  });
+});
+
+const resendInvite = asyncHandler(async (req, res) => {
+  const admin = await adminRepo.findById(req.params.id);
+  if (!admin) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  if (admin.isPasswordSet) {
+    return res.status(400).json({
+      success: false,
+      message: "User has already set their password",
+    });
+  }
+
+  const { rawToken, hashedToken } = generateResetToken();
+  await adminRepo.update(admin.id, {
+    passwordResetToken: hashedToken,
+    passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+
+  try {
+    await sendPasswordSetupEmail(admin.email, rawToken, admin.firstName);
+  } catch (emailErr) {
+    console.error("Failed to resend password setup email:", emailErr);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send email",
+    });
+  }
+
+  res.json({
+    success: true,
+    message: "Password setup email resent successfully",
+  });
+});
+
+module.exports = {
+  createAdmin,
+  getAllAdmins,
+  getAdminById,
+  updateAdmin,
+  deleteAdmin,
+  resendInvite,
+};
