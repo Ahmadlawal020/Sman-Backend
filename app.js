@@ -20,6 +20,13 @@ app.use("/api/webhooks", require("./routes/webhook.route"));
 
 app.use(express.json());
 
+// Express 5 leaves req.body undefined when no body was parsed (v4 defaulted
+// to {}). Controllers destructure req.body directly, so restore the v4 shape.
+app.use((req, _res, next) => {
+  if (req.body === undefined) req.body = {};
+  next();
+});
+
 // Routes
 app.use("/api/auth", require("./routes/administration/auth.route"));
 app.use("/api/admin", require("./routes/administration/admin.route"));
@@ -44,7 +51,9 @@ app.get("/api/health", (req, res) => {
 });
 
 // 404 Handler
-app.all("*", (req, res) => {
+// Express 5 (path-to-regexp v8) dropped the bare "*" wildcard. "/{*splat}" is
+// the braced form, which — unlike "/*splat" — also matches the root path "/".
+app.all("/{*splat}", (req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
 });
 
