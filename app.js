@@ -5,7 +5,6 @@ app.set("trust proxy", 1);
 const path = require("path");
 const { logger } = require("./middleware/logger");
 const errorHandler = require("./middleware/errorHandler");
-const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const corsOptions = require("./config/corsOptions");
 const helmet = require("helmet");
@@ -20,7 +19,6 @@ app.use(cors(corsOptions));
 app.use("/api/webhooks", require("./routes/webhook.route"));
 
 app.use(express.json());
-app.use(cookieParser());
 
 // Routes
 app.use("/api/auth", require("./routes/administration/auth.route"));
