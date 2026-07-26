@@ -1,4 +1,4 @@
-const { z } = require("zod");
+const z = require("zod");
 const { id, money, nonEmptyString, optionalString, pagination } = require("./fields");
 
 /**

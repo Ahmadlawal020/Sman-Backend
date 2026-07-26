@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const verifyStaff = require("../../middleware/verifyStaff");
+const validate = require("../../middleware/validate");
+const misc = require("../../schemas/misc.schema");
 const {
   getTrucks,
   getTruckById,
@@ -9,10 +11,10 @@ const {
   deleteTruck,
 } = require("../../controllers/administration/truck.controller");
 
-router.get("/", verifyStaff, getTrucks);
-router.get("/:id", verifyStaff, getTruckById);
+router.get("/", verifyStaff, validate({ query: misc.listTrucks }), getTrucks);
+router.get("/:id", verifyStaff, validate({ params: misc.idParam }), getTruckById);
 router.post("/", verifyStaff, createTruck);
-router.patch("/:id", verifyStaff, updateTruck);
-router.delete("/:id", verifyStaff, deleteTruck);
+router.patch("/:id", verifyStaff, validate({ params: misc.idParam }), updateTruck);
+router.delete("/:id", verifyStaff, validate({ params: misc.idParam }), deleteTruck);
 
 module.exports = router;
