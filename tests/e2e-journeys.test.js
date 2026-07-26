@@ -10,7 +10,7 @@ const { db } = require("../config/db");
 const { customerOtps, customers } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const { customerRepo, sessionRepo } = require("../repositories");
-const { TEST_STAFF, ensureTestStaff, closeDb } = require("./helpers");
+const { TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff, closeDb } = require("./helpers");
 
 const DEV_CODE = process.env.OTP_DEV_CODE || "000000";
 const PORTAL = "/api/customer/auth";
@@ -34,7 +34,7 @@ describe("end-to-end journeys", () => {
 
     // 1. Sign in.
     const login = await request(app)
-      .post("/api/auth/login")
+      .post("/api/auth/login").set(NATIVE_TRANSPORT)
       .send({ email: TEST_STAFF.email, password: TEST_STAFF.password });
     assert.equal(login.status, 200, "sign in");
     const first = login.body.data;
@@ -57,7 +57,7 @@ describe("end-to-end journeys", () => {
 
     // 4. Rotate.
     const refreshed = await request(app)
-      .post("/api/auth/refresh")
+      .post("/api/auth/refresh").set(NATIVE_TRANSPORT)
       .send({ refreshToken: first.refreshToken });
     assert.equal(refreshed.status, 200, "rotate");
     const second = refreshed.body.data;
@@ -93,7 +93,7 @@ describe("end-to-end journeys", () => {
       "the access token stops working immediately"
     );
     assert.equal(
-      (await request(app).post("/api/auth/refresh").send({ refreshToken: second.refreshToken }))
+      (await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: second.refreshToken }))
         .status,
       403,
       "and the refresh token cannot revive it"
@@ -122,7 +122,7 @@ describe("end-to-end journeys", () => {
     // 2. Verify the code. Proving control of the number IS the activation
     //    gate — no staff approval step exists.
     const verified = await request(app)
-      .post(`${PORTAL}/verify-otp`)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone, code: DEV_CODE });
     assert.equal(verified.status, 200, "verify");
     const deviceOne = verified.body.data;
@@ -140,7 +140,7 @@ describe("end-to-end journeys", () => {
     // 4. Sign in from a second device, via login rather than register.
     await request(app).post(`${PORTAL}/request-otp`).send({ phone });
     const secondLogin = await request(app)
-      .post(`${PORTAL}/verify-otp`)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone, code: DEV_CODE });
     assert.equal(secondLogin.status, 200, "sign in on a second device");
     const deviceTwo = secondLogin.body.data;
@@ -174,7 +174,7 @@ describe("end-to-end journeys", () => {
 
     // 7. Rotate on the surviving device.
     const rotated = await request(app)
-      .post(`${PORTAL}/refresh`)
+      .post(`${PORTAL}/refresh`).set(NATIVE_TRANSPORT)
       .send({ refreshToken: deviceTwo.refreshToken });
     assert.equal(rotated.status, 200, "rotate");
 
@@ -216,7 +216,7 @@ describe("end-to-end journeys", () => {
     await ensureTestStaff();
     const staff = (
       await request(app)
-        .post("/api/auth/login")
+        .post("/api/auth/login").set(NATIVE_TRANSPORT)
         .send({ email: TEST_STAFF.email, password: TEST_STAFF.password })
     ).body.data;
 
@@ -247,7 +247,7 @@ describe("end-to-end journeys", () => {
     //    register is not involved and would not have been correct.
     await request(app).post(`${PORTAL}/request-otp`).send({ phone });
     const verified = await request(app)
-      .post(`${PORTAL}/verify-otp`)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone, code: DEV_CODE });
 
     assert.equal(verified.status, 200, "a staff-created customer can sign in to the portal");
@@ -268,7 +268,7 @@ describe("end-to-end journeys", () => {
     await ensureTestStaff();
     const staff = (
       await request(app)
-        .post("/api/auth/login")
+        .post("/api/auth/login").set(NATIVE_TRANSPORT)
         .send({ email: TEST_STAFF.email, password: TEST_STAFF.password })
     ).body.data;
 
@@ -276,7 +276,7 @@ describe("end-to-end journeys", () => {
     await db.delete(customerOtps);
     await request(app).post(`${PORTAL}/register`).send({ phone, name: "Realm Test" });
     const customer = (
-      await request(app).post(`${PORTAL}/verify-otp`).send({ phone, code: DEV_CODE })
+      await request(app).post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT).send({ phone, code: DEV_CODE })
     ).body.data;
 
     // Access tokens do not cross.
@@ -296,13 +296,13 @@ describe("end-to-end journeys", () => {
     // Refresh tokens do not cross either — the hash is domain-separated, so
     // the customer's token simply does not exist in the staff realm.
     assert.equal(
-      (await request(app).post("/api/auth/refresh").send({ refreshToken: customer.refreshToken }))
+      (await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: customer.refreshToken }))
         .status,
       403,
       "a customer refresh token is unknown to the staff realm"
     );
     assert.equal(
-      (await request(app).post(`${PORTAL}/refresh`).send({ refreshToken: staff.refreshToken }))
+      (await request(app).post(`${PORTAL}/refresh`).set(NATIVE_TRANSPORT).send({ refreshToken: staff.refreshToken }))
         .status,
       401,
       "and the reverse"

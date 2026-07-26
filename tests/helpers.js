@@ -2,6 +2,14 @@ require("dotenv").config();
 const { staffRepo, customerRepo } = require("../repositories");
 const { client } = require("../config/db");
 
+/**
+ * Declares the native-app transport, which is the only mode that returns the
+ * refresh token in the response body. Browsers get an httpOnly cookie instead,
+ * so any test that needs to hold a refresh token must ask for this — exactly
+ * as the mobile client does.
+ */
+const NATIVE_TRANSPORT = { "X-Auth-Transport": "body" };
+
 const TEST_CUSTOMER = {
   name: "Test Customer",
   // Must be a MOBILE number, not TOLL_FREE — the OTP path requires an
@@ -108,6 +116,7 @@ async function ensureTestCustomer() {
 }
 
 module.exports = {
+  NATIVE_TRANSPORT,
   TEST_STAFF,
   TEST_CUSTOMER,
   ensureTestStaff,

@@ -8,9 +8,13 @@ const { refreshTtlMs } = require("../config/auth");
  * readable by any XSS on the page, whereas an httpOnly cookie is not. The cost
  * is CSRF exposure, which middleware/csrf.js closes.
  *
- * Transport is hybrid because native apps handle cookies poorly. The cookie is
- * always set; whether the token ALSO comes back in the response body is the
- * client's choice, declared per request.
+ * Transport is hybrid and both modes are permanent:
+ *
+ *   browsers      → httpOnly cookie (default)
+ *   native apps   → response body, opted into with `X-Auth-Transport: body`
+ *
+ * Exactly one is used per request. A client gets the cookie or the body token,
+ * never both, so there is never a question of which copy is authoritative.
  */
 
 /**
@@ -52,17 +56,25 @@ function isSecure() {
   return process.env.NODE_ENV === "production" || sameSite() === "none";
 }
 
+/** Opt-in value for body transport. Anything else means cookie. */
+const TRANSPORT_BODY = "body";
+
 /**
  * Does this client want the refresh token in the response body?
  *
- * Default is yes, which is not the safer option — it is the non-breaking one.
- * The existing dashboard reads `data.refreshToken`, so flipping the default
- * would break it on deploy. A client opts into cookie-only with
- * `X-Auth-Transport: cookie`, and once the dashboard does, the body token
- * should be dropped entirely.
+ * **Cookie is the default and body must be asked for**, because the body
+ * token is the weaker of the two: a client storing it puts it somewhere
+ * JavaScript can reach, so any XSS on the page can steal it. An httpOnly
+ * cookie cannot be read that way. A client that forgets to declare a
+ * transport must therefore land on the safe one — the insecure option should
+ * never be what you get by omission.
+ *
+ * Body transport is a permanent, legitimate mode, not a migration shim:
+ * native mobile apps handle cookies poorly and hold the token themselves.
+ * They declare it with `X-Auth-Transport: body`.
  */
-function wantsBodyToken(req) {
-  return String(req.get("x-auth-transport") || "").toLowerCase() !== "cookie";
+function usesBodyTransport(req) {
+  return String(req.get("x-auth-transport") || "").toLowerCase() === TRANSPORT_BODY;
 }
 
 function setRefreshCookie(res, realm, token) {
@@ -112,10 +124,11 @@ function readRefreshToken(req, realm) {
 /**
  * In-process tally of how tokens are being transported, per realm.
  *
- * The body-token path is scheduled for removal, and "remove it once the
- * dashboard has migrated" is the kind of conditional that never resolves —
- * nobody can prove it is safe to delete. This makes it provable: when
- * `body` has been 0 across a full release cycle, the code path can go.
+ * Both transports are permanent — browsers on cookies, native apps on the
+ * body — so this is not a countdown to deleting a path. It answers a standing
+ * operational question: is anything reaching the weaker transport that should
+ * not be? A browser user agent appearing under `body` means a web client
+ * forgot to omit the header and is now storing a stealable token.
  *
  * Counters are per-process and reset on deploy, so they are a signal, not an
  * audit. The log lines are the durable record.
@@ -146,13 +159,19 @@ const getTransportCounts = () => JSON.parse(JSON.stringify(transportCounts));
  * declared transport. Returns what the body should carry, if anything.
  */
 function applyIssuedToken(req, res, realm, refreshToken) {
-  setRefreshCookie(res, realm, refreshToken);
-  setCsrfCookie(res, realm);
-
-  const useBody = wantsBodyToken(req);
+  const useBody = usesBodyTransport(req);
   recordTransport(req, realm, useBody ? "body" : "cookie");
 
-  return useBody ? refreshToken : undefined;
+  if (useBody) {
+    // No cookie for native clients. They hold the token themselves, and
+    // issuing a cookie they ignore would put two copies of the same
+    // credential in play with no rule about which is authoritative.
+    return refreshToken;
+  }
+
+  setRefreshCookie(res, realm, refreshToken);
+  setCsrfCookie(res, realm);
+  return undefined;
 }
 
 module.exports = {
@@ -161,7 +180,8 @@ module.exports = {
   CSRF_HEADER,
   sameSite,
   isSecure,
-  wantsBodyToken,
+  usesBodyTransport,
+  TRANSPORT_BODY,
   getTransportCounts,
   setRefreshCookie,
   setCsrfCookie,

@@ -11,11 +11,15 @@ const { sessionRepo, staffRepo } = require("../repositories");
 const sessionService = require("../services/session.service");
 const { signAccessToken, verifyAccessToken, TokenError } = require("../services/token.service");
 const { secretFor, ISSUER } = require("../config/auth");
-const { TEST_STAFF, ensureTestStaff, staffTokenWithRoles, closeDb } = require("./helpers");
+const { TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff, staffTokenWithRoles, closeDb } = require("./helpers");
 
+// Most of this suite needs to hold a refresh token, which only the native
+// transport returns in the body. Browsers get an httpOnly cookie instead —
+// that path is covered in cookie-csrf.test.js.
 const login = () =>
   request(app)
     .post("/api/auth/login")
+    .set(NATIVE_TRANSPORT)
     .send({ email: TEST_STAFF.email, password: TEST_STAFF.password });
 
 describe("staff auth — opaque refresh tokens, rotation, reuse detection", () => {
@@ -103,7 +107,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     const { body } = await login();
     const first = body.data.refreshToken;
 
-    const rotated = await request(app).post("/api/auth/refresh").send({ refreshToken: first });
+    const rotated = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
     assert.equal(rotated.status, 200);
 
     const second = rotated.body.data.refreshToken;
@@ -117,7 +121,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
   test("the rotated successor works", async () => {
     const { body } = await login();
     const rotated = await request(app)
-      .post("/api/auth/refresh")
+      .post("/api/auth/refresh").set(NATIVE_TRANSPORT)
       .send({ refreshToken: body.data.refreshToken });
 
     const me = await request(app)
@@ -132,10 +136,10 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     const { body } = await login();
     const first = body.data.refreshToken;
 
-    const a = await request(app).post("/api/auth/refresh").send({ refreshToken: first });
+    const a = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
     assert.equal(a.status, 200);
 
-    const replay = await request(app).post("/api/auth/refresh").send({ refreshToken: first });
+    const replay = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
     assert.equal(replay.status, 200, "replay within grace is served, not punished");
     assert.notEqual(replay.body.data.refreshToken, a.body.data.refreshToken);
   });
@@ -144,7 +148,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     const { body } = await login();
     const first = body.data.refreshToken;
 
-    const a = await request(app).post("/api/auth/refresh").send({ refreshToken: first });
+    const a = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
     const live = a.body.data.refreshToken;
 
     // Age the revocation past the grace window rather than sleeping for it.
@@ -157,7 +161,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
       .set({ revokedAt: sql`now() - interval '10 minutes'` })
       .where(eq(sessions.id, stale.id));
 
-    const replay = await request(app).post("/api/auth/refresh").send({ refreshToken: first });
+    const replay = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
     assert.equal(replay.status, 403, "reuse is rejected");
 
     // The whole lineage goes: we cannot tell attacker from victim.
@@ -165,7 +169,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     assert.equal(survivor.revokedReason, "reuse_detected");
 
     const stillWorks = await request(app)
-      .post("/api/auth/refresh")
+      .post("/api/auth/refresh").set(NATIVE_TRANSPORT)
       .send({ refreshToken: live });
     assert.equal(stillWorks.status, 403, "the legitimate successor is revoked too");
   });
@@ -175,8 +179,8 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     const token = body.data.refreshToken;
 
     const results = await Promise.all([
-      request(app).post("/api/auth/refresh").send({ refreshToken: token }),
-      request(app).post("/api/auth/refresh").send({ refreshToken: token }),
+      request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: token }),
+      request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: token }),
     ]);
     // Both may legitimately succeed (the second lands inside the grace window),
     // but they must never mint the same successor token.
@@ -186,7 +190,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
 
   test("an unknown refresh token is refused", async () => {
     const res = await request(app)
-      .post("/api/auth/refresh")
+      .post("/api/auth/refresh").set(NATIVE_TRANSPORT)
       .send({ refreshToken: sessionRepo.generateToken() });
     assert.equal(res.status, 403);
   });
@@ -336,7 +340,7 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
 
     await staffRepo.update(staffRow.id, { isActive: false });
     try {
-      const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+      const res = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken });
       assert.equal(res.status, 403);
 
       const session = await sessionRepo.findByToken("staff", refreshToken);

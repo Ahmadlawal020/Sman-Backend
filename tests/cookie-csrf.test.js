@@ -96,31 +96,48 @@ describe("cookie transport and CSRF", () => {
 
   // --- hybrid transport ----------------------------------------------------
 
-  test("the body token is returned by default, so existing clients keep working", async () => {
+  test("cookie is the default — the weaker transport is never given by omission", async () => {
+    // A client that forgets to declare a transport must land on the safe one.
     const res = await login();
-    assert.ok(res.body.data.refreshToken, "default transport is non-breaking");
-  });
 
-  test("a client can opt into cookie-only and the body token disappears", async () => {
-    const res = await login({ "X-Auth-Transport": "cookie" });
-
-    assert.equal(
-      res.body.data.refreshToken,
-      undefined,
-      "cookie-only clients must not also receive it where XSS can read it"
-    );
+    assert.equal(res.body.data.refreshToken, undefined, "no body token by default");
     assert.ok(res.body.data.accessToken, "the access token still comes back in the body");
-    assert.ok(parseCookies(res)[STAFF_COOKIE], "and the cookie is still set");
+    assert.ok(parseCookies(res)[STAFF_COOKIE], "the httpOnly cookie is set instead");
   });
 
-  test("transport mode is recorded, so the body path can be proven dead", async () => {
-    // "Delete the body-token path once the dashboard migrates" is a condition
-    // nobody can prove is met. Counting makes it provable.
+  test("an unrecognised transport value falls back to cookie, not body", async () => {
+    // Typos, stale clients and probing must all fail safe.
+    for (const value of ["cookies", "bearer", "BODYY", "", "true"]) {
+      const res = await login({ "X-Auth-Transport": value });
+      assert.equal(
+        res.body.data.refreshToken,
+        undefined,
+        `"${value}" must not be read as body transport`
+      );
+    }
+  });
+
+  test("a native client opts into the body token and gets no cookie", async () => {
+    const res = await login({ "X-Auth-Transport": "body" });
+
+    assert.ok(res.body.data.refreshToken, "native clients hold the token themselves");
+    assert.equal(
+      parseCookies(res)[STAFF_COOKIE],
+      undefined,
+      "no cookie for a client that ignores cookies — two copies of one credential " +
+        "would leave no rule about which is authoritative"
+    );
+    assert.equal(parseCookies(res)[CSRF_COOKIE], undefined, "and no CSRF cookie either");
+  });
+
+  test("transport mode is recorded per issuance", async () => {
+    // The standing operational question: is anything reaching the weaker
+    // transport that should not be? A browser UA under `body` is a bug.
     const { getTransportCounts } = require("../services/cookie.service");
     const before = getTransportCounts();
 
+    await login({ "X-Auth-Transport": "body" });
     await login();
-    await login({ "X-Auth-Transport": "cookie" });
 
     const after = getTransportCounts();
     assert.equal(after.staff.body, before.staff.body + 1, "body issuance counted");
@@ -131,7 +148,7 @@ describe("cookie transport and CSRF", () => {
   // --- refresh via cookie --------------------------------------------------
 
   test("refresh works from the cookie with a matching CSRF header", async () => {
-    const res = await login({ "X-Auth-Transport": "cookie" });
+    const res = await login();
     const cookies = parseCookies(res);
     const csrf = cookies[CSRF_COOKIE].value;
 
@@ -151,7 +168,7 @@ describe("cookie transport and CSRF", () => {
   test("refresh from a cookie without the CSRF header is refused", async () => {
     // This is the attack: a cross-site POST carries the cookie automatically
     // but cannot carry a header whose value the attacker cannot read.
-    const cookies = parseCookies(await login({ "X-Auth-Transport": "cookie" }));
+    const cookies = parseCookies(await login());
 
     const res = await request(app)
       .post("/api/auth/refresh")
@@ -166,7 +183,7 @@ describe("cookie transport and CSRF", () => {
   });
 
   test("a mismatched CSRF header is refused", async () => {
-    const cookies = parseCookies(await login({ "X-Auth-Transport": "cookie" }));
+    const cookies = parseCookies(await login());
 
     const res = await request(app)
       .post("/api/auth/refresh")
@@ -181,7 +198,7 @@ describe("cookie transport and CSRF", () => {
   });
 
   test("a CSRF header with no CSRF cookie is refused", async () => {
-    const cookies = parseCookies(await login({ "X-Auth-Transport": "cookie" }));
+    const cookies = parseCookies(await login());
 
     const res = await request(app)
       .post("/api/auth/refresh")
@@ -198,7 +215,7 @@ describe("cookie transport and CSRF", () => {
     // Native clients do not use cookies, and an attacker who could supply the
     // token would not need CSRF — demanding a header here would break them for
     // no security gain.
-    const { body } = await login();
+    const { body } = await login({ "X-Auth-Transport": "body" });
 
     const res = await request(app)
       .post("/api/auth/refresh")
@@ -208,8 +225,8 @@ describe("cookie transport and CSRF", () => {
   });
 
   test("a body token wins over a stale cookie", async () => {
-    const stale = parseCookies(await login({ "X-Auth-Transport": "cookie" }));
-    const fresh = await login();
+    const stale = parseCookies(await login());
+    const fresh = await login({ "X-Auth-Transport": "body" });
 
     const res = await request(app)
       .post("/api/auth/refresh")
@@ -222,7 +239,7 @@ describe("cookie transport and CSRF", () => {
   // --- logout --------------------------------------------------------------
 
   test("logout clears both cookies", async () => {
-    const cookies = parseCookies(await login({ "X-Auth-Transport": "cookie" }));
+    const cookies = parseCookies(await login());
     const csrf = cookies[CSRF_COOKIE].value;
 
     const res = await request(app)

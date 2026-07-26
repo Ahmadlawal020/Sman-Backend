@@ -24,7 +24,19 @@ describe("staff authentication", () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
     assert.ok(res.body.data.accessToken, "accessToken present");
-    assert.ok(res.body.data.refreshToken, "refreshToken present");
+
+    // A client that declares no transport is treated as a browser and gets an
+    // httpOnly cookie. The refresh token is deliberately absent from the body:
+    // the weaker, XSS-readable transport must be asked for, never defaulted to.
+    assert.equal(
+      res.body.data.refreshToken,
+      undefined,
+      "no body token without X-Auth-Transport: body"
+    );
+    assert.ok(
+      (res.headers["set-cookie"] || []).some((c) => c.startsWith("soroman_staff_refresh=")),
+      "the refresh cookie is set instead"
+    );
   });
 
   test("login with a wrong password is rejected", async () => {

@@ -9,7 +9,7 @@ const jwt = require("jsonwebtoken");
 const app = require("../app");
 const { customerRepo, customerOtpRepo, sessionRepo } = require("../repositories");
 const { signAccessToken } = require("../services/token.service");
-const { closeDb, TEST_STAFF, ensureTestStaff } = require("./helpers");
+const { closeDb, TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff } = require("./helpers");
 
 const DEV_CODE = process.env.OTP_DEV_CODE || "000000";
 const BASE = "/api/customer/auth";
@@ -64,7 +64,7 @@ async function resetCustomer(phone, overrides = {}) {
 async function signIn(phone, name = "Fixture Customer") {
   await clearOtpHistory();
   await request(app).post(`${BASE}/register`).send({ phone, name });
-  const res = await request(app).post(`${BASE}/verify-otp`).send({ phone, code: DEV_CODE });
+  const res = await request(app).post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT).send({ phone, code: DEV_CODE });
   assert.equal(res.status, 200, `sign-in failed: ${JSON.stringify(res.body)}`);
   return res.body.data;
 }
@@ -252,7 +252,7 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.existing });
 
     const res = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.existing, code: DEV_CODE });
 
     assert.equal(res.status, 200);
@@ -271,12 +271,12 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.attempts });
 
     const bad = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.attempts, code: "999999" });
     assert.equal(bad.status, 401);
 
     const good = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.attempts, code: DEV_CODE });
     assert.equal(good.status, 200, "one wrong guess must not burn the code");
   });
@@ -286,11 +286,11 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.attempts });
 
     for (let i = 0; i < customerOtpRepo.MAX_ATTEMPTS; i++) {
-      await request(app).post(`${BASE}/verify-otp`).send({ phone: PHONES.attempts, code: "111111" });
+      await request(app).post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT).send({ phone: PHONES.attempts, code: "111111" });
     }
 
     const afterCap = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.attempts, code: DEV_CODE });
     assert.equal(afterCap.status, 401, "the correct code must no longer work");
     assert.equal(await customerOtpRepo.findLive(customer.id), null, "code was consumed");
@@ -301,12 +301,12 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.existing });
 
     const first = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.existing, code: DEV_CODE });
     assert.equal(first.status, 200);
 
     const replay = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.existing, code: DEV_CODE });
     assert.equal(replay.status, 401, "a consumed code cannot be redeemed again");
   });
@@ -316,13 +316,13 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     if (stray) await customerRepo.deleteById(stray.id);
 
     const unknownNumber = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.unknown, code: DEV_CODE });
 
     await resetCustomer(PHONES.existing);
     await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.existing });
     const wrongCode = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.existing, code: "424242" });
 
     assert.equal(unknownNumber.status, wrongCode.status);
@@ -375,7 +375,7 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
   test("refresh rotates the customer token", async () => {
     const { refreshToken } = await signIn(PHONES.session);
-    const res = await request(app).post(`${BASE}/refresh`).send({ refreshToken });
+    const res = await request(app).post(`${BASE}/refresh`).set(NATIVE_TRANSPORT).send({ refreshToken });
 
     assert.equal(res.status, 200);
     assert.notEqual(res.body.data.refreshToken, refreshToken);
@@ -439,7 +439,7 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     assert.equal(beforeVerify.status, "Pending", "unproven until the code is used");
 
     const verified = await request(app)
-      .post(`${BASE}/verify-otp`)
+      .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.pending, code: DEV_CODE });
 
     assert.equal(verified.status, 200);
@@ -455,7 +455,7 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
     try {
       const res = await request(app)
-        .post(`${BASE}/verify-otp`)
+        .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
         .send({ phone: PHONES.pending, code: DEV_CODE });
 
       assert.equal(res.status, 401, "a deactivated account cannot authenticate");
