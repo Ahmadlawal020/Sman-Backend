@@ -61,9 +61,17 @@ const walletHoldStatusEnum = pgEnum("wallet_hold_status", [
   "released",
 ]);
 
+// "customer" is the legacy catch-all; new records should use a specific type.
 const deliveryCustomerTypeEnum = pgEnum("delivery_customer_type", [
   "customer",
   "filling_station",
+  "third_party",
+  "bulk",
+  "retail",
+  "wholesale",
+  "corporate",
+  "government",
+  "other",
 ]);
 
 const deliveryCustomerStatusEnum = pgEnum("delivery_customer_status", [
@@ -102,6 +110,80 @@ const webhookStatusEnum = pgEnum("webhook_status", [
   "failed",
 ]);
 
+const auditActorTypeEnum = pgEnum("audit_actor_type", [
+  "staff",
+  "customer",
+  "system",
+]);
+
+// Which kind of thing a ledger account belongs to. One engine, three books:
+// delivery customers, filling stations, fleet trucks.
+const ledgerOwnerTypeEnum = pgEnum("ledger_owner_type", [
+  "delivery_customer",
+  "filling_station",
+  "fleet_truck",
+]);
+
+// Debit increases what the owner owes us (sale, expense); credit decreases it
+// (payment, income). Running balance = debits - credits = outstanding.
+const ledgerDirectionEnum = pgEnum("ledger_direction", ["debit", "credit"]);
+
+const ledgerCategoryEnum = pgEnum("ledger_category", [
+  "opening_balance",
+  "sale",
+  "purchase",
+  "payment",
+  "credit_note",
+  "debit_note",
+  "discount",
+  "adjustment",
+  "expense",
+  "income",
+  "fuel",
+  "repairs",
+  "tyres",
+  "maintenance",
+  "driver_allowance",
+  "toll",
+  "insurance",
+  "registration",
+  "commission",
+  "other",
+]);
+
+const dailyReportStatusEnum = pgEnum("daily_report_status", [
+  "submitted",
+  "approved",
+  "rejected",
+]);
+
+const incidentTypeEnum = pgEnum("incident_type", [
+  "incident",
+  "expense",
+  "maintenance",
+  "observation",
+  "compliance",
+]);
+
+const incidentStatusEnum = pgEnum("incident_status", [
+  "submitted",
+  "reviewed",
+  "resolved",
+  "rejected",
+]);
+
+const offlineSaleStatusEnum = pgEnum("offline_sale_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+const releaseStatusEnum = pgEnum("release_status", [
+  "pending",
+  "confirmed",
+  "released",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -122,4 +204,13 @@ module.exports = {
   depositStatusEnum,
   paymentMethodEnum,
   webhookStatusEnum,
+  auditActorTypeEnum,
+  ledgerOwnerTypeEnum,
+  ledgerDirectionEnum,
+  ledgerCategoryEnum,
+  dailyReportStatusEnum,
+  incidentTypeEnum,
+  incidentStatusEnum,
+  offlineSaleStatusEnum,
+  releaseStatusEnum,
 };
