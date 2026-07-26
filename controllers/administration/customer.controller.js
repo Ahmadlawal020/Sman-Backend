@@ -38,6 +38,17 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const normalizedPhone = normalizePhone(phone);
 
+  // toE164 returns null for a number that is not valid anywhere. Without this
+  // guard the null would reach customers.phone, which is notNull, and surface
+  // as a 500 instead of a 400.
+  if (!normalizedPhone) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "A valid phone number is required. International numbers must include a country code, e.g. +447400123456",
+    });
+  }
+
   if (await customerRepo.existsByPhone(normalizedPhone)) {
     return res.status(409).json({
       success: false,
@@ -84,6 +95,16 @@ const updateCustomer = asyncHandler(async (req, res) => {
     "name", "email", "phone", "companyName", "address",
     "status", "balance", "deposit", "previousDeposit",
   ];
+
+  // Validate before building updateData, so an invalid number cannot be
+  // written as null into the notNull phone column.
+  if (req.body.phone !== undefined && !normalizePhone(req.body.phone)) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "A valid phone number is required. International numbers must include a country code, e.g. +447400123456",
+    });
+  }
 
   const updateData = {};
   for (const field of allowedFields) {

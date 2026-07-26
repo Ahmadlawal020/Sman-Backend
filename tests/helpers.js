@@ -4,7 +4,9 @@ const { client } = require("../config/db");
 
 const TEST_CUSTOMER = {
   name: "Test Customer",
-  phone: "+2348000000001",
+  // Must be a MOBILE number, not TOLL_FREE — the OTP path requires an
+  // SMS-capable type, so a toll-free fixture would pass storage and fail send.
+  phone: "+2348099999999",
   companyName: "Test Co",
 };
 

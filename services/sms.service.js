@@ -1,16 +1,13 @@
 const axios = require("axios");
 const { getCustomerInitials } = require("../utils/helpers");
+const { toSmsRecipient } = require("../utils/phone");
 
 const TERMII_BASE_URL = "https://api.ng.termii.com/api";
 
-function formatPhoneForTermii(phone) {
-  if (!phone) return "";
-  let cleaned = phone.replace(/[\s\-\(\)]/g, "");
-  if (cleaned.startsWith("+")) cleaned = cleaned.slice(1);
-  if (cleaned.startsWith("0")) cleaned = "234" + cleaned.slice(1);
-  if (/^[789]\d{9}$/.test(cleaned)) cleaned = "234" + cleaned;
-  return cleaned;
-}
+// Was a second hand-rolled Nigeria-only normaliser that agreed with
+// utils/helpers by coincidence. Termii wants E.164 digits without the `+`,
+// which is a rendering of one parse rather than a separate parser.
+const formatPhoneForTermii = toSmsRecipient;
 
 const CHANNELS = {
   GENERIC: "generic",

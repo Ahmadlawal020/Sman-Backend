@@ -1,3 +1,5 @@
+const { toE164 } = require("./phone");
+
 /**
  * Escapes special regex characters in a string.
  * @param {string} str
@@ -8,16 +10,21 @@ function escapeRegex(str) {
 }
 
 /**
- * Normalizes a Nigerian phone number to 234XXXXXXXXXX format.
+ * Normalizes a phone number to E.164.
+ *
+ * @deprecated Use `utils/phone` directly. This remains only so existing
+ * callers keep working; it now delegates rather than re-implementing, because
+ * the old hand-rolled version assumed every number was Nigerian and silently
+ * corrupted anything else.
+ *
+ * Note the changed contract: returns **null** for an unparseable number where
+ * the old version returned a best-effort string. Callers must handle null.
+ *
  * @param {string} phone
- * @returns {string}
+ * @returns {string|null}
  */
 function normalizePhone(phone) {
-  if (!phone) return phone;
-  let cleaned = phone.replace(/[\s\-()+]/g, "");
-  if (cleaned.startsWith("0")) cleaned = "234" + cleaned.slice(1);
-  if (/^[789]\d{9}$/.test(cleaned)) cleaned = "234" + cleaned;
-  return cleaned;
+  return toE164(phone);
 }
 
 /**
