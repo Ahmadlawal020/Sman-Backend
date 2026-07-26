@@ -19,15 +19,6 @@ const findByEmail = async (email) => {
   return row || null;
 };
 
-const findByRefreshToken = async (token) => {
-  const [row] = await db
-    .select()
-    .from(staff)
-    .where(eq(staff.refreshToken, token))
-    .limit(1);
-  return row || null;
-};
-
 const findByPasswordResetToken = async (hashedToken) => {
   const [row] = await db
     .select()
@@ -127,7 +118,6 @@ const comparePassword = async (staffMember, candidatePassword) => {
 module.exports = {
   findById,
   findByEmail,
-  findByRefreshToken,
   findByPasswordResetToken,
   findAll,
   create,

@@ -32,22 +32,25 @@ let cached = null;
 /**
  * Resolve the per-realm signing secrets.
  *
- * Staff falls back to the legacy ACCESS_TOKEN_SECRET so existing deployments
- * and CI keep working through the rename.
+ * Both names are explicit. There is deliberately no fallback to the legacy
+ * ACCESS_TOKEN_SECRET: a fallback exists to protect a running deployment
+ * through a rename, and this project has none to protect. Keeping it would
+ * only make it ambiguous which secret is actually signing tokens.
  *
- * Customer has no such fallback — it must never silently share the staff
- * secret, because a shared secret means a customer token verifies as a staff
- * token wherever an `aud` check is missed. In non-production it is derived
- * from the staff secret so local development works without new config; in
- * production it must be set explicitly, and boot fails otherwise.
+ * Customer must never silently share the staff secret — a shared secret means
+ * a customer token verifies as a staff token wherever an `aud` check is
+ * missed. In non-production it is derived from the staff secret so local
+ * development works without extra config; in production it must be set
+ * explicitly, and boot fails otherwise.
  */
 function secrets() {
   if (cached) return cached;
 
-  const staff = process.env.STAFF_ACCESS_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
+  const staff = process.env.STAFF_ACCESS_TOKEN_SECRET;
   if (!staff) {
     throw new Error(
-      "Fatal: STAFF_ACCESS_TOKEN_SECRET (or legacy ACCESS_TOKEN_SECRET) must be set"
+      "Fatal: STAFF_ACCESS_TOKEN_SECRET must be set. " +
+        "(ACCESS_TOKEN_SECRET is the old name and is no longer read — rename it.)"
     );
   }
 
