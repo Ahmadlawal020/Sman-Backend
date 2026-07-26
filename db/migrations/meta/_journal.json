@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1784932231643,
-      "tag": "0000_parallel_red_wolf",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1784982437185,
-      "tag": "0001_dry_shocker",
+      "when": 1785053181902,
+      "tag": "0000_late_gorgon",
       "breakpoints": true
     }
   ]

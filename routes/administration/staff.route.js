@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
 const {
   createAdmin,
   getAllAdmins,
@@ -8,10 +8,10 @@ const {
   updateAdmin,
   deleteAdmin,
   resendInvite,
-} = require("../../controllers/administration/admin.controller");
-const { requireRole } = require("../../middleware/verifyAdmin");
+} = require("../../controllers/administration/staff.controller");
+const { requireRole } = require("../../middleware/verifyStaff");
 
-router.use(verifyAdmin);
+router.use(verifyStaff);
 
 router.post("/", requireRole("super_admin"), createAdmin);
 router.get("/", getAllAdmins);

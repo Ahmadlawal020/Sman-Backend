@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
 const {
   getCustomers,
   getCustomerById,
@@ -9,10 +9,10 @@ const {
   deleteCustomer,
 } = require("../../controllers/administration/customer.controller");
 
-router.get("/", verifyAdmin, getCustomers);
-router.get("/:id", verifyAdmin, getCustomerById);
-router.post("/", verifyAdmin, createCustomer);
-router.patch("/:id", verifyAdmin, updateCustomer);
-router.delete("/:id", verifyAdmin, deleteCustomer);
+router.get("/", verifyStaff, getCustomers);
+router.get("/:id", verifyStaff, getCustomerById);
+router.post("/", verifyStaff, createCustomer);
+router.patch("/:id", verifyStaff, updateCustomer);
+router.delete("/:id", verifyStaff, deleteCustomer);
 
 module.exports = router;

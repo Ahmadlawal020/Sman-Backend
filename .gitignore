@@ -4,3 +4,6 @@ logs/
 *.log
 AUDIT.md
 PACKAGES.md
+CUSTOMER_PORTAL_PLAN.md
+SCHEMA_PLAN.md
+Soroman_Auth_Comparison.pdf

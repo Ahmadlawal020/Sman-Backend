@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
 const {
   getProducts,
   getProductById,
@@ -9,10 +9,10 @@ const {
   deleteProduct,
 } = require("../../controllers/administration/product.controller");
 
-router.get("/", verifyAdmin, getProducts);
-router.get("/:id", verifyAdmin, getProductById);
-router.post("/", verifyAdmin, createProduct);
-router.patch("/:id", verifyAdmin, updateProduct);
-router.delete("/:id", verifyAdmin, deleteProduct);
+router.get("/", verifyStaff, getProducts);
+router.get("/:id", verifyStaff, getProductById);
+router.post("/", verifyStaff, createProduct);
+router.patch("/:id", verifyStaff, updateProduct);
+router.delete("/:id", verifyStaff, deleteProduct);
 
 module.exports = router;
