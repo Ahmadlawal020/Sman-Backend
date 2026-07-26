@@ -1,0 +1,78 @@
+const { eq, and, or, ilike, desc, count, gte, lte } = require("drizzle-orm");
+const { db } = require("../config/db");
+const { incidentRecords } = require("../db/schema");
+
+const findById = async (id) => {
+  const [row] = await db
+    .select()
+    .from(incidentRecords)
+    .where(eq(incidentRecords.id, id))
+    .limit(1);
+  return row || null;
+};
+
+const findAll = async ({
+  incidentType,
+  status,
+  search,
+  submittedBy,
+  dateFrom,
+  dateTo,
+  page = 1,
+  limit = 50,
+} = {}) => {
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = [];
+  if (incidentType) conditions.push(eq(incidentRecords.incidentType, incidentType));
+  if (status) conditions.push(eq(incidentRecords.status, status));
+  if (submittedBy) conditions.push(eq(incidentRecords.submittedBy, submittedBy));
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(incidentRecords.title, pattern),
+        ilike(incidentRecords.location, pattern),
+        ilike(incidentRecords.pfiNumber, pattern)
+      )
+    );
+  }
+  if (dateFrom) conditions.push(gte(incidentRecords.createdAt, new Date(dateFrom)));
+  if (dateTo) conditions.push(lte(incidentRecords.createdAt, new Date(dateTo)));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(incidentRecords)
+      .where(whereClause)
+      .orderBy(desc(incidentRecords.createdAt))
+      .limit(limitNum)
+      .offset(offset),
+    db.select({ total: count() }).from(incidentRecords).where(whereClause),
+  ]);
+
+  return {
+    records: rows,
+    pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
+  };
+};
+
+const create = async (data) => {
+  const [row] = await db.insert(incidentRecords).values(data).returning();
+  return row;
+};
+
+const update = async (id, data) => {
+  const [row] = await db
+    .update(incidentRecords)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(incidentRecords.id, id))
+    .returning();
+  return row || null;
+};
+
+module.exports = { findById, findAll, create, update };
