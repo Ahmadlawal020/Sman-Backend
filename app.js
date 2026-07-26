@@ -45,6 +45,11 @@ app.use("/api/orders", require("./routes/administration/order.route"));
 app.use("/api/tickets", require("./routes/administration/ticket.route"));
 app.use("/api/deposits", require("./routes/administration/deposit.route"));
 
+// Customer-facing portal. Note it sits one character from the staff-only
+// /api/customers above — a readability hazard, not a routing bug: Express
+// matches mounts at segment boundaries, order-independently.
+app.use("/api/customer/auth", require("./routes/portal/auth.route"));
+
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Dashboard server is running" });

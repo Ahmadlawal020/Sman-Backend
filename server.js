@@ -23,6 +23,26 @@ try {
   process.exit(1);
 }
 
+// The OTP development bypass must never be reachable in production. Checked
+// against a live Paystack key too, because NODE_ENV is the easier of the two
+// to get wrong.
+if (process.env.OTP_DEV_MODE === "true") {
+  const looksLive =
+    process.env.NODE_ENV === "production" ||
+    (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_live_");
+  if (looksLive) {
+    console.error("Fatal: OTP_DEV_MODE must not be enabled in a production environment.");
+    process.exit(1);
+  }
+  console.warn("[otp] OTP_DEV_MODE is ON — codes are fixed and no SMS is sent.");
+}
+
+// Turnstile is optional while the frontend catches up, but never in production.
+if (process.env.NODE_ENV === "production" && !process.env.TURNSTILE_SECRET_KEY) {
+  console.error("Fatal: TURNSTILE_SECRET_KEY must be set in production.");
+  process.exit(1);
+}
+
 const { processAllUnpaidOrders } = require("./services/payment.service");
 
 testConnection()

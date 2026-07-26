@@ -15,7 +15,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:check": "drizzle-kit check",
-    "test": "RATE_LIMIT_DISABLED=true node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
+    "test": "RATE_LIMIT_DISABLED=true OTP_DEV_MODE=true OTP_DEV_CODE=000000 OTP_DAILY_SEND_CAP=1000000 node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
     "test:watch": "node --test --watch \"tests/**/*.test.js\""
   },
   "keywords": [],

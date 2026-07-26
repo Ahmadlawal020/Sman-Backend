@@ -51,8 +51,11 @@ const invalidateLive = async (customerId, tx = db) => {
  * Returns { row, code } — `code` is the only time the plaintext exists; it goes
  * straight to the SMS service and is never logged or persisted.
  */
-const issue = async (customerId, { ttlMinutes = 10, requestIp = null } = {}) => {
-  const code = generateCode();
+const issue = async (customerId, { ttlMinutes = 10, requestIp = null, code: fixedCode } = {}) => {
+  // `code` is an override for the development bypass, which needs a
+  // predictable value. It never shortcuts verification — the code is still
+  // hashed, stored, expired and attempt-capped exactly as a random one is.
+  const code = fixedCode || generateCode();
   return db.transaction(async (tx) => {
     await invalidateLive(customerId, tx);
     const [row] = await tx
