@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, money, nonEmptyString, optionalString, pagination } = require("./fields");
+const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination } = require("./fields");
 
 /**
  * `amount` must be strictly positive: a zero-value ledger entry is noise, and
@@ -7,23 +7,23 @@ const { id, money, nonEmptyString, optionalString, pagination } = require("./fie
  * `type`, not in the sign.
  */
 const createDeposit = z.object({
-  customer: id,
-  amount: money({ min: 0.01 }),
-  type: z.enum(["credit", "debit"]),
-  description: optionalString(500),
-  reference: optionalString(100),
+  customer: id("Customer"),
+  amount: money("Amount", { min: 0.01 }),
+  type: enumOf("Type", ["credit", "debit"]),
+  description: optionalString("Description", 500),
+  reference: optionalString("Reference", 100),
 });
 
 const syncPaystack = z.object({
-  reference: nonEmptyString(100),
+  reference: requiredString("Payment reference", 100),
 });
 
 const listDeposits = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  type: z.enum(["credit", "debit"]).optional(),
-  customer: id.optional(),
+  search: searchTerm,
+  type: enumOf("Type", ["credit", "debit"]).optional(),
+  customer: id("Customer").optional(),
 });
 
-const idParam = z.object({ id });
+const idParam = z.object({ id: id("Deposit id") });
 
 module.exports = { createDeposit, syncPaystack, listDeposits, idParam };

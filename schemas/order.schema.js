@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, quantity, nonEmptyString, pagination } = require("./fields");
+const { id, quantity, requiredString, enumOf, searchTerm, pagination } = require("./fields");
 
 /**
  * Note what is absent: `price` and `totalAmount`. They are resolved server-side
@@ -8,22 +8,22 @@ const { id, quantity, nonEmptyString, pagination } = require("./fields");
  * merely ignored, it is gone.
  */
 const createOrder = z.object({
-  customer: id,
-  depot: id,
-  product: id,
-  state: nonEmptyString(100),
-  quantity,
-  deliveryType: z.enum(["delivery", "pickup"]),
+  customer: id("Customer"),
+  depot: id("Depot"),
+  product: id("Product"),
+  state: requiredString("State", 100),
+  quantity: quantity("Quantity"),
+  deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
 });
 
 const listOrders = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  status: z.enum(["Pending", "Completed", "Cancelled"]).optional(),
-  customer: id.optional(),
-  dateFrom: z.string().trim().max(40).optional(),
-  dateTo: z.string().trim().max(40).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["Pending", "Completed", "Cancelled"]).optional(),
+  customer: id("Customer").optional(),
+  dateFrom: z.string().trim().max(40, "Start date is too long").optional(),
+  dateTo: z.string().trim().max(40, "End date is too long").optional(),
 });
 
-const idParam = z.object({ id });
+const idParam = z.object({ id: id("Order id") });
 
 module.exports = { createOrder, listOrders, idParam };

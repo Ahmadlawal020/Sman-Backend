@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, nonEmptyString } = require("./fields");
+const { id, requiredString } = require("./fields");
 
 /**
  * Auth schemas — staff and customer realms.
@@ -15,67 +15,76 @@ const { id, nonEmptyString } = require("./fields");
  *    400 while a well-formed unknown one returned 401, the difference between
  *    those responses would be a signal. Presence and length only.
  *
- * 2. NO phone-format check on the OTP endpoints. `request-otp` currently
- *    answers with the same generic 200 whether the number is registered,
- *    unregistered or unparseable, and that uniformity is the whole
- *    enumeration defence. A schema rejecting a malformed number with 400 would
- *    carve a third response out of it. `toE164` in the controller stays the
- *    single authority on what a phone number is.
+ * 2. NO phone-format check on the OTP endpoints. `request-otp` answers with the
+ *    same generic 200 whether the number is registered, unregistered or
+ *    unparseable, and that uniformity is the whole enumeration defence. A
+ *    schema rejecting a malformed number with 400 would carve a third response
+ *    out of it. `toE164` in the controller stays the single authority on what a
+ *    phone number is.
  */
 
 // --- staff ---------------------------------------------------------------
 
 const login = z.object({
-  email: nonEmptyString(255),
-  password: nonEmptyString(200),
+  email: requiredString("Email address", 255),
+  password: requiredString("Password", 200),
 });
 
 const refresh = z.object({
   // Optional: with cookie transport the token arrives in an httpOnly cookie
   // and the body is legitimately empty. The controller resolves which.
-  refreshToken: z.string().trim().min(1).max(200).optional(),
+  refreshToken: z
+    .string({ error: "Refresh token must be text" })
+    .trim()
+    .min(1, "Refresh token cannot be empty")
+    .max(200, "Refresh token is not valid")
+    .optional(),
 });
 
 const setPassword = z.object({
-  token: nonEmptyString(200),
-  // The 8-character minimum matches the controller's existing rule.
-  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+  token: requiredString("Reset token", 200),
+  password: z
+    .string({ error: (iss) => (iss.input === undefined ? "Password is required" : "Password must be text") })
+    .min(8, "Password must be at least 8 characters")
+    .max(200, "Password must be 200 characters or fewer"),
 });
 
 const forgotPassword = z.object({
-  email: nonEmptyString(255),
+  email: requiredString("Email address", 255),
 });
 
-const sessionIdParam = z.object({ id });
+const sessionIdParam = z.object({ id: id("Session id") });
 
 // --- customer portal -----------------------------------------------------
 
 const register = z.object({
-  phone: nonEmptyString(30),
-  name: nonEmptyString(255),
-  companyName: z.string().trim().max(255).optional(),
-  turnstileToken: z.string().max(4096).optional(),
+  phone: requiredString("Phone number", 30),
+  name: requiredString("Name", 255),
+  companyName: z
+    .string({ error: "Company name must be text" })
+    .trim()
+    .max(255, "Company name must be 255 characters or fewer")
+    .optional(),
+  turnstileToken: z.string().max(4096, "Verification token is not valid").optional(),
 });
 
 const requestOtp = z.object({
-  phone: nonEmptyString(30),
+  phone: requiredString("Phone number", 30),
 });
 
 const verifyOtp = z.object({
-  phone: nonEmptyString(30),
+  phone: requiredString("Phone number", 30),
   // Length-bounded but not format-checked: a wrong-shaped code must fail the
   // same way a wrong code does, through the attempt-capped comparison, not
   // with a distinguishable 400.
-  code: z.string().trim().min(1).max(10),
+  code: z
+    .string({ error: (iss) => (iss.input === undefined ? "Verification code is required" : "Verification code must be text") })
+    .trim()
+    .min(1, "Verification code is required")
+    .max(10, "Verification code is not valid"),
 });
 
 module.exports = {
-  login,
-  refresh,
-  setPassword,
-  forgotPassword,
-  sessionIdParam,
-  register,
-  requestOtp,
-  verifyOtp,
+  login, refresh, setPassword, forgotPassword, sessionIdParam,
+  register, requestOtp, verifyOtp,
 };

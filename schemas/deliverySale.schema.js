@@ -1,5 +1,8 @@
 const z = require("zod");
-const { id, money, quantity, nonEmptyString, optionalString, pagination } = require("./fields");
+const {
+  id, money, quantity, requiredString, optionalString, optionalEmail,
+  enumOf, searchTerm, pagination,
+} = require("./fields");
 
 /**
  * AUDIT H4 — this controller called `deliverySaleRepo.create(req.body)` and
@@ -16,39 +19,39 @@ const { id, money, quantity, nonEmptyString, optionalString, pagination } = requ
  * strips unknown keys, sending them now removes them rather than ignoring them.
  */
 const base = {
-  truckNumber: optionalString(100),
-  dateLoaded: optionalString(40),
-  depotLoaded: optionalString(255),
-  customerId: id.optional(),
-  customerName: optionalString(255),
-  location: optionalString(255),
-  quantity: quantity.optional(),
-  rate: money().optional(),
-  salesValue: money().optional(),
-  paymentAmount: money().optional(),
-  expensesAmount: money().optional(),
-  balance: money().optional(),
-  payerName: optionalString(255),
-  bank: optionalString(255),
-  dateOfPayment: optionalString(40),
-  phoneNumber: optionalString(30),
-  remarks: optionalString(1000),
-  enteredBy: optionalString(255),
-  allocationCode: optionalString(64),
-  paymentMethod: z.enum(["manual", "paystack_dva"]).optional(),
+  truckNumber: optionalString("Truck number", 100),
+  dateLoaded: optionalString("Date loaded", 40),
+  depotLoaded: optionalString("Depot loaded", 255),
+  customerId: id("Customer").optional(),
+  customerName: optionalString("Customer name", 255),
+  location: optionalString("Location", 255),
+  quantity: quantity("Quantity").optional(),
+  rate: money("Rate").optional(),
+  salesValue: money("Sales value").optional(),
+  paymentAmount: money("Payment amount").optional(),
+  expensesAmount: money("Expenses amount").optional(),
+  balance: money("Balance").optional(),
+  payerName: optionalString("Payer name", 255),
+  bank: optionalString("Bank", 255),
+  dateOfPayment: optionalString("Date of payment", 40),
+  phoneNumber: optionalString("Phone number", 30),
+  remarks: optionalString("Remarks", 1000),
+  enteredBy: optionalString("Entered by", 255),
+  allocationCode: optionalString("Allocation code", 64),
+  paymentMethod: enumOf("Payment method", ["manual", "paystack_dva"]).optional(),
 };
 
-const createDeliverySale = z.object({ ...base, truckNumber: nonEmptyString(100) });
+const createDeliverySale = z.object({ ...base, truckNumber: requiredString("Truck number", 100) });
 const updateDeliverySale = z.object(base).partial();
 
 const listDeliverySales = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  customer: z.string().trim().max(200).optional(),
-  truck_number: z.string().trim().max(100).optional(),
-  date_from: z.string().trim().max(40).optional(),
-  date_to: z.string().trim().max(40).optional(),
+  search: searchTerm,
+  customer: searchTerm,
+  truck_number: z.string().trim().max(100, "Truck number is too long").optional(),
+  date_from: z.string().trim().max(40, "Start date is too long").optional(),
+  date_to: z.string().trim().max(40, "End date is too long").optional(),
 });
 
-const idParam = z.object({ id });
+const idParam = z.object({ id: id("Sale id") });
 
 module.exports = { createDeliverySale, updateDeliverySale, listDeliverySales, idParam };

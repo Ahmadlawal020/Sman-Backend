@@ -1,5 +1,8 @@
 const z = require("zod");
-const { id, money, nonEmptyString, optionalString, pagination } = require("./fields");
+const {
+  id, money, quantity, requiredString, optionalString, optionalEmail,
+  enumOf, searchTerm, pagination,
+} = require("./fields");
 
 /**
  * Schemas for the remaining CRUD resources. Grouped in one file because each
@@ -10,88 +13,88 @@ const { id, money, nonEmptyString, optionalString, pagination } = require("./fie
  * do a lot of work from an unauthenticated-adjacent surface.
  */
 
-const idParam = z.object({ id });
+const idParam = z.object({ id: id("Id") });
 
 // --- products -------------------------------------------------------------
 
 const productBase = {
-  name: optionalString(255),
-  sku: optionalString(100),
-  category: optionalString(100),
-  gradeClass: optionalString(100),
-  description: optionalString(1000),
-  density: optionalString(50),
-  flashPoint: optionalString(50),
-  unNumber: optionalString(50),
-  hazardClass: optionalString(50),
-  stockLevel: money().optional(),
-  unit: optionalString(50),
-  supplier: optionalString(255),
+  name: optionalString("Name", 255),
+  sku: optionalString("Sku", 100),
+  category: optionalString("Category", 100),
+  gradeClass: optionalString("Grade class", 100),
+  description: optionalString("Description", 1000),
+  density: optionalString("Density", 50),
+  flashPoint: optionalString("Flash point", 50),
+  unNumber: optionalString("Un number", 50),
+  hazardClass: optionalString("Hazard class", 50),
+  stockLevel: money("Stock level").optional(),
+  unit: optionalString("Unit", 50),
+  supplier: optionalString("Supplier", 255),
 };
-const createProduct = z.object({ ...productBase, name: nonEmptyString(255) });
+const createProduct = z.object({ ...productBase, name: requiredString("Name", 255) });
 const updateProduct = z.object(productBase).partial();
-const listProducts = pagination.extend({ search: z.string().trim().max(200).optional() });
+const listProducts = pagination.extend({ search: searchTerm });
 
 // --- trucks ---------------------------------------------------------------
 
 const listTrucks = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  status: z.enum(["In Transit", "Idle", "Maintenance", "all"]).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["In Transit", "Idle", "Maintenance", "all"]).optional(),
 });
 
 // --- drivers --------------------------------------------------------------
 
 const driverBase = {
-  name: optionalString(255),
-  email: z.string().trim().max(255).email().optional().or(z.literal("")),
-  phone: optionalString(30),
-  licenseNumber: optionalString(100),
-  licenseClass: optionalString(50),
-  rating: optionalString(20),
-  status: z.enum(["Active", "On Trip", "Off Duty"]).optional(),
-  safetyScore: optionalString(20),
+  name: optionalString("Name", 255),
+  email: optionalEmail(),
+  phone: optionalString("Phone", 30),
+  licenseNumber: optionalString("License number", 100),
+  licenseClass: optionalString("License class", 50),
+  rating: optionalString("Rating", 20),
+  status: enumOf("Status", ["Active", "On Trip", "Off Duty"]).optional(),
+  safetyScore: optionalString("Safety score", 20),
 };
-const createDriver = z.object({ ...driverBase, name: nonEmptyString(255) });
+const createDriver = z.object({ ...driverBase, name: requiredString("Name", 255) });
 const updateDriver = z.object(driverBase).partial();
 const listDrivers = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  status: z.enum(["Active", "On Trip", "Off Duty", "all"]).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["Active", "On Trip", "Off Duty", "all"]).optional(),
 });
 
 // --- PFIs -----------------------------------------------------------------
 
 const listPfis = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  status: z.enum(["active", "finished", "all"]).optional(),
-  location: z.string().trim().max(255).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["active", "finished", "all"]).optional(),
+  location: z.string().trim().max(255, "Value is too long").optional(),
 });
 
 // --- tickets --------------------------------------------------------------
 
 const listTickets = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  status: z.enum(["Active", "Redeemed", "all"]).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["Active", "Redeemed", "all"]).optional(),
 });
 /** Accepts a numeric id or a ticket code, so it stays a bounded string. */
-const ticketIdOrCode = z.object({ idOrCode: nonEmptyString(100) });
+const ticketIdOrCode = z.object({ idOrCode: requiredString("Id or code", 100) });
 
 // --- filling stations -----------------------------------------------------
 
 const stationBase = {
-  name: optionalString(255),
-  phone: optionalString(30),
-  manager: optionalString(255),
-  street: optionalString(500),
-  city: optionalString(255),
-  state: optionalString(255),
-  tankCapacity: money().optional(),
-  pumpCount: z.number().int().nonnegative().optional(),
-  creditLimit: money().optional(),
-  notes: optionalString(1000),
+  name: optionalString("Name", 255),
+  phone: optionalString("Phone", 30),
+  manager: optionalString("Manager", 255),
+  street: optionalString("Street", 500),
+  city: optionalString("City", 255),
+  state: optionalString("State", 255),
+  tankCapacity: money("Tank capacity").optional(),
+  pumpCount: z.number().int("Pump count must be a whole number").nonnegative("Pump count cannot be negative").optional(),
+  creditLimit: money("Credit limit").optional(),
+  notes: optionalString("Notes", 1000),
 };
-const createStation = z.object({ ...stationBase, name: nonEmptyString(255) });
+const createStation = z.object({ ...stationBase, name: requiredString("Name", 255) });
 const updateStation = z.object(stationBase).partial();
-const listStations = pagination.extend({ search: z.string().trim().max(200).optional() });
+const listStations = pagination.extend({ search: searchTerm });
 
 // --- delivery inventory ---------------------------------------------------
 
@@ -101,30 +104,30 @@ const listStations = pagination.extend({ search: z.string().trim().max(200).opti
  * desk genuinely edits them, but nothing outside this list survives.
  */
 const inventoryBase = {
-  truckId: id.optional(),
-  truckNumber: optionalString(100),
-  pfiId: id.optional(),
-  pfiNumber: optionalString(100),
-  pfiProduct: optionalString(100),
-  depot: optionalString(255),
-  customerId: id.optional(),
-  customerName: optionalString(255),
-  quantityAllocated: money().optional(),
-  rate: money().optional(),
-  dateAllocated: optionalString(40),
-  dateOffloaded: optionalString(40),
-  loadingStatus: z.enum(["loaded", "offloaded", "empty", ""]).optional(),
-  location: optionalString(255),
-  pfiLocation: optionalString(255),
-  allocationCode: optionalString(64),
-  notes: optionalString(1000),
+  truckId: id("Id").optional(),
+  truckNumber: optionalString("Truck number", 100),
+  pfiId: id("Id").optional(),
+  pfiNumber: optionalString("Pfi number", 100),
+  pfiProduct: optionalString("Pfi product", 100),
+  depot: optionalString("Depot", 255),
+  customerId: id("Id").optional(),
+  customerName: optionalString("Customer name", 255),
+  quantityAllocated: money("Quantity allocated").optional(),
+  rate: money("Rate").optional(),
+  dateAllocated: optionalString("Date allocated", 40),
+  dateOffloaded: optionalString("Date offloaded", 40),
+  loadingStatus: enumOf("Loading status", ["loaded", "offloaded", "empty", ""]).optional(),
+  location: optionalString("Location", 255),
+  pfiLocation: optionalString("Pfi location", 255),
+  allocationCode: optionalString("Allocation code", 64),
+  notes: optionalString("Notes", 1000),
 };
 const createInventory = z.object(inventoryBase).partial();
 const updateInventory = z.object(inventoryBase).partial();
 const listInventory = pagination.extend({
-  search: z.string().trim().max(200).optional(),
-  loading_status: z.enum(["loaded", "offloaded", "empty", "all"]).optional(),
-  truck_number: z.string().trim().max(100).optional(),
+  search: searchTerm,
+  loading_status: enumOf("Loading status", ["loaded", "offloaded", "empty", "all"]).optional(),
+  truck_number: z.string().trim().max(100, "Value is too long").optional(),
 });
 
 // --- staff ----------------------------------------------------------------
@@ -138,22 +141,22 @@ const listInventory = pagination.extend({
  * `admin` promote themselves. That is authorization, and it stays open.
  */
 const staffBase = {
-  first_name: optionalString(100),
-  surname: optionalString(100),
-  other_names: optionalString(200),
-  email: z.string().trim().max(255).email().optional().or(z.literal("")),
-  phone_number: optionalString(30),
-  roles: z.array(z.string().trim().min(1).max(50)).max(19).optional(),
-  suspended: z.boolean().optional(),
+  first_name: optionalString("First name", 100),
+  surname: optionalString("Surname", 100),
+  other_names: optionalString("Other names", 200),
+  email: optionalEmail(),
+  phone_number: optionalString("Phone number", 30),
+  roles: z.array(z.string().trim().min(1, "A role cannot be empty").max(50, "Role name is too long"), { error: "Roles must be a list" }).max(19, "Too many roles").optional(),
+  suspended: z.boolean({ error: "Suspended must be true or false" }).optional(),
 };
 const createStaff = z.object({
   ...staffBase,
-  first_name: nonEmptyString(100),
-  surname: nonEmptyString(100),
+  first_name: requiredString("First name", 100),
+  surname: requiredString("Surname", 100),
   email: z.string().trim().min(1).max(255).email(),
 });
 const updateStaff = z.object(staffBase).partial();
-const listStaff = pagination.extend({ search: z.string().trim().max(200).optional() });
+const listStaff = pagination.extend({ search: searchTerm });
 
 module.exports = {
   idParam,

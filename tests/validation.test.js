@@ -55,19 +55,19 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
 
     for (const [label, value] of dangerous) {
       test(`quantity rejects ${label}`, () => {
-        assert.equal(fields.quantity.safeParse(value).success, false);
+        assert.equal(fields.quantity("Quantity").safeParse(value).success, false);
       });
     }
 
     test("but a real number and a numeric string both work", () => {
-      assert.equal(fields.quantity.parse(500), 500);
-      assert.equal(fields.quantity.parse("500"), 500);
-      assert.equal(fields.quantity.parse(" 500 "), 500, "clients send padded form values");
+      assert.equal(fields.quantity("Quantity").parse(500), 500);
+      assert.equal(fields.quantity("Quantity").parse("500"), 500);
+      assert.equal(fields.quantity("Quantity").parse(" 500 "), 500, "clients send padded form values");
     });
 
     test("quantity must be a positive whole number", () => {
       for (const bad of [0, -1, "500.5", 1.5]) {
-        assert.equal(fields.quantity.safeParse(bad).success, false, `${bad} should fail`);
+        assert.equal(fields.quantity("Quantity").safeParse(bad).success, false, `${bad} should fail`);
       }
     });
   });
@@ -75,7 +75,7 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
   // --- money ---------------------------------------------------------------
 
   describe("money matches numeric(15,2)", () => {
-    const money = fields.money();
+    const money = fields.money("Amount");
 
     test("normalises to two decimal places as a string", () => {
       assert.equal(money.parse("100"), "100.00");
@@ -107,7 +107,7 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
     });
 
     test("a minimum can be required, for amounts that must be non-zero", () => {
-      const positive = fields.money({ min: 0.01 });
+      const positive = fields.money("Amount", { min: 0.01 });
       assert.equal(positive.safeParse("0").success, false);
       assert.equal(positive.safeParse("0.01").success, true);
     });
@@ -173,6 +173,65 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
       `expected a name error, got ${JSON.stringify(res.body.errors)}`
     );
     assert.ok(res.body.errors.every((e) => typeof e.message === "string"));
+  });
+
+  test("messages are written for a person, not a stack trace", async () => {
+    // Zod's defaults are accurate but useless to an end user:
+    // "Invalid input: expected string, received undefined".
+    const res = await request(app)
+      .post("/api/customer/auth/register")
+      .send({});
+
+    assert.equal(res.status, 400);
+    const byField = Object.fromEntries(res.body.errors.map((e) => [e.path, e.message]));
+    assert.equal(byField.phone, "Phone number is required");
+    assert.equal(byField.name, "Name is required");
+
+    for (const message of Object.values(byField)) {
+      assert.ok(!/expected|received|invalid input/i.test(message), `leaked zod default: ${message}`);
+    }
+  });
+
+  test("a missing field and a wrong-typed field say different things", async () => {
+    // iss.input === undefined is what separates "you left this out" from
+    // "you sent the wrong sort of thing" — a distinction the caller can act on.
+    const res = await request(app)
+      .post("/api/customer/auth/register")
+      .send({ phone: 12345 });
+
+    const byField = Object.fromEntries(res.body.errors.map((e) => [e.path, e.message]));
+    assert.equal(byField.phone, "Phone number must be text", "present but wrong type");
+    assert.equal(byField.name, "Name is required", "absent entirely");
+  });
+
+  test("an enum error lists the values that would work", async () => {
+    const res = await request(app)
+      .post("/api/orders")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        customer: customerId,
+        depot: 1,
+        product: 1,
+        state: "Lagos",
+        quantity: 100,
+        deliveryType: "teleportation",
+      });
+
+    const error = res.body.errors.find((e) => e.path === "deliveryType");
+    assert.equal(error.message, "Delivery type must be one of: delivery, pickup");
+  });
+
+  test("one mistake produces one message, not two", async () => {
+    // A negative amount fails the format regex; a `>= 0` refine would fire
+    // alongside it and report the same field twice, which reads as two
+    // separate problems.
+    const res = await request(app)
+      .post("/api/customers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Dup", phone: "08188000003", balance: "-5" });
+
+    const balanceErrors = res.body.errors.filter((e) => e.path === "balance");
+    assert.equal(balanceErrors.length, 1, `got ${JSON.stringify(balanceErrors)}`);
   });
 
   test("a non-numeric id is rejected at the edge, before Postgres", async () => {
