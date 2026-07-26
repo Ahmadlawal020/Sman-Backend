@@ -27,6 +27,10 @@ const customers = pgTable(
     virtualAccountNumber: varchar("virtual_account_number", { length: 30 }).default(""),
     virtualAccountBank: varchar("virtual_account_bank", { length: 100 }).default(""),
     virtualAccountName: varchar("virtual_account_name", { length: 255 }).default(""),
+    // Written by verify-otp; cleared by any phone change, which also revokes
+    // every session for the customer.
+    phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

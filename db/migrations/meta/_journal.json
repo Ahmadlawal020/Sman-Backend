@@ -8,6 +8,13 @@
       "when": 1785053181902,
       "tag": "0000_late_gorgon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785061199031,
+      "tag": "0001_sessions_and_customer_otps",
+      "breakpoints": true
     }
   ]
 }

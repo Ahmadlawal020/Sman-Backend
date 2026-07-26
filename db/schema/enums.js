@@ -1,6 +1,16 @@
 const { pgEnum } = require("drizzle-orm/pg-core");
 
-const customerStatusEnum = pgEnum("customer_status", ["Active", "Inactive"]);
+// "Pending" is the state POST /auth/register creates into: the customer may
+// authenticate and browse, but not order until staff activate them.
+const customerStatusEnum = pgEnum("customer_status", [
+  "Active",
+  "Inactive",
+  "Pending",
+]);
+
+// Which realm a session belongs to. Drives the exclusive arc on `sessions`
+// and the domain separation of refresh-token hashes.
+const principalTypeEnum = pgEnum("principal_type", ["staff", "customer"]);
 
 const driverStatusEnum = pgEnum("driver_status", [
   "Active",
@@ -85,6 +95,7 @@ const webhookStatusEnum = pgEnum("webhook_status", [
 
 module.exports = {
   customerStatusEnum,
+  principalTypeEnum,
   driverStatusEnum,
   truckStatusEnum,
   depotStatusEnum,
