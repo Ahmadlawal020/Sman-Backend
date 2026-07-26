@@ -1,0 +1,20 @@
+# Drizzle migration snapshots MUST stay committed — they are not build output.
+#
+# `drizzle-kit generate` computes the next migration by diffing the current
+# schema against the most recent snapshot. If these were gitignored, a fresh
+# clone would have nothing to diff against and the next `db:generate` would
+# emit a migration recreating all 21 tables on top of a database that already
+# has them. `db:check` also reads them to detect journal/SQL drift — the exact
+# breakage that made `db:migrate` hang before migration 0001 was repaired.
+#
+# They are large (a full schema snapshot each, not a delta) and nobody should
+# read them, so mark them generated: GitHub collapses generated files in pull
+# request diffs by default. Committed, but not review surface.
+#
+# This affects GitHub's rendering only — local `git diff` is unchanged.
+db/migrations/meta/*.json linguist-generated=true
+
+# The SQL files are deliberately NOT marked: every one of them runs against
+# production and must be read line by line in review.
+
+package-lock.json linguist-generated=true
