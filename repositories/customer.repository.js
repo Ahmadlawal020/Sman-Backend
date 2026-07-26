@@ -26,10 +26,23 @@ const findByEmail = async (email) => {
 };
 
 const findByVirtualAccount = async (accountNumber) => {
+  if (!accountNumber) return null;
+  const cleanAcc = String(accountNumber).trim();
   const [row] = await db
     .select()
     .from(customers)
-    .where(eq(customers.virtualAccountNumber, accountNumber))
+    .where(eq(customers.virtualAccountNumber, cleanAcc))
+    .limit(1);
+  return row || null;
+};
+
+const findByPaystackCustomerId = async (customerCode) => {
+  if (!customerCode) return null;
+  const cleanCode = String(customerCode).trim();
+  const [row] = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.paystackCustomerId, cleanCode))
     .limit(1);
   return row || null;
 };
@@ -167,6 +180,7 @@ module.exports = {
   findByPhone,
   findByEmail,
   findByVirtualAccount,
+  findByPaystackCustomerId,
   findAll,
   create,
   update,

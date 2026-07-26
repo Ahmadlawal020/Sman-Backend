@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql, gte, lte } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orders, customers, depots, products, pfis } = require("../db/schema");
 
@@ -125,6 +125,7 @@ const findAll = async ({
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
         customerName: customers.name,
+        customerCompanyName: customers.companyName,
         customerEmail: customers.email,
         customerPhone: customers.phone,
         depotName: depots.name,

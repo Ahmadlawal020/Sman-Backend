@@ -17,10 +17,20 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+const { processAllUnpaidOrders } = require("./services/payment.service");
+
 testConnection()
-  .then(() => {
-    app.listen(PORT, () => {
+  .then(async () => {
+    app.listen(PORT, async () => {
       console.log(`Dashboard server running on port ${PORT}`);
+      try {
+        const count = await processAllUnpaidOrders();
+        if (count > 0) {
+          console.log(`Auto-processed ${count} unpaid order(s) using available customer balance.`);
+        }
+      } catch (err) {
+        console.error("Error running startup auto-order fulfillment:", err.message);
+      }
     });
   })
   .catch(() => {

@@ -21,10 +21,12 @@ const findByCode = async (customerCode) => {
 };
 
 const findByVirtualAccount = async (accountNumber) => {
+  if (!accountNumber) return null;
+  const cleanAcc = String(accountNumber).trim();
   const [row] = await db
     .select()
     .from(deliveryCustomers)
-    .where(eq(deliveryCustomers.virtualAccountNumber, accountNumber))
+    .where(eq(deliveryCustomers.virtualAccountNumber, cleanAcc))
     .limit(1);
   return row || null;
 };
