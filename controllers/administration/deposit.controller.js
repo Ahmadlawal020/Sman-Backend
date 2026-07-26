@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { depositRepo, customerRepo } = require("../../repositories");
+const walletService = require("../../services/wallet.service");
 const { processPaystackPayment, processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 
 const getDeposits = asyncHandler(async (req, res) => {
@@ -42,26 +43,28 @@ const createDeposit = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Customer not found" });
   }
 
-  const previousBalance = Number(customer.balance || 0);
-  const newBalance = previousBalance + Number(amount);
-
-  await customerRepo.update(customerId, {
-    balance: String(newBalance),
-    previousDeposit: String(Number(customer.deposit || 0)),
-    deposit: String(Number(customer.deposit || 0) + Number(amount)),
-  });
-
-  const deposit = await depositRepo.create({
+  // Ledger row and balance move together or not at all; a duplicate
+  // reference is reported instead of crediting the balance twice.
+  const result = await walletService.credit({
     customerId,
-    amount: String(Number(amount)),
-    type,
+    amount: Number(amount),
     description: description || "",
     reference: reference || "",
     recordedBy: req.user?.id || null,
-    balanceAfter: String(newBalance),
   });
 
-  const fullDeposit = await depositRepo.findByIdFull(deposit.id);
+  if (result.alreadyProcessed) {
+    return res.status(409).json({
+      success: false,
+      message: result.message,
+    });
+  }
+
+  if (!result.success) {
+    return res.status(400).json({ success: false, message: result.message });
+  }
+
+  const fullDeposit = await depositRepo.findByIdFull(result.deposit.id);
 
   // Automatically process any unpaid orders for customer using new balance
   await processUnpaidOrdersForCustomer(customerId);

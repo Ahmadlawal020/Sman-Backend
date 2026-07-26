@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, ne, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, ne, gt } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { customers } = require("../db/schema");
 
@@ -118,30 +118,18 @@ const update = async (id, data) => {
   return row || null;
 };
 
-const updateBalance = async (id, amount) => {
-  const [row] = await db
-    .update(customers)
-    .set({
-      balance: sql`${customers.balance} + ${amount}`,
-      updatedAt: new Date(),
-    })
-    .where(eq(customers.id, id))
-    .returning();
-  return row || null;
-};
+// Balance mutations live in services/wallet.service.js, which pairs every
+// balance change with a ledger row inside one transaction. No raw
+// updateBalance/updateDeposit here — that is how balances drift.
 
-const updateDeposit = async (id, amount, previousDeposit) => {
-  const [row] = await db
-    .update(customers)
-    .set({
-      balance: sql`${customers.balance} + ${amount}`,
-      deposit: sql`${customers.deposit} + ${amount}`,
-      previousDeposit: previousDeposit,
-      updatedAt: new Date(),
-    })
-    .where(eq(customers.id, id))
-    .returning();
-  return row || null;
+// Unpaginated on purpose: the auto-order sweep must see every customer with
+// money, not the first page of them.
+const findIdsWithPositiveBalance = async () => {
+  const rows = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(gt(customers.balance, "0"));
+  return rows.map((row) => row.id);
 };
 
 const deleteById = async (id) => {
@@ -184,8 +172,7 @@ module.exports = {
   findAll,
   create,
   update,
-  updateBalance,
-  updateDeposit,
+  findIdsWithPositiveBalance,
   deleteById,
   existsByPhone,
   existsByEmail,

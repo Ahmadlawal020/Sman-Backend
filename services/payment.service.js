@@ -9,6 +9,7 @@ const {
   depositRepo,
   orderRepo,
 } = require("../repositories");
+const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
 
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
@@ -224,18 +225,24 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
   }
 
   if (customer) {
-    const newDeposit = await depositRepo.create({
+    // Ledger row + balance update happen atomically, and the unique index on
+    // deposits.reference makes a concurrent duplicate webhook a no-op.
+    const creditResult = await walletService.credit({
       customerId: customer.id,
-      amount: String(amount),
-      type: "credit",
+      amount,
       description: "Payment received via bank transfer",
-      reference: reference,
-      balanceAfter: String(Number(customer.balance || 0) + amount),
-      paystackDetails: paystackDetails,
+      reference,
+      paystackDetails,
     });
 
-    const previousDeposit = Number(customer.deposit || 0);
-    await customerRepo.updateDeposit(customer.id, amount, previousDeposit);
+    if (creditResult.alreadyProcessed) {
+      return {
+        success: true,
+        alreadyProcessed: true,
+        message: creditResult.message,
+        deposit: creditResult.deposit,
+      };
+    }
 
     // Automatically process unpaid orders using updated wallet balance
     const autoPaidOrders = await processUnpaidOrdersForCustomer(customer.id);
@@ -243,8 +250,8 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
     return {
       success: true,
       customerType: "customer",
-      customer: customer,
-      deposit: newDeposit,
+      customer: creditResult.customer,
+      deposit: creditResult.deposit,
       amount: amount,
       reference: reference,
       autoPaidOrdersCount: autoPaidOrders.length,
@@ -313,12 +320,6 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
 };
 
 const processUnpaidOrdersForCustomer = async (customerId) => {
-  const customer = await customerRepo.findById(customerId);
-  if (!customer) return [];
-
-  let currentBalance = Number(customer.balance || 0);
-  if (currentBalance <= 0) return [];
-
   const unpaidOrders = (await orderRepo.findUnpaidByCustomer(customerId)) || [];
   const processedOrders = [];
 
@@ -326,50 +327,47 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
     const orderTotal = Number(order.totalAmount || 0);
     if (orderTotal <= 0) continue;
 
-    if (currentBalance >= orderTotal) {
-      // 1. Mark order status as Paid
-      await orderRepo.update(order.id, { paymentStatus: "Paid" });
+    // The hold is the sufficiency check: it either commits the funds under a
+    // row lock or fails, so concurrent runs can't pay the same order twice
+    // (unique hold per order) or spend the same money twice (locked balance).
+    const holdResult = await walletService.placeHold({
+      customerId,
+      orderId: order.id,
+      amount: orderTotal,
+      description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
+    });
 
-      // 2. Deduct from customer balance
-      currentBalance -= orderTotal;
-      await customerRepo.updateBalance(customerId, -orderTotal);
-
-      // 3. Record debit deposit entry for accounting
-      try {
-        await depositRepo.create({
-          customerId,
-          amount: String(orderTotal),
-          type: "debit",
-          description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
-          balanceAfter: String(currentBalance),
-        });
-      } catch (depErr) {
-        console.error("Failed to record debit deposit for auto-paid order:", depErr.message);
-      }
-
-      // 4. Generate loading ticket so order automatically passes through
-      try {
-        await generateTicketForOrder(order.id);
-        console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
-      } catch (tktErr) {
-        console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
-      }
-
-      processedOrders.push(order);
+    if (!holdResult.success) {
+      // alreadyHeld on an unpaid order means an earlier run placed the hold
+      // and crashed before marking it paid — finish that job. An inactive
+      // (released/converted) hold is history, not a claim; skip.
+      if (!holdResult.alreadyHeld) continue;
+      const existingHold = await walletService.findHoldByOrder(order.id);
+      if (!existingHold || existingHold.status !== "active") continue;
     }
+
+    await orderRepo.update(order.id, { paymentStatus: "Paid" });
+
+    // Generate loading ticket so order automatically passes through
+    try {
+      await generateTicketForOrder(order.id);
+      console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
+    } catch (tktErr) {
+      console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
+    }
+
+    processedOrders.push(order);
   }
 
   return processedOrders;
 };
 
 const processAllUnpaidOrders = async () => {
-  const { customers: allCustomers } = await customerRepo.findAll({ limit: 1000 });
+  const customerIds = await customerRepo.findIdsWithPositiveBalance();
   let totalProcessed = 0;
-  for (const cust of allCustomers) {
-    if (Number(cust.balance || 0) > 0) {
-      const processed = await processUnpaidOrdersForCustomer(cust.id);
-      totalProcessed += processed.length;
-    }
+  for (const customerId of customerIds) {
+    const processed = await processUnpaidOrdersForCustomer(customerId);
+    totalProcessed += processed.length;
   }
   return totalProcessed;
 };
