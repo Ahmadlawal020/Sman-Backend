@@ -1,5 +1,16 @@
 const { pgEnum } = require("drizzle-orm/pg-core");
 
+const adminRoleEnum = pgEnum("admin_role", [
+  "admin",
+  "super_admin",
+  "product_officer",
+  "audit_officer",
+  "it_compliance_officer",
+  "security_exit_officer",
+  "commission_officer",
+  "sales_manager",
+]);
+
 const customerStatusEnum = pgEnum("customer_status", ["Active", "Inactive"]);
 
 const driverStatusEnum = pgEnum("driver_status", [
@@ -84,6 +95,7 @@ const webhookStatusEnum = pgEnum("webhook_status", [
 ]);
 
 module.exports = {
+  adminRoleEnum,
   customerStatusEnum,
   driverStatusEnum,
   truckStatusEnum,

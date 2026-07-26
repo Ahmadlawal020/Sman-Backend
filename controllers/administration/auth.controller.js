@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
-const { staffRepo } = require("../../repositories");
+const { adminRepo } = require("../../repositories");
 const { sendPasswordResetEmail } = require("../../services/email.service");
 
 const generateTokens = (user) => {
@@ -45,14 +45,14 @@ const handleLogin = asyncHandler(async (req, res) => {
 
   email = email.trim().toLowerCase();
 
-  const foundAdmin = await staffRepo.findByEmail(email);
+  const foundAdmin = await adminRepo.findByEmail(email);
   if (!foundAdmin || !foundAdmin.isActive || foundAdmin.suspended) {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  const match = await staffRepo.comparePassword(foundAdmin, password);
+  const match = await adminRepo.comparePassword(foundAdmin, password);
   if (!match) {
     return res
       .status(401)
@@ -60,7 +60,7 @@ const handleLogin = asyncHandler(async (req, res) => {
   }
 
   const { accessToken, refreshToken } = generateTokens(foundAdmin);
-  await staffRepo.update(foundAdmin.id, {
+  await adminRepo.update(foundAdmin.id, {
     refreshToken,
     lastLoginAt: new Date(),
   });
@@ -84,7 +84,7 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
       .json({ success: false, message: "Refresh token required" });
   }
 
-  const foundAdmin = await staffRepo.findByRefreshToken(refreshToken);
+  const foundAdmin = await adminRepo.findByRefreshToken(refreshToken);
   if (!foundAdmin || !foundAdmin.isActive || foundAdmin.suspended) {
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
@@ -99,7 +99,7 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
 
       const { accessToken, refreshToken: newRefresh } =
         generateTokens(foundAdmin);
-      await staffRepo.update(foundAdmin.id, { refreshToken: newRefresh });
+      await adminRepo.update(foundAdmin.id, { refreshToken: newRefresh });
 
       res.json({
         success: true,
@@ -118,10 +118,10 @@ const handleLogout = asyncHandler(async (req, res) => {
   const { refreshToken } = req.body;
   if (typeof refreshToken !== "string" || !refreshToken) return res.sendStatus(204);
 
-  const foundAdmin = await staffRepo.findByRefreshToken(refreshToken);
+  const foundAdmin = await adminRepo.findByRefreshToken(refreshToken);
   if (!foundAdmin) return res.sendStatus(204);
 
-  await staffRepo.update(foundAdmin.id, { refreshToken: "" });
+  await adminRepo.update(foundAdmin.id, { refreshToken: "" });
 
   res.status(200).json({ success: true, message: "Logged out" });
 });
@@ -145,7 +145,7 @@ const handleSetPassword = asyncHandler(async (req, res) => {
 
   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-  const admin = await staffRepo.findByPasswordResetToken(hashedToken);
+  const admin = await adminRepo.findByPasswordResetToken(hashedToken);
   if (!admin) {
     return res.status(400).json({
       success: false,
@@ -153,7 +153,7 @@ const handleSetPassword = asyncHandler(async (req, res) => {
     });
   }
 
-  await staffRepo.update(admin.id, {
+  await adminRepo.update(admin.id, {
     password,
     isPasswordSet: true,
     passwordResetToken: null,
@@ -184,7 +184,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
         "If that email is registered, a password reset link has been sent.",
     });
 
-  const foundAdmin = await staffRepo.findByEmail(normalizedEmail);
+  const foundAdmin = await adminRepo.findByEmail(normalizedEmail);
   if (!foundAdmin || !foundAdmin.isActive) {
     return successResponse();
   }
@@ -195,7 +195,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
     .update(rawToken)
     .digest("hex");
 
-  await staffRepo.update(foundAdmin.id, {
+  await adminRepo.update(foundAdmin.id, {
     passwordResetToken: hashedToken,
     passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
   });
@@ -218,7 +218,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
 });
 
 const handleGetMe = asyncHandler(async (req, res) => {
-  const admin = await staffRepo.findById(req.user.id);
+  const admin = await adminRepo.findById(req.user.id);
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
   }

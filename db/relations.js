@@ -1,6 +1,6 @@
 const { relations } = require("drizzle-orm");
 const {
-  staff,
+  admins,
   customers,
   trucks,
   drivers,
@@ -23,7 +23,7 @@ const {
 
 // ─── Admin Relations ─────────────────────────────────────────────────────────
 
-const staffRelations = relations(staff, ({ many }) => ({
+const adminsRelations = relations(admins, ({ many }) => ({
   depotStaff: many(depotStaff),
   recordedDeposits: many(deposits, { relationName: "recordedBy" }),
   redeemedTickets: many(tickets, { relationName: "redeemedBy" }),
@@ -93,9 +93,9 @@ const depotStaffRelations = relations(depotStaff, ({ one }) => ({
     fields: [depotStaff.depotId],
     references: [depots.id],
   }),
-  staff: one(staff, {
-    fields: [depotStaff.staffId],
-    references: [staff.id],
+  admin: one(admins, {
+    fields: [depotStaff.adminId],
+    references: [admins.id],
   }),
 }));
 
@@ -151,34 +151,34 @@ const pfisRelations = relations(pfis, ({ one, many }) => ({
     fields: [pfis.productId],
     references: [products.id],
   }),
-  auditOfficer: one(staff, {
+  auditOfficer: one(admins, {
     fields: [pfis.auditOfficerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "auditOfficer",
   }),
-  productOfficer: one(staff, {
+  productOfficer: one(admins, {
     fields: [pfis.productOfficerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "productOfficer",
   }),
-  itComplianceOfficer: one(staff, {
+  itComplianceOfficer: one(admins, {
     fields: [pfis.itComplianceOfficerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "itComplianceOfficer",
   }),
-  securityExitOfficer: one(staff, {
+  securityExitOfficer: one(admins, {
     fields: [pfis.securityExitOfficerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "securityExitOfficer",
   }),
-  commissionOfficer: one(staff, {
+  commissionOfficer: one(admins, {
     fields: [pfis.commissionOfficerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "commissionOfficer",
   }),
-  salesManager: one(staff, {
+  salesManager: one(admins, {
     fields: [pfis.salesManagerId],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "salesManager",
   }),
   orders: many(orders),
@@ -214,9 +214,9 @@ const ticketsRelations = relations(tickets, ({ one }) => ({
     fields: [tickets.orderId],
     references: [orders.id],
   }),
-  redeemer: one(staff, {
+  redeemer: one(admins, {
     fields: [tickets.redeemedBy],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "redeemedBy",
   }),
 }));
@@ -228,9 +228,9 @@ const depositsRelations = relations(deposits, ({ one }) => ({
     fields: [deposits.customerId],
     references: [customers.id],
   }),
-  recorder: one(staff, {
+  recorder: one(admins, {
     fields: [deposits.recordedBy],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "recordedBy",
   }),
 }));
@@ -238,9 +238,9 @@ const depositsRelations = relations(deposits, ({ one }) => ({
 // ─── Delivery Customer Relations ─────────────────────────────────────────────
 
 const deliveryCustomersRelations = relations(deliveryCustomers, ({ one, many }) => ({
-  creator: one(staff, {
+  creator: one(admins, {
     fields: [deliveryCustomers.createdBy],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "createdBy",
   }),
   deliveryNotes: many(deliveryNotes),
@@ -259,9 +259,9 @@ const deliveryNotesRelations = relations(deliveryNotes, ({ one }) => ({
     fields: [deliveryNotes.orderId],
     references: [orders.id],
   }),
-  creator: one(staff, {
+  creator: one(admins, {
     fields: [deliveryNotes.createdBy],
-    references: [staff.id],
+    references: [admins.id],
     relationName: "createdBy",
   }),
 }));
@@ -295,7 +295,7 @@ const deliverySalesRelations = relations(deliverySales, ({ one }) => ({
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
-  staffRelations,
+  adminsRelations,
   customersRelations,
   trucksRelations,
   driversRelations,

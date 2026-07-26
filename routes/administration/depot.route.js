@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const verifyStaff = require("../../middleware/verifyStaff");
+const verifyAdmin = require("../../middleware/verifyAdmin");
 const {
   getDepots,
   getDepotById,
@@ -10,11 +10,11 @@ const {
   updateProductPrice,
 } = require("../../controllers/administration/depot.controller");
 
-router.get("/", verifyStaff, getDepots);
-router.get("/:id", verifyStaff, getDepotById);
-router.post("/", verifyStaff, createDepot);
-router.patch("/:id", verifyStaff, updateDepot);
-router.patch("/:id/product-price", verifyStaff, updateProductPrice);
-router.delete("/:id", verifyStaff, deleteDepot);
+router.get("/", verifyAdmin, getDepots);
+router.get("/:id", verifyAdmin, getDepotById);
+router.post("/", verifyAdmin, createDepot);
+router.patch("/:id", verifyAdmin, updateDepot);
+router.patch("/:id/product-price", verifyAdmin, updateProductPrice);
+router.delete("/:id", verifyAdmin, deleteDepot);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { pfis, depots, products, staff } = require("../db/schema");
+const { pfis, depots, products, admins } = require("../db/schema");
 
 const findById = async (id) => {
   const numericId = parseInt(id, 10) || id;

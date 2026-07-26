@@ -1,5 +1,5 @@
 module.exports = {
-  staffRepo: require("./staff.repository"),
+  adminRepo: require("./admin.repository"),
   customerRepo: require("./customer.repository"),
   truckRepo: require("./truck.repository"),
   driverRepo: require("./driver.repository"),

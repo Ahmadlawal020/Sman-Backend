@@ -5,7 +5,7 @@ const truckSchemas = require("./truck.schema");
 const driverSchemas = require("./driver.schema");
 const depotSchemas = require("./depot.schema");
 const productSchemas = require("./product.schema");
-const staffSchemas = require("./admin.schema");
+const adminSchemas = require("./admin.schema");
 const ticketSchemas = require("./ticket.schema");
 const depositSchemas = require("./deposit.schema");
 const pfiSchemas = require("./pfi.schema");
@@ -22,7 +22,7 @@ module.exports = {
   ...driverSchemas,
   ...depotSchemas,
   ...productSchemas,
-  ...staffSchemas,
+  ...adminSchemas,
   ...ticketSchemas,
   ...depositSchemas,
   ...pfiSchemas,

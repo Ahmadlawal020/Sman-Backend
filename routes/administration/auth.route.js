@@ -9,7 +9,7 @@ const {
   handleForgotPassword,
 } = require("../../controllers/administration/auth.controller");
 const generateLimiter = require("../../middleware/generateLimiter");
-const verifyStaff = require("../../middleware/verifyStaff");
+const verifyAdmin = require("../../middleware/verifyAdmin");
 
 const loginLimiter = generateLimiter({
   windowMs: 60 * 1000,
@@ -38,7 +38,7 @@ const setPasswordLimiter = generateLimiter({
 router.post("/login", loginLimiter, handleLogin);
 router.post("/refresh", refreshLimiter, handleRefreshToken);
 router.post("/logout", refreshLimiter, handleLogout);
-router.get("/me", verifyStaff, handleGetMe);
+router.get("/me", verifyAdmin, handleGetMe);
 router.post("/set-password", setPasswordLimiter, handleSetPassword);
 router.post("/forgot-password", forgotPasswordLimiter, handleForgotPassword);
 

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const verifyStaff = require("../../middleware/verifyStaff");
-const { requireRole } = require("../../middleware/verifyStaff");
+const verifyAdmin = require("../../middleware/verifyAdmin");
+const { requireRole } = require("../../middleware/verifyAdmin");
 const {
   getDeposits,
   getDepositById,
@@ -9,9 +9,9 @@ const {
   syncPaystackDeposit,
 } = require("../../controllers/administration/deposit.controller");
 
-router.post("/sync-paystack", verifyStaff, syncPaystackDeposit);
-router.get("/", verifyStaff, getDeposits);
-router.get("/:id", verifyStaff, getDepositById);
-router.post("/", verifyStaff, requireRole("super_admin", "finance"), createDeposit);
+router.get("/", verifyAdmin, getDeposits);
+router.get("/:id", verifyAdmin, getDepositById);
+router.post("/", verifyAdmin, requireRole("super_admin", "finance"), createDeposit);
+router.post("/sync-paystack", verifyAdmin, syncPaystackDeposit);
 
 module.exports = router;

@@ -10,8 +10,8 @@ const {
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
 
-const staff = pgTable(
-  "staff",
+const admins = pgTable(
+  "admins",
   {
     id: serial("id").primaryKey(),
     firstName: varchar("first_name", { length: 100 }).notNull(),
@@ -34,9 +34,9 @@ const staff = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("staff_email_idx").on(table.email),
-    index("staff_refresh_token_idx").on(table.refreshToken),
+    uniqueIndex("admins_email_idx").on(table.email),
+    index("admins_refresh_token_idx").on(table.refreshToken),
   ]
 );
 
-module.exports = { staff };
+module.exports = { admins };

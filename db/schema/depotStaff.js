@@ -7,7 +7,7 @@ const {
   uniqueIndex,
 } = require("drizzle-orm/pg-core");
 const { depots } = require("./depot");
-const { staff } = require("./staff");
+const { admins } = require("./admin");
 
 const depotStaff = pgTable(
   "depot_staff",
@@ -16,15 +16,15 @@ const depotStaff = pgTable(
     depotId: integer("depot_id")
       .notNull()
       .references(() => depots.id, { onDelete: "cascade" }),
-    staffId: integer("staff_id")
+    adminId: integer("admin_id")
       .notNull()
-      .references(() => staff.id, { onDelete: "cascade" }),
+      .references(() => admins.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("depot_staff_unique_idx").on(table.depotId, table.staffId),
+    uniqueIndex("depot_staff_unique_idx").on(table.depotId, table.adminId),
     index("depot_staff_depot_idx").on(table.depotId),
-    index("depot_staff_staff_idx").on(table.staffId),
+    index("depot_staff_admin_idx").on(table.adminId),
   ]
 );
 

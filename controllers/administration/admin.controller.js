@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
-const { staffRepo } = require("../../repositories");
+const { adminRepo } = require("../../repositories");
 const { mapRolesToBackend } = require("../../config/roleMapping");
 const { sendPasswordSetupEmail } = require("../../services/email.service");
 
@@ -25,7 +25,7 @@ const createAdmin = asyncHandler(async (req, res) => {
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  const existing = await staffRepo.findByEmail(normalizedEmail);
+  const existing = await adminRepo.findByEmail(normalizedEmail);
   if (existing) {
     return res.status(409).json({
       success: false,
@@ -39,7 +39,7 @@ const createAdmin = asyncHandler(async (req, res) => {
     ? mapRolesToBackend(roles)
     : ["admin"];
 
-  const admin = await staffRepo.create({
+  const admin = await adminRepo.create({
     firstName: first_name.trim(),
     surname: surname.trim(),
     otherNames: (other_names || "").trim(),
@@ -72,20 +72,18 @@ const createAdmin = asyncHandler(async (req, res) => {
 });
 
 const getAllAdmins = asyncHandler(async (req, res) => {
-  const { staff, pagination } = await staffRepo.findAll({ page: 1, limit: 1000 });
+  const { admins, pagination } = await adminRepo.findAll({ page: 1, limit: 1000 });
 
-  const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
+  const safeAdmins = admins.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
 
   res.json({
     success: true,
-    // dual-emit: `staff` is the new key, `admins` retained for the existing frontend.
-    // Drop `admins` once the dashboard is updated.
-    data: { staff: safeStaff, admins: safeStaff },
+    data: { admins: safeAdmins },
   });
 });
 
 const getAdminById = asyncHandler(async (req, res) => {
-  const admin = await staffRepo.findById(req.params.id);
+  const admin = await adminRepo.findById(req.params.id);
 
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
@@ -102,7 +100,7 @@ const getAdminById = asyncHandler(async (req, res) => {
 const updateAdmin = asyncHandler(async (req, res) => {
   const { first_name, surname, other_names, email, phone_number, roles, suspended } = req.body;
 
-  const admin = await staffRepo.findById(req.params.id);
+  const admin = await adminRepo.findById(req.params.id);
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
   }
@@ -113,7 +111,7 @@ const updateAdmin = asyncHandler(async (req, res) => {
   if (other_names !== undefined) updateData.otherNames = (other_names || "").trim();
   if (email) {
     const normalizedEmail = email.trim().toLowerCase();
-    const existing = await staffRepo.findByEmail(normalizedEmail);
+    const existing = await adminRepo.findByEmail(normalizedEmail);
     if (existing && existing.id !== admin.id) {
       return res.status(409).json({ success: false, message: "Email already in use" });
     }
@@ -123,7 +121,7 @@ const updateAdmin = asyncHandler(async (req, res) => {
   if (roles && roles.length > 0) updateData.roles = mapRolesToBackend(roles);
   if (suspended !== undefined) updateData.suspended = suspended;
 
-  const updated = await staffRepo.update(admin.id, updateData);
+  const updated = await adminRepo.update(admin.id, updateData);
 
   res.json({
     success: true,
@@ -139,12 +137,12 @@ const updateAdmin = asyncHandler(async (req, res) => {
 });
 
 const deleteAdmin = asyncHandler(async (req, res) => {
-  const admin = await staffRepo.findById(req.params.id);
+  const admin = await adminRepo.findById(req.params.id);
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
   }
 
-  await staffRepo.deleteById(req.params.id);
+  await adminRepo.deleteById(req.params.id);
 
   res.json({
     success: true,
@@ -153,7 +151,7 @@ const deleteAdmin = asyncHandler(async (req, res) => {
 });
 
 const resendInvite = asyncHandler(async (req, res) => {
-  const admin = await staffRepo.findById(req.params.id);
+  const admin = await adminRepo.findById(req.params.id);
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
   }
@@ -166,7 +164,7 @@ const resendInvite = asyncHandler(async (req, res) => {
   }
 
   const { rawToken, hashedToken } = generateResetToken();
-  await staffRepo.update(admin.id, {
+  await adminRepo.update(admin.id, {
     passwordResetToken: hashedToken,
     passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });

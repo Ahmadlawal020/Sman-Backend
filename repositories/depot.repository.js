@@ -7,7 +7,7 @@ const {
   depotProductPrices,
   depotPriceHistory,
   products,
-  staff,
+  admins,
 } = require("../db/schema");
 
 const findById = async (id) => {
@@ -99,13 +99,13 @@ const getStaff = async (depotId) => {
   const rows = await db
     .select({
       id: depotStaff.id,
-      adminId: depotStaff.staffId,
-      firstName: staff.firstName,
-      surname: staff.surname,
-      email: staff.email,
+      adminId: depotStaff.adminId,
+      firstName: admins.firstName,
+      surname: admins.surname,
+      email: admins.email,
     })
     .from(depotStaff)
-    .leftJoin(staff, eq(depotStaff.staffId, staff.id))
+    .leftJoin(admins, eq(depotStaff.adminId, admins.id))
     .where(eq(depotStaff.depotId, numericDepotId));
 
   return rows.map((r) => ({

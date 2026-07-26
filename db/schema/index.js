@@ -1,5 +1,5 @@
 const enums = require("./enums");
-const staffSchema = require("./staff");
+const adminSchema = require("./admin");
 const customerSchema = require("./customer");
 const truckSchema = require("./truck");
 const driverSchema = require("./driver");
@@ -22,7 +22,7 @@ const webhookEventSchema = require("./webhookEvent");
 
 module.exports = {
   ...enums,
-  ...staffSchema,
+  ...adminSchema,
   ...customerSchema,
   ...truckSchema,
   ...driverSchema,
