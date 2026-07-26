@@ -52,6 +52,15 @@ const ticketStatusEnum = pgEnum("ticket_status", ["Active", "Redeemed"]);
 
 const depositTypeEnum = pgEnum("deposit_type", ["credit", "debit"]);
 
+// Lifecycle of a wallet hold: money committed at order time ("active"),
+// then either spent ("converted", a debit deposit row is written) or
+// returned ("released", balance restored with no ledger entry).
+const walletHoldStatusEnum = pgEnum("wallet_hold_status", [
+  "active",
+  "converted",
+  "released",
+]);
+
 const deliveryCustomerTypeEnum = pgEnum("delivery_customer_type", [
   "customer",
   "filling_station",
@@ -105,6 +114,7 @@ module.exports = {
   pfiStatusEnum,
   ticketStatusEnum,
   depositTypeEnum,
+  walletHoldStatusEnum,
   deliveryCustomerTypeEnum,
   deliveryCustomerStatusEnum,
   deliveryNoteStatusEnum,

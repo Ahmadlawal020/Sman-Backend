@@ -14,6 +14,7 @@ const pfiSchema = require("./pfi");
 const orderSchema = require("./order");
 const ticketSchema = require("./ticket");
 const depositSchema = require("./deposit");
+const walletHoldSchema = require("./walletHold");
 const deliveryCustomerSchema = require("./deliveryCustomer");
 const deliveryNoteSchema = require("./deliveryNote");
 const deliveryInventorySchema = require("./deliveryInventory");
@@ -39,6 +40,7 @@ module.exports = {
   ...orderSchema,
   ...ticketSchema,
   ...depositSchema,
+  ...walletHoldSchema,
   ...deliveryCustomerSchema,
   ...deliveryNoteSchema,
   ...deliveryInventorySchema,
