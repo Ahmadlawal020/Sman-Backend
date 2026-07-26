@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const generateLimiter = require("../../middleware/generateLimiter");
 const { authenticateCustomer } = require("../../middleware/verifyCustomer");
+const { requireCsrfForCookieAuth } = require("../../middleware/csrf");
 const {
   handleRegister,
   handleRequestOtp,
@@ -40,8 +41,10 @@ const verifyLimiter = generateLimiter({
 router.post("/register", registerLimiter, handleRegister);
 router.post("/request-otp", otpLimiter, handleRequestOtp);
 router.post("/verify-otp", verifyLimiter, handleVerifyOtp);
-router.post("/refresh", otpLimiter, handleRefresh);
-router.post("/logout", handleLogout);
+// CSRF applies only when the refresh token arrives in a cookie; a caller
+// sending it in the body is not exposed to CSRF in the first place.
+router.post("/refresh", otpLimiter, requireCsrfForCookieAuth("customer"), handleRefresh);
+router.post("/logout", requireCsrfForCookieAuth("customer"), handleLogout);
 
 router.get("/me", authenticateCustomer, handleGetMe);
 router.post("/logout-all", authenticateCustomer, handleLogoutAll);

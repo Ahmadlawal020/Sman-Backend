@@ -19,6 +19,8 @@ app.use(cors(corsOptions));
 app.use("/api/webhooks", require("./routes/webhook.route"));
 
 app.use(express.json());
+// Express 5 has res.cookie but no req.cookies — it was removed in 6244c4f.
+app.use(require("cookie-parser")());
 
 // Express 5 leaves req.body undefined when no body was parsed (v4 defaulted
 // to {}). Controllers destructure req.body directly, so restore the v4 shape.

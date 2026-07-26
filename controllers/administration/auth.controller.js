@@ -3,6 +3,7 @@ const asyncHandler = require("express-async-handler");
 const { staffRepo, sessionRepo } = require("../../repositories");
 const { sendPasswordResetEmail } = require("../../services/email.service");
 const sessionService = require("../../services/session.service");
+const cookieService = require("../../services/cookie.service");
 
 const REALM = "staff";
 
@@ -50,20 +51,23 @@ const handleLogin = asyncHandler(async (req, res) => {
   );
   await staffRepo.update(foundAdmin.id, { lastLoginAt: new Date() });
 
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
+
   res.json({
     success: true,
     message: "Login successful",
     data: {
       user: getAdminPayload(foundAdmin),
       accessToken,
-      refreshToken,
+      // Omitted when the client declared X-Auth-Transport: cookie.
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
     },
   });
 });
 
 const handleRefreshToken = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  if (!presented) {
     return res
       .status(400)
       .json({ success: false, message: "Refresh token required" });
@@ -71,11 +75,12 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
 
   const result = await sessionService.rotate(
     REALM,
-    refreshToken,
+    presented,
     sessionService.requestContext(req)
   );
 
   if (!result.ok) {
+    cookieService.clearRefreshCookie(res, REALM);
     // Every failure answers identically. Telling the caller whether a token was
     // merely stale, already rotated, or belonged to a suspended account would
     // hand an attacker a probe — and the 403 shape is preserved from the
@@ -84,6 +89,7 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
   }
 
   const admin = await staffRepo.findById(result.session.staffId);
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, result.refreshToken);
 
   res.json({
     success: true,
@@ -91,16 +97,19 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
     data: {
       user: getAdminPayload(admin),
       accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
     },
   });
 });
 
 const handleLogout = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (typeof refreshToken !== "string" || !refreshToken) return res.sendStatus(204);
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  // Cleared regardless of whether the token resolved to a session — a stale
+  // cookie should not survive a logout attempt.
+  cookieService.clearRefreshCookie(res, REALM);
+  if (!presented) return res.sendStatus(204);
 
-  const revoked = await sessionService.revoke(REALM, refreshToken, "logout");
+  const revoked = await sessionService.revoke(REALM, presented, "logout");
   if (!revoked) return res.sendStatus(204);
 
   res.status(200).json({ success: true, message: "Logged out" });

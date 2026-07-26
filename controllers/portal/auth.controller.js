@@ -3,6 +3,7 @@ const { customerRepo, customerOtpRepo, sessionRepo } = require("../../repositori
 const otpService = require("../../services/otp.service");
 const botCheck = require("../../services/botCheck.service");
 const sessionService = require("../../services/session.service");
+const cookieService = require("../../services/cookie.service");
 const { toE164, checkSmsEligibility } = require("../../utils/phone");
 const { constantTimeFloor } = require("../../utils/timing");
 
@@ -203,48 +204,57 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
     updated,
     sessionService.requestContext(req)
   );
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
 
   return res.json({
     success: true,
     message: "Verified",
-    data: { customer: publicCustomer(updated), accessToken, refreshToken },
+    data: {
+      customer: publicCustomer(updated),
+      accessToken,
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+    },
   });
 });
 
 const handleRefresh = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body || {};
-  if (!refreshToken) {
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  if (!presented) {
     return res.status(400).json({ success: false, message: "Refresh token required" });
   }
 
   const result = await sessionService.rotate(
     REALM,
-    refreshToken,
+    presented,
     sessionService.requestContext(req)
   );
   if (!result.ok) {
     // Uniform: distinguishing stale from reused would tell an attacker whether
     // a token is being watched.
+    cookieService.clearRefreshCookie(res, REALM);
     return res.status(401).json({ success: false, message: "Unauthorized" });
   }
 
   const customer = await customerRepo.findById(result.session.customerId);
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, result.refreshToken);
+
   return res.json({
     success: true,
     message: "Token refreshed",
     data: {
       customer: publicCustomer(customer),
       accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
     },
   });
 });
 
 const handleLogout = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body || {};
-  if (typeof refreshToken !== "string" || !refreshToken) return res.sendStatus(204);
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  cookieService.clearRefreshCookie(res, REALM);
+  if (!presented) return res.sendStatus(204);
 
-  const revoked = await sessionService.revoke(REALM, refreshToken, "logout");
+  const revoked = await sessionService.revoke(REALM, presented, "logout");
   if (!revoked) return res.sendStatus(204);
   return res.json({ success: true, message: "Logged out" });
 });

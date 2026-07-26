@@ -14,6 +14,7 @@ const {
 const generateLimiter = require("../../middleware/generateLimiter");
 const verifyStaff = require("../../middleware/verifyStaff");
 const { authenticateStaff } = require("../../middleware/verifyStaff");
+const { requireCsrfForCookieAuth } = require("../../middleware/csrf");
 
 const loginLimiter = generateLimiter({
   windowMs: 60 * 1000,
@@ -40,8 +41,10 @@ const setPasswordLimiter = generateLimiter({
 });
 
 router.post("/login", loginLimiter, handleLogin);
-router.post("/refresh", refreshLimiter, handleRefreshToken);
-router.post("/logout", refreshLimiter, handleLogout);
+// CSRF applies only when the refresh token arrives in a cookie; a caller
+// sending it in the body is not exposed to CSRF in the first place.
+router.post("/refresh", refreshLimiter, requireCsrfForCookieAuth("staff"), handleRefreshToken);
+router.post("/logout", refreshLimiter, requireCsrfForCookieAuth("staff"), handleLogout);
 router.get("/me", verifyStaff, handleGetMe);
 
 // Session management. `authenticateStaff` rather than the full `verifyStaff`:
