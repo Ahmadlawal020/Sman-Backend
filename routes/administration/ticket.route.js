@@ -1,14 +1,14 @@
 const express = require("express");
 const router = express.Router();
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
 const {
   getTickets,
   getTicketByIdOrCode,
   redeemTicket,
 } = require("../../controllers/administration/ticket.controller");
 
-router.get("/", verifyAdmin, getTickets);
-router.get("/:idOrCode", verifyAdmin, getTicketByIdOrCode);
-router.post("/:idOrCode/redeem", verifyAdmin, redeemTicket);
+router.get("/", verifyStaff, getTickets);
+router.get("/:idOrCode", verifyStaff, getTicketByIdOrCode);
+router.post("/:idOrCode/redeem", verifyStaff, redeemTicket);
 
 module.exports = router;

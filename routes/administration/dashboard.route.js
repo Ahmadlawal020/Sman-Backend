@@ -1,9 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
 const { getStats, getOverview } = require("../../controllers/administration/dashboard.controller");
 
-router.get("/stats", verifyAdmin, getStats);
-router.get("/overview", verifyAdmin, getOverview);
+router.get("/stats", verifyStaff, getStats);
+router.get("/overview", verifyStaff, getOverview);
 
 module.exports = router;
