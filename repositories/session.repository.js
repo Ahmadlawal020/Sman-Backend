@@ -112,10 +112,17 @@ const listActive = async (realm, principalId) => {
  * primitive rotation is built on: exactly one concurrent caller gets the row
  * back, everyone else gets undefined and knows it lost the race.
  */
-const revokeById = async (id, reason, tx = db) => {
+const revokeById = async (id, reason, { replacedById = null } = {}, tx = db) => {
+  // replacedById is set in the SAME update as revokedAt, never afterwards.
+  // A revoked row that briefly has no successor recorded looks exactly like a
+  // reuse attempt to the grace-window check, so a concurrent replay landing in
+  // that gap would revoke the whole family for no reason.
+  const patch = { revokedAt: sql`now()`, revokedReason: reason };
+  if (replacedById !== null) patch.replacedById = replacedById;
+
   const [row] = await tx
     .update(sessions)
-    .set({ revokedAt: sql`now()`, revokedReason: reason })
+    .set(patch)
     .where(and(eq(sessions.id, id), isNull(sessions.revokedAt)))
     .returning();
   return row || null;
@@ -168,15 +175,6 @@ const revokeFamily = async (familyId, reason, tx = db) => {
     .returning({ id: sessions.id });
 };
 
-const setReplacedBy = async (id, replacedById, tx = db) => {
-  const [row] = await tx
-    .update(sessions)
-    .set({ replacedById })
-    .where(eq(sessions.id, id))
-    .returning();
-  return row || null;
-};
-
 const touch = async (id, tx = db) => {
   const [row] = await tx
     .update(sessions)
@@ -207,7 +205,6 @@ module.exports = {
   revokeOwnedById,
   revokeAllForPrincipal,
   revokeFamily,
-  setReplacedBy,
   touch,
   deleteExpiredBefore,
 };

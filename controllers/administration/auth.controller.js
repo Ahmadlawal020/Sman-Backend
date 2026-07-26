@@ -1,26 +1,10 @@
-const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
-const { staffRepo } = require("../../repositories");
+const { staffRepo, sessionRepo } = require("../../repositories");
 const { sendPasswordResetEmail } = require("../../services/email.service");
+const sessionService = require("../../services/session.service");
 
-const generateTokens = (user) => {
-  const { id, email, roles } = user;
-
-  const accessToken = jwt.sign(
-    { UserInfo: { id, email, roles } },
-    process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: "15m" }
-  );
-
-  const refreshToken = jwt.sign(
-    { id, email },
-    process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: "7d" }
-  );
-
-  return { accessToken, refreshToken };
-};
+const REALM = "staff";
 
 const getAdminPayload = (user) => ({
   id: user.id,
@@ -59,11 +43,12 @@ const handleLogin = asyncHandler(async (req, res) => {
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  const { accessToken, refreshToken } = generateTokens(foundAdmin);
-  await staffRepo.update(foundAdmin.id, {
-    refreshToken,
-    lastLoginAt: new Date(),
-  });
+  const { accessToken, refreshToken } = await sessionService.issue(
+    REALM,
+    foundAdmin,
+    sessionService.requestContext(req)
+  );
+  await staffRepo.update(foundAdmin.id, { lastLoginAt: new Date() });
 
   res.json({
     success: true,
@@ -84,46 +69,85 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
       .json({ success: false, message: "Refresh token required" });
   }
 
-  const foundAdmin = await staffRepo.findByRefreshToken(refreshToken);
-  if (!foundAdmin || !foundAdmin.isActive || foundAdmin.suspended) {
+  const result = await sessionService.rotate(
+    REALM,
+    refreshToken,
+    sessionService.requestContext(req)
+  );
+
+  if (!result.ok) {
+    // Every failure answers identically. Telling the caller whether a token was
+    // merely stale, already rotated, or belonged to a suspended account would
+    // hand an attacker a probe — and the 403 shape is preserved from the
+    // previous implementation, which clients branch on.
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
 
-  jwt.verify(
-    refreshToken,
-    process.env.REFRESH_TOKEN_SECRET,
-    async (err, decoded) => {
-      if (err || foundAdmin.email !== decoded.email) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      }
+  const admin = await staffRepo.findById(result.session.staffId);
 
-      const { accessToken, refreshToken: newRefresh } =
-        generateTokens(foundAdmin);
-      await staffRepo.update(foundAdmin.id, { refreshToken: newRefresh });
-
-      res.json({
-        success: true,
-        message: "Token refreshed",
-        data: {
-          user: getAdminPayload(foundAdmin),
-          accessToken,
-          refreshToken: newRefresh,
-        },
-      });
-    }
-  );
+  res.json({
+    success: true,
+    message: "Token refreshed",
+    data: {
+      user: getAdminPayload(admin),
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    },
+  });
 });
 
 const handleLogout = asyncHandler(async (req, res) => {
   const { refreshToken } = req.body;
   if (typeof refreshToken !== "string" || !refreshToken) return res.sendStatus(204);
 
-  const foundAdmin = await staffRepo.findByRefreshToken(refreshToken);
-  if (!foundAdmin) return res.sendStatus(204);
-
-  await staffRepo.update(foundAdmin.id, { refreshToken: "" });
+  const revoked = await sessionService.revoke(REALM, refreshToken, "logout");
+  if (!revoked) return res.sendStatus(204);
 
   res.status(200).json({ success: true, message: "Logged out" });
+});
+
+/** Revoke every session for the caller — the "sign out everywhere" control. */
+const handleLogoutAll = asyncHandler(async (req, res) => {
+  const revoked = await sessionService.revokeAll(REALM, req.user.id, "logout_all");
+  res.json({
+    success: true,
+    message: "Signed out of all devices",
+    data: { revokedCount: revoked.length },
+  });
+});
+
+/** The caller's live sessions. Never exposes the token hash. */
+const handleListSessions = asyncHandler(async (req, res) => {
+  const rows = await sessionRepo.listActive(REALM, req.user.id);
+  res.json({
+    success: true,
+    data: {
+      sessions: rows.map((s) => ({
+        id: s.id,
+        deviceName: s.deviceName,
+        userAgent: s.userAgent,
+        ipAddress: s.ipAddress,
+        lastUsedAt: s.lastUsedAt,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        current: req.authSession?.id === s.id,
+      })),
+    },
+  });
+});
+
+/** Revoke one device. Ownership is in the WHERE, not a post-fetch check. */
+const handleRevokeSession = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ success: false, message: "Invalid session id" });
+  }
+
+  const revoked = await sessionRepo.revokeOwnedById(REALM, req.user.id, id, "logout");
+  if (!revoked) {
+    return res.status(404).json({ success: false, message: "Session not found" });
+  }
+  res.json({ success: true, message: "Session revoked" });
 });
 
 const handleSetPassword = asyncHandler(async (req, res) => {
@@ -159,6 +183,10 @@ const handleSetPassword = asyncHandler(async (req, res) => {
     passwordResetToken: null,
     passwordResetExpires: null,
   });
+
+  // A password change must end every existing session. Otherwise someone who
+  // reset the password to lock an intruder out leaves that intruder logged in.
+  await sessionService.revokeAll(REALM, admin.id, "password_change");
 
   res.json({
     success: true,
@@ -235,6 +263,9 @@ module.exports = {
   handleLogin,
   handleRefreshToken,
   handleLogout,
+  handleLogoutAll,
+  handleListSessions,
+  handleRevokeSession,
   handleGetMe,
   handleSetPassword,
   handleForgotPassword,

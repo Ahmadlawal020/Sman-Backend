@@ -77,16 +77,15 @@ describe("PR-0 — rename is behaviour-identical", () => {
   });
 
   test("the 403 message for an under-privileged role is unchanged", async () => {
-    const jwt = require("jsonwebtoken");
-    const weak = jwt.sign(
-      { UserInfo: { id: 1, email: "x@y.z", roles: ["finance"] } },
-      process.env.ACCESS_TOKEN_SECRET,
-      { expiresIn: "5m" }
-    );
+    // Goes through the real issue path: tokens now carry a `sid` bound to a
+    // live session, so a hand-signed JWT is rejected before authorisation is
+    // ever reached and would not exercise this assertion.
+    const { staffTokenWithRoles } = require("./helpers");
+    const { accessToken } = await staffTokenWithRoles(["finance"]);
 
     const res = await request(app)
       .get("/api/customers")
-      .set("Authorization", `Bearer ${weak}`);
+      .set("Authorization", `Bearer ${accessToken}`);
 
     assert.equal(res.status, 403);
     assert.equal(res.body.message, "Admin access required");

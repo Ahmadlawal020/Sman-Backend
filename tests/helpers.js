@@ -57,6 +57,32 @@ async function closeDb() {
   await client.end({ timeout: 5 });
 }
 
+/**
+ * A staff row holding exactly the given roles, plus a real access token for it.
+ *
+ * Hand-signing a JWT no longer works: tokens must carry a `sid` bound to a live
+ * session, so tests have to go through the real issue path.
+ */
+async function staffTokenWithRoles(roles, email = "test-weak-staff@soroman.test") {
+  const sessionService = require("../services/session.service");
+  const existing = await staffRepo.findByEmail(email);
+  const staffRow = existing
+    ? await staffRepo.update(existing.id, { roles, isActive: true, suspended: false })
+    : await staffRepo.create({
+        firstName: "Weak",
+        surname: "Staff",
+        email,
+        password: "TestPassw0rd!",
+        isPasswordSet: true,
+        roles,
+        isActive: true,
+        suspended: false,
+      });
+
+  const { accessToken, refreshToken } = await sessionService.issue("staff", staffRow, {});
+  return { staff: staffRow, accessToken, refreshToken };
+}
+
 /** Log in and return an access token. */
 async function staffToken(request, app) {
   await ensureTestStaff();
@@ -87,5 +113,6 @@ module.exports = {
   ensureTestStaff,
   ensureTestCustomer,
   staffToken,
+  staffTokenWithRoles,
   closeDb,
 };

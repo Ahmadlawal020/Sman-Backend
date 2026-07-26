@@ -4,12 +4,16 @@ const {
   handleLogin,
   handleRefreshToken,
   handleLogout,
+  handleLogoutAll,
+  handleListSessions,
+  handleRevokeSession,
   handleGetMe,
   handleSetPassword,
   handleForgotPassword,
 } = require("../../controllers/administration/auth.controller");
 const generateLimiter = require("../../middleware/generateLimiter");
 const verifyStaff = require("../../middleware/verifyStaff");
+const { authenticateStaff } = require("../../middleware/verifyStaff");
 
 const loginLimiter = generateLimiter({
   windowMs: 60 * 1000,
@@ -39,6 +43,13 @@ router.post("/login", loginLimiter, handleLogin);
 router.post("/refresh", refreshLimiter, handleRefreshToken);
 router.post("/logout", refreshLimiter, handleLogout);
 router.get("/me", verifyStaff, handleGetMe);
+
+// Session management. `authenticateStaff` rather than the full `verifyStaff`:
+// signing out of your own devices is not an elevated action, and gating it on
+// admin roles would lock most staff out of their own security controls.
+router.post("/logout-all", authenticateStaff, handleLogoutAll);
+router.get("/sessions", authenticateStaff, handleListSessions);
+router.delete("/sessions/:id", authenticateStaff, handleRevokeSession);
 router.post("/set-password", setPasswordLimiter, handleSetPassword);
 router.post("/forgot-password", forgotPasswordLimiter, handleForgotPassword);
 

@@ -234,7 +234,7 @@ describe("session.repository — realm discipline and atomic revoke", () => {
     assert.equal(staffRow.revokedAt, null, "staff sessions untouched");
   });
 
-  test("touch and setReplacedBy record rotation lineage", async () => {
+  test("revoking records the successor in the same statement", async () => {
     const familyId = crypto.randomUUID();
     const old = await sessionRepo.create("customer", customerId, {
       token: sessionRepo.generateToken(),
@@ -247,10 +247,18 @@ describe("session.repository — realm discipline and atomic revoke", () => {
       expiresAt: future(),
     });
 
-    await sessionRepo.setReplacedBy(old.id, next.id);
-    const touched = await sessionRepo.touch(next.id);
+    const claimed = await sessionRepo.revokeById(old.id, "rotated", {
+      replacedById: next.id,
+    });
 
-    assert.equal((await sessionRepo.findById(old.id)).replacedById, next.id);
+    // Atomicity matters: a row that is revoked-as-rotated but has no successor
+    // recorded is indistinguishable from a reuse attempt, so a concurrent
+    // replay landing in that gap would revoke the whole family for nothing.
+    assert.ok(claimed.revokedAt, "revoked");
+    assert.equal(claimed.revokedReason, "rotated");
+    assert.equal(claimed.replacedById, next.id, "successor set by the same update");
+
+    const touched = await sessionRepo.touch(next.id);
     assert.ok(touched.lastUsedAt, "lastUsedAt is set");
   });
 });
