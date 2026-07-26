@@ -161,8 +161,28 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
       .set({ revokedAt: sql`now() - interval '10 minutes'` })
       .where(eq(sessions.id, stale.id));
 
-    const replay = await request(app).post("/api/auth/refresh").set(NATIVE_TRANSPORT).send({ refreshToken: first });
+    // Capture the security log: detection nobody hears about is half a
+    // mechanism, so the alert signal is part of the contract, not decoration.
+    const originalError = console.error;
+    const logged = [];
+    console.error = (...args) => logged.push(args.join(" "));
+
+    let replay;
+    try {
+      replay = await request(app)
+        .post("/api/auth/refresh")
+        .set(NATIVE_TRANSPORT)
+        .send({ refreshToken: first });
+    } finally {
+      console.error = originalError;
+    }
+
     assert.equal(replay.status, 403, "reuse is rejected");
+
+    const alert = logged.find((l) => l.includes("SESSION_REUSE_DETECTED"));
+    assert.ok(alert, `no security alert emitted; saw: ${JSON.stringify(logged)}`);
+    assert.match(alert, /realm=staff/);
+    assert.match(alert, /sessions_revoked=[1-9]/, "reports how much was revoked");
 
     // The whole lineage goes: we cannot tell attacker from victim.
     const survivor = await sessionRepo.findByToken("staff", live);

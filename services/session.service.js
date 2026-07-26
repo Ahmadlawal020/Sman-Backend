@@ -115,7 +115,20 @@ async function rotate(realm, presentedToken, context = {}) {
     // the same lineage. We cannot tell attacker from victim, so the whole
     // family goes and both are forced to re-authenticate.
     if (existing.revokedReason === "rotated") {
-      await sessionRepo.revokeFamily(existing.familyId, "reuse_detected");
+      const revoked = await sessionRepo.revokeFamily(existing.familyId, "reuse_detected");
+
+      // Detection that nobody hears about is half a mechanism. Revoking the
+      // family protects the account; this is the part that tells someone a
+      // credential was stolen. Logged at error level, with a stable
+      // grep-able token, so it can drive an alert rather than be found later
+      // while investigating something else.
+      const principalId = existing.staffId ?? existing.customerId;
+      console.error(
+        `[auth.security] SESSION_REUSE_DETECTED realm=${realm} principal=${principalId} ` +
+          `family=${existing.familyId} sessions_revoked=${revoked.length} ` +
+          `ip=${context.ipAddress || "unknown"} ua="${String(context.userAgent || "unknown").slice(0, 80)}"`
+      );
+
       return { ok: false, reason: "reuse" };
     }
 
