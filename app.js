@@ -47,6 +47,22 @@ app.use("/api/orders", require("./routes/administration/order.route"));
 app.use("/api/tickets", require("./routes/administration/ticket.route"));
 app.use("/api/deposits", require("./routes/administration/deposit.route"));
 
+// ERP modules
+const { deliveryLedgerRouter, stationLedgerRouter } = require("./routes/administration/ledgerBook.route");
+app.use("/api/delivery-ledger", deliveryLedgerRouter);
+app.use("/api/station-ledger", stationLedgerRouter);
+app.use("/api/fleet", require("./routes/administration/fleet.route"));
+app.use("/api/daily-reports", require("./routes/administration/dailyReport.route"));
+app.use("/api/incidents", require("./routes/administration/incident.route"));
+app.use("/api/offline-sales", require("./routes/administration/offlineSale.route"));
+app.use("/api/reports", require("./routes/administration/reporting.route"));
+
+// Event consumers: audit writes every business event; notifications react to
+// the ones customers and staff should hear about. Registered once, here,
+// so requiring app.js in tests wires the same pipeline as production.
+require("./services/audit.service").registerAuditListener();
+require("./services/notification.service").registerNotificationListeners();
+
 // Customer-facing portal. Note it sits one character from the staff-only
 // /api/customers above — a readability hazard, not a routing bug: Express
 // matches mounts at segment boundaries, order-independently.
