@@ -14,4 +14,6 @@ module.exports = {
   deliveryInventoryRepo: require("./deliveryInventory.repository"),
   deliverySaleRepo: require("./deliverySale.repository"),
   webhookEventRepo: require("./webhookEvent.repository"),
+  sessionRepo: require("./session.repository"),
+  customerOtpRepo: require("./customerOtp.repository"),
 };

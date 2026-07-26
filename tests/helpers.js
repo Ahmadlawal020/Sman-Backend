@@ -1,6 +1,12 @@
 require("dotenv").config();
-const { staffRepo } = require("../repositories");
+const { staffRepo, customerRepo } = require("../repositories");
 const { client } = require("../config/db");
+
+const TEST_CUSTOMER = {
+  name: "Test Customer",
+  phone: "+2348000000001",
+  companyName: "Test Co",
+};
 
 const TEST_STAFF = {
   firstName: "Test",
@@ -61,4 +67,23 @@ async function staffToken(request, app) {
   return res.body.data.accessToken;
 }
 
-module.exports = { TEST_STAFF, ensureTestStaff, staffToken, closeDb };
+/** Idempotently ensure a customer row exists, for session/OTP fixtures. */
+async function ensureTestCustomer() {
+  const existing = await customerRepo.findByPhone(TEST_CUSTOMER.phone);
+  if (existing) return existing;
+  return customerRepo.create({
+    name: TEST_CUSTOMER.name,
+    phone: TEST_CUSTOMER.phone,
+    companyName: TEST_CUSTOMER.companyName,
+    status: "Pending",
+  });
+}
+
+module.exports = {
+  TEST_STAFF,
+  TEST_CUSTOMER,
+  ensureTestStaff,
+  ensureTestCustomer,
+  staffToken,
+  closeDb,
+};
