@@ -29,6 +29,13 @@
       "when": 1785074832704,
       "tag": "0003_drop_staff_refresh_token",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785091196613,
+      "tag": "0004_balance_non_negative",
+      "breakpoints": true
     }
   ]
 }

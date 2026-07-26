@@ -327,12 +327,21 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
     if (orderTotal <= 0) continue;
 
     if (currentBalance >= orderTotal) {
-      // 1. Mark order status as Paid
-      await orderRepo.update(order.id, { paymentStatus: "Paid" });
+      // 1. Debit FIRST, guarded. Marking the order Paid before taking the
+      //    money means a lost race leaves a Paid order that was never funded.
+      const debited = await customerRepo.debitBalance(customerId, orderTotal);
+      if (!debited) {
+        // A concurrent order or sweep spent the balance. Leave this order
+        // unpaid; it will be picked up next time funds arrive.
+        console.warn(
+          `[settlement] insufficient funds for order ${order.orderNumber} — skipped`
+        );
+        break;
+      }
+      currentBalance = Number(debited.balance);
 
-      // 2. Deduct from customer balance
-      currentBalance -= orderTotal;
-      await customerRepo.updateBalance(customerId, -orderTotal);
+      // 2. Now that the money is taken, mark the order Paid
+      await orderRepo.update(order.id, { paymentStatus: "Paid" });
 
       // 3. Record debit deposit entry for accounting
       try {
@@ -362,15 +371,30 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
   return processedOrders;
 };
 
+/**
+ * Settle every unpaid order that the customer's wallet can cover.
+ *
+ * Previously called findAll({ limit: 1000 }) — which clamps to 100 — so it
+ * silently covered only the hundred most recently created customers. The
+ * `limit: 1000` at the call site read as deliberate coverage, which is exactly
+ * why nobody looked again.
+ *
+ * Both counts are logged: a sweep that considers 0 customers and a sweep that
+ * settles 0 orders look identical in the return value, and only one of them is
+ * a problem.
+ */
 const processAllUnpaidOrders = async () => {
-  const { customers: allCustomers } = await customerRepo.findAll({ limit: 1000 });
+  const funded = await customerRepo.findWithPositiveBalance();
+
   let totalProcessed = 0;
-  for (const cust of allCustomers) {
-    if (Number(cust.balance || 0) > 0) {
-      const processed = await processUnpaidOrdersForCustomer(cust.id);
-      totalProcessed += processed.length;
-    }
+  for (const cust of funded) {
+    const processed = await processUnpaidOrdersForCustomer(cust.id);
+    totalProcessed += processed.length;
   }
+
+  console.log(
+    `[settlement] considered ${funded.length} customer(s) with a balance; settled ${totalProcessed} order(s)`
+  );
   return totalProcessed;
 };
 

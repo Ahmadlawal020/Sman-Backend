@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, ne, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, ne, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { customers } = require("../db/schema");
 
@@ -118,8 +118,19 @@ const update = async (id, data) => {
   return row || null;
 };
 
-const updateBalance = async (id, amount) => {
-  const [row] = await db
+/**
+ * Add to a customer's balance. Credits only — the amount must be positive.
+ *
+ * Split from debiting deliberately. A single signed `updateBalance` reads as
+ * symmetric, but the two directions have different safety requirements: a
+ * credit can never overdraw, a debit can. Sharing one function is how the
+ * guard came to be missing from the debit path.
+ */
+const creditBalance = async (id, amount, tx = db) => {
+  if (!(Number(amount) > 0)) {
+    throw new RangeError(`creditBalance: amount must be positive, got ${amount}`);
+  }
+  const [row] = await tx
     .update(customers)
     .set({
       balance: sql`${customers.balance} + ${amount}`,
@@ -128,6 +139,58 @@ const updateBalance = async (id, amount) => {
     .where(eq(customers.id, id))
     .returning();
   return row || null;
+};
+
+/**
+ * Subtract from a customer's balance, refusing to overdraw.
+ *
+ * The guard is in the `WHERE`, not in a preceding read. Checking the balance
+ * in the caller and then debiting is a time-of-check/time-of-use race: two
+ * concurrent orders both read the same balance, both pass, both debit, and the
+ * account ends up negative with two paid orders and two tickets.
+ *
+ * Returns null when the balance does not cover the amount — callers MUST
+ * branch on that rather than assuming success. This is the same shape as
+ * pfiRepo.reserveStock, which has always guarded correctly; the pattern
+ * existed in this codebase and was simply never applied to money.
+ *
+ * @param {number} amount  positive magnitude to subtract
+ * @returns {object|null}  the updated row, or null if funds were insufficient
+ */
+const debitBalance = async (id, amount, tx = db) => {
+  if (!(Number(amount) > 0)) {
+    throw new RangeError(`debitBalance: amount must be positive, got ${amount}`);
+  }
+  const [row] = await tx
+    .update(customers)
+    .set({
+      balance: sql`${customers.balance} - ${amount}`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(customers.id, id), gte(customers.balance, String(amount))))
+    .returning();
+  return row || null;
+};
+
+/**
+ * Every customer holding money, for the settlement sweep.
+ *
+ * Deliberately NOT findAll({ limit }): that clamps to 100 and orders by
+ * created_at DESC, so the sweep silently considered only the hundred most
+ * recently created customers. Anyone older with a balance was never settled —
+ * their money sat in the wallet, their order stayed unpaid, and nothing logged
+ * a discrepancy because the loop believed it had processed everyone it was
+ * given.
+ *
+ * Filtering in SQL removes the pagination question entirely rather than
+ * raising a limit that would drift out of date again.
+ */
+const findWithPositiveBalance = async () => {
+  return db
+    .select({ id: customers.id, balance: customers.balance })
+    .from(customers)
+    .where(sql`${customers.balance} > 0`)
+    .orderBy(customers.id);
 };
 
 const updateDeposit = async (id, amount, previousDeposit) => {
@@ -184,7 +247,9 @@ module.exports = {
   findAll,
   create,
   update,
-  updateBalance,
+  creditBalance,
+  debitBalance,
+  findWithPositiveBalance,
   updateDeposit,
   deleteById,
   existsByPhone,

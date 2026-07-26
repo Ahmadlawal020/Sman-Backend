@@ -133,7 +133,7 @@ const createOrder = asyncHandler(async (req, res) => {
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
   // Check wallet balance
-  const isPaidWithWallet = Number(customer.balance || 0) >= totalAmount;
+  let isPaidWithWallet = Number(customer.balance || 0) >= totalAmount;
 
   // Create order
   const order = await orderRepo.create({
@@ -154,17 +154,34 @@ const createOrder = asyncHandler(async (req, res) => {
     virtualAccountName,
   });
 
-  // If paid with wallet, deduct balance
+  // If paid with wallet, deduct balance.
+  //
+  // `isPaidWithWallet` was decided from a snapshot read many async steps and
+  // two HTTP calls ago, so it cannot be trusted here. debitBalance re-checks
+  // atomically in the WHERE and returns null if the funds are gone — which is
+  // what happens when a concurrent order spent them in the meantime.
+  let debited = null;
   if (isPaidWithWallet) {
-    await customerRepo.updateBalance(customerId, -totalAmount);
+    debited = await customerRepo.debitBalance(customerId, totalAmount);
+    if (!debited) {
+      // Lost the race. Leave the order Unpaid rather than marking it Paid
+      // against money that is no longer there; the customer can still settle
+      // it by transfer, and the webhook path will pick it up.
+      await orderRepo.update(order.id, { paymentStatus: "Unpaid" });
+      isPaidWithWallet = false;
+    }
+  }
 
+  if (isPaidWithWallet) {
     try {
       await depositRepo.create({
         customerId,
         amount: String(totalAmount),
         type: "debit",
         description: `Payment for Order ${orderNumber} (Wallet Balance)`,
-        balanceAfter: String(Number(customer.balance || 0) - totalAmount),
+        // From the guarded update, not the snapshot read before it — the
+        // snapshot may be stale by several concurrent debits.
+        balanceAfter: String(debited.balance),
       });
     } catch (depErr) {
       console.error("Failed to record wallet payment debit deposit:", depErr.message);
@@ -174,8 +191,13 @@ const createOrder = asyncHandler(async (req, res) => {
   // Decrement depot product capacity
   await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity));
 
-  // Generate loading ticket if paid immediately
-  if (order.paymentStatus === "Paid") {
+  // Generate loading ticket if paid immediately.
+  //
+  // Reads isPaidWithWallet, NOT order.paymentStatus — `order` is the row as
+  // inserted, so its in-memory status is still "Paid" even when the debit
+  // subsequently lost the race. Trusting it would mint a redeemable loading
+  // ticket for an order nobody paid for.
+  if (isPaidWithWallet) {
     try {
       await generateTicketForOrder(order.id);
     } catch (ticketErr) {
@@ -303,8 +325,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
 
   // If order was paid, refund to balance
   if (order.paymentStatus === "Paid") {
-    const customer = await customerRepo.findById(order.customerId);
-    await customerRepo.updateBalance(order.customerId, Number(order.totalAmount));
+    const credited = await customerRepo.creditBalance(
+      order.customerId,
+      Number(order.totalAmount)
+    );
 
     try {
       await depositRepo.create({
@@ -312,7 +336,9 @@ const cancelOrder = asyncHandler(async (req, res) => {
         amount: String(order.totalAmount),
         type: "credit",
         description: `Refund for cancelled Order ${order.orderNumber}`,
-        balanceAfter: String(Number(customer.balance || 0) + Number(order.totalAmount)),
+        // From the update's return value rather than a separate read, which
+        // could be stale by the time the credit lands.
+        balanceAfter: String(credited.balance),
       });
     } catch (depErr) {
       console.error("Failed to record cancellation refund:", depErr.message);
