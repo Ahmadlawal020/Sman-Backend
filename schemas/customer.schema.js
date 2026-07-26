@@ -1,37 +1,41 @@
 const { z } = require("zod");
+const { id, money, nonEmptyString, optionalString, pagination } = require("./fields");
 
-const objectIdRegex = /^[0-9a-fA-F]{24}$/;
-
-const createCustomerSchema = z.object({
-  name: z.string().min(1, "Name is required").max(200),
-  email: z.string().email("Invalid email").max(255).optional().or(z.literal("")),
-  phone: z.string().min(1, "Phone is required").max(20),
-  companyName: z.string().max(200).optional().or(z.literal("")),
-  address: z.string().max(500).optional().or(z.literal("")),
+/**
+ * Replaces a Mongo-era schema that validated ids with an ObjectId regex
+ * (/^[0-9a-fA-F]{24}$/) — against a Postgres serial column, that would have
+ * rejected every request had it ever been wired up.
+ *
+ * Phone is checked for presence only; `toE164` in the controller does the real
+ * parsing, because valid-phone-ness is a libphonenumber question, not a regex
+ * one, and duplicating it here would create a second source of truth.
+ */
+const createCustomer = z.object({
+  name: nonEmptyString(255),
+  phone: nonEmptyString(30),
+  email: z.string().trim().max(255).email().optional().or(z.literal("")),
+  companyName: optionalString(255),
+  address: optionalString(1000),
+  status: z.enum(["Active", "Inactive", "Pending"]).optional(),
+  balance: money().optional(),
+  deposit: money().optional(),
+  previousDeposit: money().optional(),
 });
 
-const updateCustomerSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  email: z.string().email().max(255).optional().or(z.literal("")),
-  phone: z.string().min(1).max(20).optional(),
-  companyName: z.string().max(200).optional().or(z.literal("")),
-  address: z.string().max(500).optional().or(z.literal("")),
-  isActive: z.boolean().optional(),
+/**
+ * Update is the same shape with everything optional — and, importantly, still
+ * a whitelist. `virtualAccountNumber` is absent on purpose: overwriting it
+ * would redirect another customer's incoming payments, since the webhook
+ * matches on account number.
+ */
+const updateCustomer = createCustomer.partial();
+
+const listCustomers = pagination.extend({
+  search: z.string().trim().max(200).optional(),
+  searchType: z.enum(["name", "email", "phone", "companyName"]).optional(),
+  status: z.enum(["Active", "Inactive", "Pending", "all"]).optional(),
 });
 
-const customerQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
-  search: z.string().max(100).optional(),
-});
+const idParam = z.object({ id });
 
-const customerIdParamSchema = z.object({
-  id: z.string().regex(objectIdRegex, "Invalid customer ID"),
-});
-
-module.exports = {
-  createCustomerSchema,
-  updateCustomerSchema,
-  customerQuerySchema,
-  customerIdParamSchema,
-};
+module.exports = { createCustomer, updateCustomer, listCustomers, idParam };
