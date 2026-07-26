@@ -84,4 +84,9 @@ const sendTicketSummarySMS = async (phone, ticketData) => {
   return { success: false, message: "All Termii channels failed for ticket SMS" };
 };
 
-module.exports = { sendOrderSummarySMS, sendTicketSummarySMS };
+// sendSMSTermii was previously not exported, while otp.service.js imported it
+// by name — so it resolved to undefined. With the dev bypass off (i.e. in
+// production) the call threw, issueAndSend swallowed it as "send_failed", and
+// the endpoint still answered 200 because it is deliberately enumeration-safe.
+// Customer OTP delivery would have been silently dead on arrival.
+module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, CHANNELS };

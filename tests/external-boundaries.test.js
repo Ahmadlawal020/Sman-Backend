@@ -1,0 +1,263 @@
+// Must precede any require that reaches config/db.
+require("dotenv").config();
+
+const { test, describe, before, beforeEach, afterEach, after } = require("node:test");
+const assert = require("node:assert/strict");
+const nock = require("nock");
+
+const botCheck = require("../services/botCheck.service");
+const { sendSMSTermii } = require("../services/sms.service");
+const otpService = require("../services/otp.service");
+const { customerOtpRepo, customerRepo } = require("../repositories");
+const { closeDb } = require("./helpers");
+
+const TURNSTILE_HOST = "https://challenges.cloudflare.com";
+const TURNSTILE_PATH = "/turnstile/v0/siteverify";
+const TERMII_HOST = "https://api.ng.termii.com";
+const TERMII_PATH = "/api/sms/send";
+
+/**
+ * Net connect is NOT disabled: these suites also talk to Postgres and to the
+ * app over loopback. Only the two external hosts are intercepted.
+ */
+describe("external boundaries — Turnstile and Termii", () => {
+  afterEach(() => {
+    nock.cleanAll();
+  });
+
+  after(async () => {
+    await closeDb();
+  });
+
+  // --- Turnstile -----------------------------------------------------------
+
+  describe("botCheck.verify", () => {
+    const ORIGINAL_SECRET = process.env.TURNSTILE_SECRET_KEY;
+
+    beforeEach(() => {
+      process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    });
+
+    afterEach(() => {
+      if (ORIGINAL_SECRET === undefined) delete process.env.TURNSTILE_SECRET_KEY;
+      else process.env.TURNSTILE_SECRET_KEY = ORIGINAL_SECRET;
+    });
+
+    test("is skipped entirely when no secret is configured", async () => {
+      delete process.env.TURNSTILE_SECRET_KEY;
+      // No interceptor registered: if this made a request it would fail.
+      const result = await botCheck.verify("any-token", "1.2.3.4");
+      assert.deepEqual(result, { ok: true, skipped: true });
+    });
+
+    test("accepts a token Cloudflare confirms", async () => {
+      nock(TURNSTILE_HOST).post(TURNSTILE_PATH).reply(200, { success: true });
+      const result = await botCheck.verify("good-token", "1.2.3.4");
+      assert.equal(result.ok, true);
+      assert.equal(result.skipped, undefined);
+    });
+
+    test("sends the secret, the token and the caller's IP", async () => {
+      let received;
+      nock(TURNSTILE_HOST)
+        .post(TURNSTILE_PATH, (body) => {
+          received = body;
+          return true;
+        })
+        .reply(200, { success: true });
+
+      await botCheck.verify("tok-123", "203.0.113.9");
+
+      // Sent as form encoding, which is what the endpoint expects.
+      const params = new URLSearchParams(received);
+      assert.equal(params.get("secret"), "test-secret");
+      assert.equal(params.get("response"), "tok-123");
+      assert.equal(params.get("remoteip"), "203.0.113.9");
+    });
+
+    test("rejects a token Cloudflare refuses, surfacing the error codes", async () => {
+      nock(TURNSTILE_HOST)
+        .post(TURNSTILE_PATH)
+        .reply(200, { success: false, "error-codes": ["invalid-input-response", "timeout-or-duplicate"] });
+
+      const result = await botCheck.verify("bad-token", "1.2.3.4");
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "invalid-input-response,timeout-or-duplicate");
+    });
+
+    test("rejects a missing token without calling Cloudflare", async () => {
+      const result = await botCheck.verify(undefined, "1.2.3.4");
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "missing_token");
+      assert.equal(nock.pendingMocks().length, 0, "no request should have been attempted");
+    });
+
+    test("FAILS OPEN when Cloudflare is unreachable", async () => {
+      // The deliberate choice: blocking every signup during a third-party
+      // outage is worse than absorbing some bots, and the daily send cap still
+      // bounds the cost. Previously asserted only by a code comment.
+      nock(TURNSTILE_HOST).post(TURNSTILE_PATH).replyWithError("ECONNREFUSED");
+
+      const result = await botCheck.verify("tok", "1.2.3.4");
+      assert.equal(result.ok, true, "must not block the request");
+      assert.equal(result.degraded, true, "but must mark itself degraded");
+    });
+
+    test("FAILS OPEN on a Cloudflare 5xx", async () => {
+      nock(TURNSTILE_HOST).post(TURNSTILE_PATH).reply(503, "upstream unavailable");
+      const result = await botCheck.verify("tok", "1.2.3.4");
+      assert.equal(result.ok, true);
+      assert.equal(result.degraded, true);
+    });
+
+    test("FAILS OPEN on timeout", async () => {
+      nock(TURNSTILE_HOST).post(TURNSTILE_PATH).delayConnection(9000).reply(200, { success: true });
+      const result = await botCheck.verify("tok", "1.2.3.4");
+      assert.equal(result.ok, true);
+      assert.equal(result.degraded, true);
+    });
+
+    test("a malformed Cloudflare body is treated as a rejection, not a pass", async () => {
+      // Absence of success:true must never read as success.
+      nock(TURNSTILE_HOST).post(TURNSTILE_PATH).reply(200, { unexpected: "shape" });
+      const result = await botCheck.verify("tok", "1.2.3.4");
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "rejected");
+    });
+  });
+
+  // --- Termii --------------------------------------------------------------
+
+  describe("sendSMSTermii", () => {
+    test("is actually exported", () => {
+      // Regression guard: it was imported by name in otp.service but never
+      // exported, so it silently resolved to undefined and every real OTP send
+      // threw into a catch block that answered 200 anyway.
+      assert.equal(typeof sendSMSTermii, "function");
+    });
+
+    test("posts the payload Termii expects", async () => {
+      let body;
+      nock(TERMII_HOST)
+        .post(TERMII_PATH, (b) => {
+          body = b;
+          return true;
+        })
+        .reply(200, { message: "Successfully Sent" });
+
+      process.env.TERMII_SENDER_ID = "SOROMAN";
+      const result = await sendSMSTermii("08012345678", "Your code is 123456");
+
+      assert.equal(result.success, true);
+      assert.equal(body.to, "2348012345678", "E.164 digits with no leading +");
+      assert.equal(body.from, "SOROMAN");
+      assert.equal(body.sms, "Your code is 123456");
+      assert.equal(body.type, "plain");
+      assert.equal(body.channel, "generic");
+      assert.ok("api_key" in body);
+    });
+
+    test("formats an international recipient correctly", async () => {
+      let body;
+      nock(TERMII_HOST)
+        .post(TERMII_PATH, (b) => {
+          body = b;
+          return true;
+        })
+        .reply(200, { code: "ok" });
+
+      await sendSMSTermii("+447400123456", "hello");
+      assert.equal(body.to, "447400123456", "not coerced to a Nigerian prefix");
+    });
+
+    test("reports failure when Termii declines", async () => {
+      nock(TERMII_HOST).post(TERMII_PATH).reply(200, { message: "Insufficient balance" });
+      const result = await sendSMSTermii("08012345678", "hi");
+      assert.equal(result.success, false);
+      assert.equal(result.message, "Insufficient balance");
+    });
+  });
+
+  // --- the real OTP send path ---------------------------------------------
+
+  describe("otp.service with the dev bypass OFF", () => {
+    const ORIGINAL_DEV = process.env.OTP_DEV_MODE;
+    let customer;
+
+    before(async () => {
+      customer = await customerRepo.findByPhone("+2348122000001");
+      if (!customer) {
+        customer = await customerRepo.create({
+          name: "SMS Path Fixture",
+          phone: "+2348122000001",
+          status: "Active",
+        });
+      }
+    });
+
+    beforeEach(async () => {
+      // The suite normally runs with the bypass on, which skips dispatch
+      // entirely — so this whole path was previously never executed.
+      process.env.OTP_DEV_MODE = "false";
+      await customerOtpRepo.invalidateLive(customer.id);
+    });
+
+    afterEach(() => {
+      process.env.OTP_DEV_MODE = ORIGINAL_DEV;
+    });
+
+    test("issues a random code and dispatches it over SMS", async () => {
+      let body;
+      nock(TERMII_HOST)
+        .post(TERMII_PATH, (b) => {
+          body = b;
+          return true;
+        })
+        .reply(200, { message: "Successfully Sent" });
+
+      const result = await otpService.issueAndSend(customer, {
+        action: "login",
+        requestIp: "203.0.113.10",
+      });
+
+      assert.equal(result.sent, true);
+      assert.equal(result.reason, null);
+
+      const sentCode = body.sms.match(/\b(\d{6})\b/)?.[1];
+      assert.ok(sentCode, `no 6-digit code found in: ${body.sms}`);
+      assert.notEqual(sentCode, process.env.OTP_DEV_CODE, "a real random code, not the dev one");
+
+      // The code that went out is the one that verifies.
+      const live = await customerOtpRepo.findLive(customer.id);
+      assert.equal(live.codeHash, customerOtpRepo.hashCode(customer.id, sentCode));
+    });
+
+    test("a failed dispatch leaves the code usable and reports the reason", async () => {
+      nock(TERMII_HOST).post(TERMII_PATH).replyWithError("network down");
+
+      const result = await otpService.issueAndSend(customer, {
+        action: "login",
+        requestIp: "203.0.113.11",
+      });
+
+      assert.equal(result.sent, false);
+      assert.equal(result.reason, "send_failed");
+      assert.ok(
+        await customerOtpRepo.findLive(customer.id),
+        "the row stays live so the customer can retry rather than being stuck"
+      );
+    });
+
+    test("an SMS-incapable number is refused before any dispatch", async () => {
+      const tollFree = { id: customer.id, phone: "+2348000000001" };
+      const result = await otpService.issueAndSend(tollFree, {
+        action: "login",
+        requestIp: "203.0.113.12",
+      });
+
+      assert.equal(result.sent, false);
+      assert.match(result.reason, /not_sms_capable/);
+      assert.equal(nock.pendingMocks().length, 0, "no Termii call attempted");
+    });
+  });
+});
