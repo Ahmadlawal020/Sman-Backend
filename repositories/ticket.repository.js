@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { tickets, orders, customers, depots, products, admins } = require("../db/schema");
+const { tickets, orders, customers, depots, products, staff } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(tickets).where(eq(tickets.id, id)).limit(1);
@@ -56,16 +56,16 @@ const findByIdFull = async (id) => {
       productName: products.name,
       productSku: products.sku,
       productUnit: products.unit,
-      redeemerFirstName: admins.firstName,
-      redeemerSurname: admins.surname,
-      redeemerEmail: admins.email,
+      redeemerFirstName: staff.firstName,
+      redeemerSurname: staff.surname,
+      redeemerEmail: staff.email,
     })
     .from(tickets)
     .leftJoin(orders, eq(tickets.orderId, orders.id))
     .leftJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
-    .leftJoin(admins, eq(tickets.redeemedBy, admins.id))
+    .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
     .where(eq(tickets.id, id))
     .limit(1);
   return row || null;
@@ -126,15 +126,15 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
         customerName: customers.name,
         productName: products.name,
         depotName: depots.name,
-        redeemerFirstName: admins.firstName,
-        redeemerSurname: admins.surname,
+        redeemerFirstName: staff.firstName,
+        redeemerSurname: staff.surname,
       })
       .from(tickets)
       .leftJoin(orders, eq(tickets.orderId, orders.id))
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .leftJoin(depots, eq(orders.depotId, depots.id))
       .leftJoin(products, eq(orders.productId, products.id))
-      .leftJoin(admins, eq(tickets.redeemedBy, admins.id))
+      .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
       .where(whereClause)
       .orderBy(desc(tickets.createdAt))
       .limit(limitNum)

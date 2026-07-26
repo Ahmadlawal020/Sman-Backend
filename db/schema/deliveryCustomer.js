@@ -15,7 +15,7 @@ const {
   deliveryCustomerTypeEnum,
   deliveryCustomerStatusEnum,
 } = require("./enums");
-const { admins } = require("./admin");
+const { staff } = require("./staff");
 
 const deliveryCustomers = pgTable(
   "delivery_customers",
@@ -48,7 +48,7 @@ const deliveryCustomers = pgTable(
     status: deliveryCustomerStatusEnum("status").default("active").notNull(),
     notes: text("notes").default(""),
     lastTransactionDate: timestamp("last_transaction_date", { withTimezone: true }),
-    createdBy: integer("created_by").references(() => admins.id, { onDelete: "set null" }),
+    createdBy: integer("created_by").references(() => staff.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const { pfiRepo, depotRepo, productRepo, adminRepo, orderRepo } = require("../../repositories");
+const { pfiRepo, depotRepo, productRepo, staffRepo, orderRepo } = require("../../repositories");
 
 const parseDate = (val) => {
   if (!val) return null;
@@ -11,7 +11,7 @@ const parseDate = (val) => {
 const resolveOfficerName = async (id) => {
   if (!id) return "";
   try {
-    const admin = await adminRepo.findById(id);
+    const admin = await staffRepo.findById(id);
     if (!admin) return "";
     return `${admin.firstName || ""} ${admin.surname || ""}`.trim();
   } catch {

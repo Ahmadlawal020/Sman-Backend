@@ -15,7 +15,7 @@ const { sql } = require("drizzle-orm");
 const { pfiStatusEnum } = require("./enums");
 const { depots } = require("./depot");
 const { products } = require("./product");
-const { admins } = require("./admin");
+const { staff } = require("./staff");
 
 const pfis = pgTable(
   "pfis",
@@ -35,18 +35,18 @@ const pfis = pgTable(
     soldQtyLitres: integer("sold_qty_litres").default(0).notNull(),
     totalAmount: decimal("total_amount", { precision: 15, scale: 2 }).default("0"),
     unitPrice: decimal("unit_price", { precision: 15, scale: 2 }).default("0"),
-    // Officers (FK to admins)
-    auditOfficerId: integer("audit_officer_id").references(() => admins.id, { onDelete: "set null" }),
+    // Officers (FK to staff)
+    auditOfficerId: integer("audit_officer_id").references(() => staff.id, { onDelete: "set null" }),
     auditOfficerName: varchar("audit_officer_name", { length: 255 }).default(""),
-    productOfficerId: integer("product_officer_id").references(() => admins.id, { onDelete: "set null" }),
+    productOfficerId: integer("product_officer_id").references(() => staff.id, { onDelete: "set null" }),
     productOfficerName: varchar("product_officer_name", { length: 255 }).default(""),
-    itComplianceOfficerId: integer("it_compliance_officer_id").references(() => admins.id, { onDelete: "set null" }),
+    itComplianceOfficerId: integer("it_compliance_officer_id").references(() => staff.id, { onDelete: "set null" }),
     itComplianceOfficerName: varchar("it_compliance_officer_name", { length: 255 }).default(""),
-    securityExitOfficerId: integer("security_exit_officer_id").references(() => admins.id, { onDelete: "set null" }),
+    securityExitOfficerId: integer("security_exit_officer_id").references(() => staff.id, { onDelete: "set null" }),
     securityExitOfficerName: varchar("security_exit_officer_name", { length: 255 }).default(""),
-    commissionOfficerId: integer("commission_officer_id").references(() => admins.id, { onDelete: "set null" }),
+    commissionOfficerId: integer("commission_officer_id").references(() => staff.id, { onDelete: "set null" }),
     commissionOfficerName: varchar("commission_officer_name", { length: 255 }).default(""),
-    salesManagerId: integer("sales_manager_id").references(() => admins.id, { onDelete: "set null" }),
+    salesManagerId: integer("sales_manager_id").references(() => staff.id, { onDelete: "set null" }),
     salesManagerName: varchar("sales_manager_name", { length: 255 }).default(""),
     // Vessel & Surveyor
     vesselBroker: varchar("vessel_broker", { length: 255 }).default(""),
