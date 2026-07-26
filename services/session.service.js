@@ -197,15 +197,19 @@ const revokeAll = (realm, principalId, reason = "logout_all") =>
  * working until its access token expires.
  */
 async function loadActive(realm, sessionId, principalId) {
-  const session = await sessionRepo.findById(sessionId);
-  if (!session || session.revokedAt) return { ok: false, reason: "session_revoked" };
-  if (new Date(session.expiresAt) <= new Date()) return { ok: false, reason: "session_expired" };
-  if (session.principalType !== realm) return { ok: false, reason: "realm_mismatch" };
+  const row = await sessionRepo.findWithPrincipal(realm, sessionId);
+  if (!row) return { ok: false, reason: "session_not_found" };
 
+  const { session, principal } = row;
+
+  if (session.revokedAt) return { ok: false, reason: "session_revoked" };
+  if (new Date(session.expiresAt) <= new Date()) return { ok: false, reason: "session_expired" };
+
+  // The token's subject must match the session's owner. The join already
+  // guarantees the realm, but not that this token belongs to this session.
   const owner = realm === "staff" ? session.staffId : session.customerId;
   if (owner !== principalId) return { ok: false, reason: "principal_mismatch" };
 
-  const principal = await principalRepo(realm).findById(principalId);
   if (!isPrincipalUsable(realm, principal)) return { ok: false, reason: "principal_unusable" };
 
   return { ok: true, session, principal };

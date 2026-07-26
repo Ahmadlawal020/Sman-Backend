@@ -234,6 +234,50 @@ describe("session.repository — realm discipline and atomic revoke", () => {
     assert.equal(staffRow.revokedAt, null, "staff sessions untouched");
   });
 
+  test("findWithPrincipal returns the session and its owner together", async () => {
+    const token = sessionRepo.generateToken();
+    const created = await sessionRepo.create("staff", staffId, {
+      token,
+      familyId: crypto.randomUUID(),
+      expiresAt: future(),
+    });
+
+    const row = await sessionRepo.findWithPrincipal("staff", created.id);
+    assert.ok(row, "one round trip returns both");
+    assert.equal(row.session.id, created.id);
+    assert.equal(row.principal.id, staffId);
+    assert.ok(row.principal.email, "the principal row is fully hydrated");
+  });
+
+  test("findWithPrincipal cannot resolve a session from the wrong realm", async () => {
+    // The join is on the realm's own arc column, so a customer session queried
+    // as staff joins against a NULL staff_id. Realm confusion is structurally
+    // impossible here, not merely checked afterwards.
+    const customerSession = await sessionRepo.create("customer", customerId, {
+      token: sessionRepo.generateToken(),
+      familyId: crypto.randomUUID(),
+      expiresAt: future(),
+    });
+
+    assert.equal(
+      await sessionRepo.findWithPrincipal("staff", customerSession.id),
+      null,
+      "a customer session must not resolve in the staff realm"
+    );
+    assert.ok(
+      await sessionRepo.findWithPrincipal("customer", customerSession.id),
+      "but does resolve in its own"
+    );
+  });
+
+  test("findWithPrincipal still requires a realm", async () => {
+    await assert.rejects(
+      async () => sessionRepo.findWithPrincipal(undefined, 1),
+      TypeError,
+      "the realm discipline must survive the join"
+    );
+  });
+
   test("revoking records the successor in the same statement", async () => {
     const familyId = crypto.randomUUID();
     const old = await sessionRepo.create("customer", customerId, {

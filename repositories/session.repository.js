@@ -1,7 +1,9 @@
 const crypto = require("crypto");
 const { eq, and, isNull, gt, desc, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { sessions } = require("../db/schema");
+const { sessions, staff, customers } = require("../db/schema");
+
+const PRINCIPAL_TABLES = { staff, customer: customers };
 
 const REALMS = Object.freeze(["staff", "customer"]);
 
@@ -88,6 +90,35 @@ const findByToken = async (realm, token, tx = db) => {
 
 const findById = async (id, tx = db) => {
   const [row] = await tx.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+  return row || null;
+};
+
+/**
+ * Session and its owner in one round trip.
+ *
+ * This runs on every authenticated request, and the database is network-
+ * attached (Neon), so a second round trip is not free the way it would be
+ * against a local Postgres. Joining halves it without introducing a cache —
+ * caching would trade a provably correct revocation check for one whose
+ * correctness depends on invalidation never being missed.
+ *
+ * The join is on the realm's own arc column, so a customer session queried
+ * with realm "staff" joins against a NULL staff_id and returns nothing. Realm
+ * confusion is structurally impossible here rather than merely checked.
+ *
+ * @returns {{session: object, principal: object}|null}
+ */
+const findWithPrincipal = async (realm, id) => {
+  assertRealm(realm);
+  const principalTable = PRINCIPAL_TABLES[realm];
+
+  const [row] = await db
+    .select({ session: sessions, principal: principalTable })
+    .from(sessions)
+    .innerJoin(principalTable, eq(principalColumn(realm), principalTable.id))
+    .where(and(eq(sessions.id, id), eq(sessions.principalType, realm)))
+    .limit(1);
+
   return row || null;
 };
 
@@ -200,6 +231,7 @@ module.exports = {
   create,
   findByToken,
   findById,
+  findWithPrincipal,
   listActive,
   revokeById,
   revokeOwnedById,

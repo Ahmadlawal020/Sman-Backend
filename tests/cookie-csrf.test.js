@@ -113,6 +113,21 @@ describe("cookie transport and CSRF", () => {
     assert.ok(parseCookies(res)[STAFF_COOKIE], "and the cookie is still set");
   });
 
+  test("transport mode is recorded, so the body path can be proven dead", async () => {
+    // "Delete the body-token path once the dashboard migrates" is a condition
+    // nobody can prove is met. Counting makes it provable.
+    const { getTransportCounts } = require("../services/cookie.service");
+    const before = getTransportCounts();
+
+    await login();
+    await login({ "X-Auth-Transport": "cookie" });
+
+    const after = getTransportCounts();
+    assert.equal(after.staff.body, before.staff.body + 1, "body issuance counted");
+    assert.equal(after.staff.cookie, before.staff.cookie + 1, "cookie issuance counted");
+    assert.equal(after.customer.body, before.customer.body, "realms are counted separately");
+  });
+
   // --- refresh via cookie --------------------------------------------------
 
   test("refresh works from the cookie with a matching CSRF header", async () => {

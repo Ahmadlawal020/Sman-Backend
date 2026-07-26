@@ -110,13 +110,49 @@ function readRefreshToken(req, realm) {
 }
 
 /**
+ * In-process tally of how tokens are being transported, per realm.
+ *
+ * The body-token path is scheduled for removal, and "remove it once the
+ * dashboard has migrated" is the kind of conditional that never resolves —
+ * nobody can prove it is safe to delete. This makes it provable: when
+ * `body` has been 0 across a full release cycle, the code path can go.
+ *
+ * Counters are per-process and reset on deploy, so they are a signal, not an
+ * audit. The log lines are the durable record.
+ */
+const transportCounts = {
+  staff: { cookie: 0, body: 0 },
+  customer: { cookie: 0, body: 0 },
+};
+
+function recordTransport(req, realm, mode) {
+  transportCounts[realm][mode] += 1;
+
+  // One line per token issuance — login and refresh only, not every request.
+  // The user agent is included truncated because the actionable question is
+  // *which client* still needs migrating, and it is already stored on the
+  // session row anyway.
+  const ua = String(req.get("user-agent") || "unknown").slice(0, 80);
+  console.info(
+    `[auth.transport] realm=${realm} transport=${mode} path=${req.originalUrl} ua="${ua}"`
+  );
+}
+
+/** Snapshot for diagnostics. */
+const getTransportCounts = () => JSON.parse(JSON.stringify(transportCounts));
+
+/**
  * Attach a freshly issued token to the response, honouring the client's
  * declared transport. Returns what the body should carry, if anything.
  */
 function applyIssuedToken(req, res, realm, refreshToken) {
   setRefreshCookie(res, realm, refreshToken);
   setCsrfCookie(res, realm);
-  return wantsBodyToken(req) ? refreshToken : undefined;
+
+  const useBody = wantsBodyToken(req);
+  recordTransport(req, realm, useBody ? "body" : "cookie");
+
+  return useBody ? refreshToken : undefined;
 }
 
 module.exports = {
@@ -126,6 +162,7 @@ module.exports = {
   sameSite,
   isSecure,
   wantsBodyToken,
+  getTransportCounts,
   setRefreshCookie,
   setCsrfCookie,
   clearRefreshCookie,
