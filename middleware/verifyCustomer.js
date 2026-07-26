@@ -40,18 +40,25 @@ const authenticateCustomer = async (req, res, next) => {
 };
 
 /**
- * Ordering requires an activated account. Authentication and browsing do not —
- * a Pending customer can sign in and watch their application, they just cannot
- * transact.
+ * Ordering requires an activated account.
+ *
+ * There is no staff approval step — proving control of the phone number is the
+ * activation gate, so `Pending` only ever means "registered but not yet
+ * verified". This therefore rejects two distinct cases: a registration that
+ * was abandoned before the code was used, and an account staff deactivated.
  *
  * Enforced here rather than in the UI, because the UI is not a security
  * boundary.
  */
 const requireActiveCustomer = (req, res, next) => {
-  if (req.customer?.status !== "Active") {
+  const status = req.customer?.status;
+  if (status !== "Active") {
     return res.status(403).json({
       success: false,
-      message: "Your account is pending approval. Please contact Soroman to activate it.",
+      message:
+        status === "Pending"
+          ? "Verify your phone number to activate your account."
+          : "This account is not active. Please contact Soroman.",
     });
   }
   next();

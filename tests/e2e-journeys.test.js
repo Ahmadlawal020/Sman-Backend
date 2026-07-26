@@ -7,7 +7,8 @@ const request = require("supertest");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { customerOtps } = require("../db/schema");
+const { customerOtps, customers } = require("../db/schema");
+const { eq } = require("drizzle-orm");
 const { customerRepo, sessionRepo } = require("../repositories");
 const { TEST_STAFF, ensureTestStaff, closeDb } = require("./helpers");
 
@@ -115,10 +116,11 @@ describe("end-to-end journeys", () => {
 
     const created = await customerRepo.findByPhone(phone);
     assert.ok(created, "customer created");
-    assert.equal(created.status, "Pending", "not Active until staff approve");
+    assert.equal(created.status, "Pending", "registered, but the number is not yet proven");
     assert.equal(created.phoneVerifiedAt, null, "phone unverified until the code is used");
 
-    // 2. Verify the code.
+    // 2. Verify the code. Proving control of the number IS the activation
+    //    gate — no staff approval step exists.
     const verified = await request(app)
       .post(`${PORTAL}/verify-otp`)
       .send({ phone, code: DEV_CODE });
@@ -126,13 +128,13 @@ describe("end-to-end journeys", () => {
     const deviceOne = verified.body.data;
     assert.ok(deviceOne.accessToken && deviceOne.refreshToken);
     assert.ok(deviceOne.customer.phoneVerifiedAt, "phone now verified");
-    assert.equal(deviceOne.customer.status, "Pending");
+    assert.equal(deviceOne.customer.status, "Active", "activated by proving the number");
 
-    // 3. Browse while Pending — allowed.
+    // 3. Browse.
     const me = await request(app)
       .get(`${PORTAL}/me`)
       .set("Authorization", `Bearer ${deviceOne.accessToken}`);
-    assert.equal(me.status, 200, "a Pending customer may sign in and browse");
+    assert.equal(me.status, 200, "signed in");
     assert.equal(me.body.data.customer.name, "Grace Hopper");
 
     // 4. Sign in from a second device, via login rather than register.
@@ -176,17 +178,18 @@ describe("end-to-end journeys", () => {
       .send({ refreshToken: deviceTwo.refreshToken });
     assert.equal(rotated.status, 200, "rotate");
 
-    // 8. Staff approve the account; the live session sees it without re-login.
-    await customerRepo.update(created.id, { status: "Active" });
-    const afterApproval = await request(app)
+    // 8. A staff-side deactivation reaches the live session without re-login,
+    //    because status is read from the row rather than baked into the token.
+    await customerRepo.update(created.id, { status: "Inactive" });
+    const afterDeactivation = await request(app)
       .get(`${PORTAL}/me`)
       .set("Authorization", `Bearer ${rotated.body.data.accessToken}`);
-    assert.equal(afterApproval.status, 200);
     assert.equal(
-      afterApproval.body.data.customer.status,
-      "Active",
-      "status is read from the row, so approval takes effect immediately"
+      afterDeactivation.status,
+      401,
+      "deactivation takes effect immediately, not at token expiry"
     );
+    await customerRepo.update(created.id, { status: "Active" });
 
     // 9. Sign out.
     const out = await request(app)
@@ -200,6 +203,65 @@ describe("end-to-end journeys", () => {
       401,
       "the session is gone"
     );
+  });
+
+  test("walk-in: staff create the customer at the desk, who later self-serves", async () => {
+    // The second creation path. Someone walks into the office, staff enter them
+    // on the desktop app, and they may later use the portal from their phone.
+    const phone = "+2348133000003";
+    await db.delete(customerOtps);
+    const stale = await customerRepo.findByPhone(phone);
+    if (stale) await customerRepo.deleteById(stale.id);
+
+    await ensureTestStaff();
+    const staff = (
+      await request(app)
+        .post("/api/auth/login")
+        .send({ email: TEST_STAFF.email, password: TEST_STAFF.password })
+    ).body.data;
+
+    // 1. Staff create them at the desk.
+    const created = await request(app)
+      .post("/api/customers")
+      .set("Authorization", `Bearer ${staff.accessToken}`)
+      .send({ name: "Walk In Buyer", phone: "0813 300 0003", companyName: "Desk Co" });
+
+    assert.equal(created.status, 201, "staff can create a customer");
+    const row = await customerRepo.findByPhone(phone);
+    assert.ok(row, "stored under the normalised E.164 number, not as typed");
+    assert.equal(
+      row.status,
+      "Active",
+      "staff met them in person — that vouching is the vetting, so no OTP gate applies"
+    );
+    assert.equal(row.phoneVerifiedAt, null, "but the number itself is still unproven");
+
+    // 2. Staff creation is idempotent-safe: the same number cannot be entered twice.
+    const duplicate = await request(app)
+      .post("/api/customers")
+      .set("Authorization", `Bearer ${staff.accessToken}`)
+      .send({ name: "Walk In Buyer Again", phone });
+    assert.equal(duplicate.status, 409, "duplicate phone is refused");
+
+    // 3. Later, they use the portal. They already exist, so this is a LOGIN —
+    //    register is not involved and would not have been correct.
+    await request(app).post(`${PORTAL}/request-otp`).send({ phone });
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`)
+      .send({ phone, code: DEV_CODE });
+
+    assert.equal(verified.status, 200, "a staff-created customer can sign in to the portal");
+    assert.equal(verified.body.data.customer.status, "Active", "still Active");
+    assert.ok(
+      verified.body.data.customer.phoneVerifiedAt,
+      "and the number is now proven as well"
+    );
+    assert.equal(verified.body.data.customer.name, "Walk In Buyer", "same record, not a new one");
+
+    // 4. One customer, not two. Queried directly rather than through findAll,
+    //    which clamps limit to 100 and could miss the row entirely.
+    const matches = await db.select().from(customers).where(eq(customers.phone, phone));
+    assert.equal(matches.length, 1, "the two creation paths must not fork the identity");
   });
 
   test("the two realms stay separated across a whole journey", async () => {

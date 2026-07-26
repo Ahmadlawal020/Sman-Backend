@@ -424,23 +424,72 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
   // --- account state -------------------------------------------------------
 
-  test("a Pending customer can authenticate but cannot order", async () => {
-    await resetCustomer(PHONES.pending, { status: "Pending" });
-    const { accessToken } = await signIn(PHONES.pending);
+  test("verifying the code activates the account — there is no staff approval", async () => {
+    // Proving control of the number IS the gate. Pending means "registered,
+    // phone not yet proven", not "awaiting a human".
+    await clearOtpHistory();
+    const stray = await customerRepo.findByPhone(PHONES.pending);
+    if (stray) await customerRepo.deleteById(stray.id);
 
-    const me = await request(app).get(`${BASE}/me`).set("Authorization", `Bearer ${accessToken}`);
-    assert.equal(me.status, 200, "Pending customers may sign in and browse");
-    assert.equal(me.body.data.customer.status, "Pending");
+    await request(app)
+      .post(`${BASE}/register`)
+      .send({ phone: PHONES.pending, name: "Newly Registered" });
 
-    // The ordering gate is middleware, asserted directly until §8 lands.
+    const beforeVerify = await customerRepo.findByPhone(PHONES.pending);
+    assert.equal(beforeVerify.status, "Pending", "unproven until the code is used");
+
+    const verified = await request(app)
+      .post(`${BASE}/verify-otp`)
+      .send({ phone: PHONES.pending, code: DEV_CODE });
+
+    assert.equal(verified.status, 200);
+    assert.equal(verified.body.data.customer.status, "Active", "promoted on first verification");
+    assert.ok(verified.body.data.customer.phoneVerifiedAt);
+  });
+
+  test("verification does not resurrect a deactivated account", async () => {
+    // Inactive is a staff decision; passing an OTP must never undo it.
+    const customer = await resetCustomer(PHONES.pending);
+    await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.pending });
+    await customerRepo.update(customer.id, { status: "Inactive" });
+
+    try {
+      const res = await request(app)
+        .post(`${BASE}/verify-otp`)
+        .send({ phone: PHONES.pending, code: DEV_CODE });
+
+      assert.equal(res.status, 401, "a deactivated account cannot authenticate");
+      const after = await customerRepo.findById(customer.id);
+      assert.equal(after.status, "Inactive", "and stays deactivated");
+      assert.ok(
+        await customerOtpRepo.findLive(customer.id),
+        "the code is not burned — the refusal happens before it is consumed"
+      );
+    } finally {
+      await customerRepo.update(customer.id, { status: "Active" });
+    }
+  });
+
+  test("the ordering gate still rejects anything not Active", async () => {
+    // Asserted directly until §8 ships a route that uses it.
     const { requireActiveCustomer } = require("../middleware/verifyCustomer");
-    let rejected = null;
+    for (const status of ["Pending", "Inactive"]) {
+      let outcome = null;
+      requireActiveCustomer(
+        { customer: { status } },
+        { status: (c) => ({ json: (b) => (outcome = { code: c, body: b }) }) },
+        () => (outcome = "allowed")
+      );
+      assert.equal(outcome.code, 403, `${status} must not be able to order`);
+    }
+
+    let allowed = null;
     requireActiveCustomer(
-      { customer: { status: "Pending" } },
-      { status: (c) => ({ json: (b) => (rejected = { code: c, body: b }) }) },
-      () => (rejected = "allowed")
+      { customer: { status: "Active" } },
+      { status: () => ({ json: () => {} }) },
+      () => (allowed = true)
     );
-    assert.equal(rejected.code, 403, "ordering requires an Active account");
+    assert.equal(allowed, true, "Active passes");
   });
 
   test("an Inactive customer's live session stops working", async () => {

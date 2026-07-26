@@ -170,6 +170,11 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
   const customer = await customerRepo.findByPhone(e164);
   if (!customer) return reject();
 
+  // A deactivated account must not be able to authenticate at all. Checked
+  // before the code is consumed, so a suspended customer's code is not burned,
+  // and answered with the same rejection so nothing is disclosed.
+  if (customer.status === "Inactive") return reject();
+
   const live = await customerOtpRepo.findLive(customer.id);
   if (!live) return reject();
 
@@ -194,10 +199,16 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
   const consumed = await customerOtpRepo.consume(live.id);
   if (!consumed) return reject();
 
-  const updated = await customerRepo.update(customer.id, {
-    phoneVerifiedAt: new Date(),
-    lastLoginAt: new Date(),
-  });
+  // Proving control of the number IS the activation gate — there is no staff
+  // approval step. `Pending` means "registered, phone not yet proven", and the
+  // first successful verification promotes it.
+  //
+  // Only Pending is promoted. `Inactive` is a staff decision and is refused
+  // above; passing an OTP must never undo a deactivation.
+  const patch = { phoneVerifiedAt: new Date(), lastLoginAt: new Date() };
+  if (customer.status === "Pending") patch.status = "Active";
+
+  const updated = await customerRepo.update(customer.id, patch);
 
   const { accessToken, refreshToken } = await sessionService.issue(
     REALM,
