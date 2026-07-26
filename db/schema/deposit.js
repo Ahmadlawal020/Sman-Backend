@@ -14,7 +14,7 @@ const {
 const { sql } = require("drizzle-orm");
 const { depositTypeEnum } = require("./enums");
 const { customers } = require("./customer");
-const { admins } = require("./admin");
+const { staff } = require("./staff");
 
 const deposits = pgTable(
   "deposits",
@@ -27,7 +27,7 @@ const deposits = pgTable(
     type: depositTypeEnum("type").notNull(),
     description: text("description").default(""),
     reference: varchar("reference", { length: 255 }).default(""),
-    recordedBy: integer("recorded_by").references(() => admins.id, { onDelete: "set null" }),
+    recordedBy: integer("recorded_by").references(() => staff.id, { onDelete: "set null" }),
     balanceAfter: decimal("balance_after", { precision: 15, scale: 2 }).default("0"),
     paystackDetails: jsonb("paystack_details"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { deposits, customers, admins } = require("../db/schema");
+const { deposits, customers, staff } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(deposits).where(eq(deposits.id, id)).limit(1);
@@ -24,13 +24,13 @@ const findByIdFull = async (id) => {
       customerName: customers.name,
       customerPhone: customers.phone,
       customerCompanyName: customers.companyName,
-      recorderFirstName: admins.firstName,
-      recorderSurname: admins.surname,
-      recorderEmail: admins.email,
+      recorderFirstName: staff.firstName,
+      recorderSurname: staff.surname,
+      recorderEmail: staff.email,
     })
     .from(deposits)
     .leftJoin(customers, eq(deposits.customerId, customers.id))
-    .leftJoin(admins, eq(deposits.recordedBy, admins.id))
+    .leftJoin(staff, eq(deposits.recordedBy, staff.id))
     .where(eq(deposits.id, id))
     .limit(1);
   return row || null;
@@ -69,12 +69,12 @@ const findAll = async ({ customer, page = 1, limit = 50 } = {}) => {
         customerName: customers.name,
         customerPhone: customers.phone,
         customerCompanyName: customers.companyName,
-        recorderFirstName: admins.firstName,
-        recorderSurname: admins.surname,
+        recorderFirstName: staff.firstName,
+        recorderSurname: staff.surname,
       })
       .from(deposits)
       .leftJoin(customers, eq(deposits.customerId, customers.id))
-      .leftJoin(admins, eq(deposits.recordedBy, admins.id))
+      .leftJoin(staff, eq(deposits.recordedBy, staff.id))
       .where(whereClause)
       .orderBy(desc(deposits.createdAt))
       .limit(limitNum)

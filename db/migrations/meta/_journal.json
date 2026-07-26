@@ -5,15 +5,29 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1784932231643,
-      "tag": "0000_parallel_red_wolf",
+      "when": 1785053181902,
+      "tag": "0000_late_gorgon",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1784982437185,
-      "tag": "0001_dry_shocker",
+      "when": 1785061199031,
+      "tag": "0001_sessions_and_customer_otps",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785073211491,
+      "tag": "0002_null_legacy_refresh_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785074832704,
+      "tag": "0003_drop_staff_refresh_token",
       "breakpoints": true
     }
   ]

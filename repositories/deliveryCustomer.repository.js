@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql, ne } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { deliveryCustomers, deliverySales, admins } = require("../db/schema");
+const { deliveryCustomers, deliverySales, staff } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db

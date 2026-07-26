@@ -1,174 +1,9 @@
 {
-  "id": "d7ccbc8b-288e-4256-8ece-7ca2a93b3047",
-  "prevId": "304019fb-d0c1-4500-a186-75879dbdf23b",
+  "id": "d92f7ca1-8547-4591-ae31-6f5e49a17941",
+  "prevId": "7481d101-846f-4f49-8dde-23cc0383972a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.admins": {
-      "name": "admins",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "first_name": {
-          "name": "first_name",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "surname": {
-          "name": "surname",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "other_names": {
-          "name": "other_names",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "email": {
-          "name": "email",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "phone_number": {
-          "name": "phone_number",
-          "type": "varchar(30)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "password": {
-          "name": "password",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_password_set": {
-          "name": "is_password_set",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "password_reset_token": {
-          "name": "password_reset_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "password_reset_expires": {
-          "name": "password_reset_expires",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "roles": {
-          "name": "roles",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "ARRAY['admin']::text[]"
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "suspended": {
-          "name": "suspended",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "profile_picture_url": {
-          "name": "profile_picture_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "profile_picture_public_id": {
-          "name": "profile_picture_public_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refresh_token": {
-          "name": "refresh_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_login_at": {
-          "name": "last_login_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "admins_email_idx": {
-          "name": "admins_email_idx",
-          "columns": [
-            {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "admins_refresh_token_idx": {
-          "name": "admins_refresh_token_idx",
-          "columns": [
-            {
-              "expression": "refresh_token",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.customers": {
       "name": "customers",
       "schema": "",
@@ -269,6 +104,18 @@
           "notNull": false,
           "default": "''"
         },
+        "phone_verified_at": {
+          "name": "phone_verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -332,6 +179,135 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customer_otps": {
+      "name": "customer_otps",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code_hash": {
+          "name": "code_hash",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_ip": {
+          "name": "request_ip",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "customer_otps_lookup_idx": {
+          "name": "customer_otps_lookup_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_otps_sweep_idx": {
+          "name": "customer_otps_sweep_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_otps_created_idx": {
+          "name": "customer_otps_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "customer_otps_customer_id_customers_id_fk": {
+          "name": "customer_otps_customer_id_customers_id_fk",
+          "tableFrom": "customer_otps",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -590,10 +566,10 @@
         }
       },
       "foreignKeys": {
-        "delivery_customers_created_by_admins_id_fk": {
-          "name": "delivery_customers_created_by_admins_id_fk",
+        "delivery_customers_created_by_staff_id_fk": {
+          "name": "delivery_customers_created_by_staff_id_fk",
           "tableFrom": "delivery_customers",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "created_by"
           ],
@@ -1098,10 +1074,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "delivery_notes_created_by_admins_id_fk": {
-          "name": "delivery_notes_created_by_admins_id_fk",
+        "delivery_notes_created_by_staff_id_fk": {
+          "name": "delivery_notes_created_by_staff_id_fk",
           "tableFrom": "delivery_notes",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "created_by"
           ],
@@ -1519,10 +1495,10 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "deposits_recorded_by_admins_id_fk": {
-          "name": "deposits_recorded_by_admins_id_fk",
+        "deposits_recorded_by_staff_id_fk": {
+          "name": "deposits_recorded_by_staff_id_fk",
           "tableFrom": "deposits",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "recorded_by"
           ],
@@ -1995,8 +1971,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "admin_id": {
-          "name": "admin_id",
+        "staff_id": {
+          "name": "staff_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -2020,7 +1996,7 @@
               "nulls": "last"
             },
             {
-              "expression": "admin_id",
+              "expression": "staff_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2046,11 +2022,11 @@
           "method": "btree",
           "with": {}
         },
-        "depot_staff_admin_idx": {
-          "name": "depot_staff_admin_idx",
+        "depot_staff_staff_idx": {
+          "name": "depot_staff_staff_idx",
           "columns": [
             {
-              "expression": "admin_id",
+              "expression": "staff_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2076,12 +2052,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "depot_staff_admin_id_admins_id_fk": {
-          "name": "depot_staff_admin_id_admins_id_fk",
+        "depot_staff_staff_id_staff_id_fk": {
+          "name": "depot_staff_staff_id_staff_id_fk",
           "tableFrom": "depot_staff",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
-            "admin_id"
+            "staff_id"
           ],
           "columnsTo": [
             "id"
@@ -2339,6 +2315,171 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.staff": {
+      "name": "staff",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "surname": {
+          "name": "surname",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "other_names": {
+          "name": "other_names",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone_number": {
+          "name": "phone_number",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_password_set": {
+          "name": "is_password_set",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "password_reset_token": {
+          "name": "password_reset_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "password_reset_expires": {
+          "name": "password_reset_expires",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "roles": {
+          "name": "roles",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY['admin']::text[]"
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "suspended": {
+          "name": "suspended",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "profile_picture_url": {
+          "name": "profile_picture_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "profile_picture_public_id": {
+          "name": "profile_picture_public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "staff_email_idx": {
+          "name": "staff_email_idx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "staff_refresh_token_idx": {
+          "name": "staff_refresh_token_idx",
+          "columns": [
+            {
+              "expression": "refresh_token",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -3008,10 +3149,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_audit_officer_id_admins_id_fk": {
-          "name": "pfis_audit_officer_id_admins_id_fk",
+        "pfis_audit_officer_id_staff_id_fk": {
+          "name": "pfis_audit_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "audit_officer_id"
           ],
@@ -3021,10 +3162,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_product_officer_id_admins_id_fk": {
-          "name": "pfis_product_officer_id_admins_id_fk",
+        "pfis_product_officer_id_staff_id_fk": {
+          "name": "pfis_product_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "product_officer_id"
           ],
@@ -3034,10 +3175,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_it_compliance_officer_id_admins_id_fk": {
-          "name": "pfis_it_compliance_officer_id_admins_id_fk",
+        "pfis_it_compliance_officer_id_staff_id_fk": {
+          "name": "pfis_it_compliance_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "it_compliance_officer_id"
           ],
@@ -3047,10 +3188,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_security_exit_officer_id_admins_id_fk": {
-          "name": "pfis_security_exit_officer_id_admins_id_fk",
+        "pfis_security_exit_officer_id_staff_id_fk": {
+          "name": "pfis_security_exit_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "security_exit_officer_id"
           ],
@@ -3060,10 +3201,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_commission_officer_id_admins_id_fk": {
-          "name": "pfis_commission_officer_id_admins_id_fk",
+        "pfis_commission_officer_id_staff_id_fk": {
+          "name": "pfis_commission_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "commission_officer_id"
           ],
@@ -3073,10 +3214,10 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "pfis_sales_manager_id_admins_id_fk": {
-          "name": "pfis_sales_manager_id_admins_id_fk",
+        "pfis_sales_manager_id_staff_id_fk": {
+          "name": "pfis_sales_manager_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "sales_manager_id"
           ],
@@ -3502,10 +3643,10 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "tickets_redeemed_by_admins_id_fk": {
-          "name": "tickets_redeemed_by_admins_id_fk",
+        "tickets_redeemed_by_staff_id_fk": {
+          "name": "tickets_redeemed_by_staff_id_fk",
           "tableFrom": "tickets",
-          "tableTo": "admins",
+          "tableTo": "staff",
           "columnsFrom": [
             "redeemed_by"
           ],
@@ -3609,29 +3750,253 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
+    },
+    "public.sessions": {
+      "name": "sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "principal_type": {
+          "name": "principal_type",
+          "type": "principal_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token_hash": {
+          "name": "refresh_token_hash",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "replaced_by_id": {
+          "name": "replaced_by_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_reason": {
+          "name": "revoked_reason",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "device_name": {
+          "name": "device_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sessions_refresh_token_hash_idx": {
+          "name": "sessions_refresh_token_hash_idx",
+          "columns": [
+            {
+              "expression": "refresh_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_staff_idx": {
+          "name": "sessions_staff_idx",
+          "columns": [
+            {
+              "expression": "staff_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sessions\".\"staff_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_customer_idx": {
+          "name": "sessions_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sessions\".\"customer_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_family_idx": {
+          "name": "sessions_family_idx",
+          "columns": [
+            {
+              "expression": "family_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_expiry_idx": {
+          "name": "sessions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sessions\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sessions_staff_id_staff_id_fk": {
+          "name": "sessions_staff_id_staff_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "sessions_customer_id_customers_id_fk": {
+          "name": "sessions_customer_id_customers_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "sessions_principal_arc_check": {
+          "name": "sessions_principal_arc_check",
+          "value": "(\"sessions\".\"principal_type\" = 'staff'    AND \"sessions\".\"staff_id\"    IS NOT NULL AND \"sessions\".\"customer_id\" IS NULL)\n       OR (\"sessions\".\"principal_type\" = 'customer' AND \"sessions\".\"customer_id\" IS NOT NULL AND \"sessions\".\"staff_id\"    IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
     }
   },
   "enums": {
-    "public.admin_role": {
-      "name": "admin_role",
-      "schema": "public",
-      "values": [
-        "admin",
-        "super_admin",
-        "product_officer",
-        "audit_officer",
-        "it_compliance_officer",
-        "security_exit_officer",
-        "commission_officer",
-        "sales_manager"
-      ]
-    },
     "public.customer_status": {
       "name": "customer_status",
       "schema": "public",
       "values": [
         "Active",
-        "Inactive"
+        "Inactive",
+        "Pending"
+      ]
+    },
+    "public.principal_type": {
+      "name": "principal_type",
+      "schema": "public",
+      "values": [
+        "staff",
+        "customer"
       ]
     },
     "public.driver_status": {

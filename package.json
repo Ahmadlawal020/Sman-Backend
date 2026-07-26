@@ -14,7 +14,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:check": "drizzle-kit check"
+    "db:check": "drizzle-kit check",
+    "test": "RATE_LIMIT_DISABLED=true OTP_DEV_MODE=true OTP_DEV_CODE=000000 OTP_DAILY_SEND_CAP=1000000 node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
@@ -22,6 +24,7 @@
   "dependencies": {
     "axios": "^1.18.1",
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
@@ -31,6 +34,7 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "libphonenumber-js": "^1.13.9",
     "postgres": "^3.4.9",
     "qrcode": "^1.5.4",
     "resend": "^6.17.2",
@@ -38,7 +42,9 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",
-    "nodemon": "^3.1.0"
+    "nock": "^14.0.16",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.2.2"
   },
   "overrides": {
     "esbuild": ">=0.25.0"

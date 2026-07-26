@@ -1,26 +1,11 @@
-const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
-const { adminRepo } = require("../../repositories");
+const { staffRepo, sessionRepo } = require("../../repositories");
 const { sendPasswordResetEmail } = require("../../services/email.service");
+const sessionService = require("../../services/session.service");
+const cookieService = require("../../services/cookie.service");
 
-const generateTokens = (user) => {
-  const { id, email, roles } = user;
-
-  const accessToken = jwt.sign(
-    { UserInfo: { id, email, roles } },
-    process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: "15m" }
-  );
-
-  const refreshToken = jwt.sign(
-    { id, email },
-    process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: "7d" }
-  );
-
-  return { accessToken, refreshToken };
-};
+const REALM = "staff";
 
 const getAdminPayload = (user) => ({
   id: user.id,
@@ -45,25 +30,28 @@ const handleLogin = asyncHandler(async (req, res) => {
 
   email = email.trim().toLowerCase();
 
-  const foundAdmin = await adminRepo.findByEmail(email);
+  const foundAdmin = await staffRepo.findByEmail(email);
   if (!foundAdmin || !foundAdmin.isActive || foundAdmin.suspended) {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  const match = await adminRepo.comparePassword(foundAdmin, password);
+  const match = await staffRepo.comparePassword(foundAdmin, password);
   if (!match) {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  const { accessToken, refreshToken } = generateTokens(foundAdmin);
-  await adminRepo.update(foundAdmin.id, {
-    refreshToken,
-    lastLoginAt: new Date(),
-  });
+  const { accessToken, refreshToken } = await sessionService.issue(
+    REALM,
+    foundAdmin,
+    sessionService.requestContext(req)
+  );
+  await staffRepo.update(foundAdmin.id, { lastLoginAt: new Date() });
+
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
 
   res.json({
     success: true,
@@ -71,59 +59,104 @@ const handleLogin = asyncHandler(async (req, res) => {
     data: {
       user: getAdminPayload(foundAdmin),
       accessToken,
-      refreshToken,
+      // Omitted when the client declared X-Auth-Transport: cookie.
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
     },
   });
 });
 
 const handleRefreshToken = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  if (!presented) {
     return res
       .status(400)
       .json({ success: false, message: "Refresh token required" });
   }
 
-  const foundAdmin = await adminRepo.findByRefreshToken(refreshToken);
-  if (!foundAdmin || !foundAdmin.isActive || foundAdmin.suspended) {
+  const result = await sessionService.rotate(
+    REALM,
+    presented,
+    sessionService.requestContext(req)
+  );
+
+  if (!result.ok) {
+    cookieService.clearRefreshCookie(res, REALM);
+    // Every failure answers identically. Telling the caller whether a token was
+    // merely stale, already rotated, or belonged to a suspended account would
+    // hand an attacker a probe — and the 403 shape is preserved from the
+    // previous implementation, which clients branch on.
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
 
-  jwt.verify(
-    refreshToken,
-    process.env.REFRESH_TOKEN_SECRET,
-    async (err, decoded) => {
-      if (err || foundAdmin.email !== decoded.email) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      }
+  const admin = await staffRepo.findById(result.session.staffId);
+  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, result.refreshToken);
 
-      const { accessToken, refreshToken: newRefresh } =
-        generateTokens(foundAdmin);
-      await adminRepo.update(foundAdmin.id, { refreshToken: newRefresh });
-
-      res.json({
-        success: true,
-        message: "Token refreshed",
-        data: {
-          user: getAdminPayload(foundAdmin),
-          accessToken,
-          refreshToken: newRefresh,
-        },
-      });
-    }
-  );
+  res.json({
+    success: true,
+    message: "Token refreshed",
+    data: {
+      user: getAdminPayload(admin),
+      accessToken: result.accessToken,
+      ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+    },
+  });
 });
 
 const handleLogout = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (typeof refreshToken !== "string" || !refreshToken) return res.sendStatus(204);
+  const { token: presented } = cookieService.readRefreshToken(req, REALM);
+  // Cleared regardless of whether the token resolved to a session — a stale
+  // cookie should not survive a logout attempt.
+  cookieService.clearRefreshCookie(res, REALM);
+  if (!presented) return res.sendStatus(204);
 
-  const foundAdmin = await adminRepo.findByRefreshToken(refreshToken);
-  if (!foundAdmin) return res.sendStatus(204);
-
-  await adminRepo.update(foundAdmin.id, { refreshToken: "" });
+  const revoked = await sessionService.revoke(REALM, presented, "logout");
+  if (!revoked) return res.sendStatus(204);
 
   res.status(200).json({ success: true, message: "Logged out" });
+});
+
+/** Revoke every session for the caller — the "sign out everywhere" control. */
+const handleLogoutAll = asyncHandler(async (req, res) => {
+  const revoked = await sessionService.revokeAll(REALM, req.user.id, "logout_all");
+  res.json({
+    success: true,
+    message: "Signed out of all devices",
+    data: { revokedCount: revoked.length },
+  });
+});
+
+/** The caller's live sessions. Never exposes the token hash. */
+const handleListSessions = asyncHandler(async (req, res) => {
+  const rows = await sessionRepo.listActive(REALM, req.user.id);
+  res.json({
+    success: true,
+    data: {
+      sessions: rows.map((s) => ({
+        id: s.id,
+        deviceName: s.deviceName,
+        userAgent: s.userAgent,
+        ipAddress: s.ipAddress,
+        lastUsedAt: s.lastUsedAt,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        current: req.authSession?.id === s.id,
+      })),
+    },
+  });
+});
+
+/** Revoke one device. Ownership is in the WHERE, not a post-fetch check. */
+const handleRevokeSession = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ success: false, message: "Invalid session id" });
+  }
+
+  const revoked = await sessionRepo.revokeOwnedById(REALM, req.user.id, id, "logout");
+  if (!revoked) {
+    return res.status(404).json({ success: false, message: "Session not found" });
+  }
+  res.json({ success: true, message: "Session revoked" });
 });
 
 const handleSetPassword = asyncHandler(async (req, res) => {
@@ -145,7 +178,7 @@ const handleSetPassword = asyncHandler(async (req, res) => {
 
   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-  const admin = await adminRepo.findByPasswordResetToken(hashedToken);
+  const admin = await staffRepo.findByPasswordResetToken(hashedToken);
   if (!admin) {
     return res.status(400).json({
       success: false,
@@ -153,12 +186,16 @@ const handleSetPassword = asyncHandler(async (req, res) => {
     });
   }
 
-  await adminRepo.update(admin.id, {
+  await staffRepo.update(admin.id, {
     password,
     isPasswordSet: true,
     passwordResetToken: null,
     passwordResetExpires: null,
   });
+
+  // A password change must end every existing session. Otherwise someone who
+  // reset the password to lock an intruder out leaves that intruder logged in.
+  await sessionService.revokeAll(REALM, admin.id, "password_change");
 
   res.json({
     success: true,
@@ -184,7 +221,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
         "If that email is registered, a password reset link has been sent.",
     });
 
-  const foundAdmin = await adminRepo.findByEmail(normalizedEmail);
+  const foundAdmin = await staffRepo.findByEmail(normalizedEmail);
   if (!foundAdmin || !foundAdmin.isActive) {
     return successResponse();
   }
@@ -195,7 +232,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
     .update(rawToken)
     .digest("hex");
 
-  await adminRepo.update(foundAdmin.id, {
+  await staffRepo.update(foundAdmin.id, {
     passwordResetToken: hashedToken,
     passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
   });
@@ -218,7 +255,7 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
 });
 
 const handleGetMe = asyncHandler(async (req, res) => {
-  const admin = await adminRepo.findById(req.user.id);
+  const admin = await staffRepo.findById(req.user.id);
   if (!admin) {
     return res.status(404).json({ success: false, message: "User not found" });
   }
@@ -235,6 +272,9 @@ module.exports = {
   handleLogin,
   handleRefreshToken,
   handleLogout,
+  handleLogoutAll,
+  handleListSessions,
+  handleRevokeSession,
   handleGetMe,
   handleSetPassword,
   handleForgotPassword,

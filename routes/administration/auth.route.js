@@ -4,12 +4,17 @@ const {
   handleLogin,
   handleRefreshToken,
   handleLogout,
+  handleLogoutAll,
+  handleListSessions,
+  handleRevokeSession,
   handleGetMe,
   handleSetPassword,
   handleForgotPassword,
 } = require("../../controllers/administration/auth.controller");
 const generateLimiter = require("../../middleware/generateLimiter");
-const verifyAdmin = require("../../middleware/verifyAdmin");
+const verifyStaff = require("../../middleware/verifyStaff");
+const { authenticateStaff } = require("../../middleware/verifyStaff");
+const { requireCsrfForCookieAuth } = require("../../middleware/csrf");
 
 const loginLimiter = generateLimiter({
   windowMs: 60 * 1000,
@@ -36,9 +41,18 @@ const setPasswordLimiter = generateLimiter({
 });
 
 router.post("/login", loginLimiter, handleLogin);
-router.post("/refresh", refreshLimiter, handleRefreshToken);
-router.post("/logout", refreshLimiter, handleLogout);
-router.get("/me", verifyAdmin, handleGetMe);
+// CSRF applies only when the refresh token arrives in a cookie; a caller
+// sending it in the body is not exposed to CSRF in the first place.
+router.post("/refresh", refreshLimiter, requireCsrfForCookieAuth("staff"), handleRefreshToken);
+router.post("/logout", refreshLimiter, requireCsrfForCookieAuth("staff"), handleLogout);
+router.get("/me", verifyStaff, handleGetMe);
+
+// Session management. `authenticateStaff` rather than the full `verifyStaff`:
+// signing out of your own devices is not an elevated action, and gating it on
+// admin roles would lock most staff out of their own security controls.
+router.post("/logout-all", authenticateStaff, handleLogoutAll);
+router.get("/sessions", authenticateStaff, handleListSessions);
+router.delete("/sessions/:id", authenticateStaff, handleRevokeSession);
 router.post("/set-password", setPasswordLimiter, handleSetPassword);
 router.post("/forgot-password", forgotPasswordLimiter, handleForgotPassword);
 

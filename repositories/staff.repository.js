@@ -1,29 +1,20 @@
 const { eq, and, or, ilike, desc, asc, sql, count, ne, isNull, isNotNull } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { admins } = require("../db/schema");
+const { staff } = require("../db/schema");
 const bcrypt = require("bcrypt");
 
 const findById = async (id) => {
   const numericId = parseInt(id, 10);
   const targetId = isNaN(numericId) ? id : numericId;
-  const [row] = await db.select().from(admins).where(eq(admins.id, targetId)).limit(1);
+  const [row] = await db.select().from(staff).where(eq(staff.id, targetId)).limit(1);
   return row || null;
 };
 
 const findByEmail = async (email) => {
   const [row] = await db
     .select()
-    .from(admins)
-    .where(eq(admins.email, email.toLowerCase()))
-    .limit(1);
-  return row || null;
-};
-
-const findByRefreshToken = async (token) => {
-  const [row] = await db
-    .select()
-    .from(admins)
-    .where(eq(admins.refreshToken, token))
+    .from(staff)
+    .where(eq(staff.email, email.toLowerCase()))
     .limit(1);
   return row || null;
 };
@@ -31,11 +22,11 @@ const findByRefreshToken = async (token) => {
 const findByPasswordResetToken = async (hashedToken) => {
   const [row] = await db
     .select()
-    .from(admins)
+    .from(staff)
     .where(
       and(
-        eq(admins.passwordResetToken, hashedToken),
-        sql`${admins.passwordResetExpires} > NOW()`
+        eq(staff.passwordResetToken, hashedToken),
+        sql`${staff.passwordResetExpires} > NOW()`
       )
     )
     .limit(1);
@@ -53,9 +44,9 @@ const findAll = async ({ search, page = 1, limit = 50 } = {}) => {
     const pattern = `%${search}%`;
     conditions.push(
       or(
-        ilike(admins.firstName, pattern),
-        ilike(admins.surname, pattern),
-        ilike(admins.email, pattern)
+        ilike(staff.firstName, pattern),
+        ilike(staff.surname, pattern),
+        ilike(staff.email, pattern)
       )
     );
   }
@@ -65,19 +56,19 @@ const findAll = async ({ search, page = 1, limit = 50 } = {}) => {
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(admins)
+      .from(staff)
       .where(whereClause)
-      .orderBy(desc(admins.createdAt))
+      .orderBy(desc(staff.createdAt))
       .limit(limitNum)
       .offset(offset),
     db
       .select({ total: count() })
-      .from(admins)
+      .from(staff)
       .where(whereClause),
   ]);
 
   return {
-    admins: rows,
+    staff: rows,
     pagination: {
       total,
       page: pageNum,
@@ -94,7 +85,7 @@ const create = async (data) => {
   if (insertData.email) {
     insertData.email = insertData.email.toLowerCase();
   }
-  const [row] = await db.insert(admins).values(insertData).returning();
+  const [row] = await db.insert(staff).values(insertData).returning();
   return row;
 };
 
@@ -107,27 +98,26 @@ const update = async (id, data) => {
     updateData.email = updateData.email.toLowerCase();
   }
   const [row] = await db
-    .update(admins)
+    .update(staff)
     .set(updateData)
-    .where(eq(admins.id, id))
+    .where(eq(staff.id, id))
     .returning();
   return row || null;
 };
 
 const deleteById = async (id) => {
-  const [row] = await db.delete(admins).where(eq(admins.id, id)).returning();
+  const [row] = await db.delete(staff).where(eq(staff.id, id)).returning();
   return row || null;
 };
 
-const comparePassword = async (admin, candidatePassword) => {
-  if (!admin.password) return false;
-  return bcrypt.compare(candidatePassword, admin.password);
+const comparePassword = async (staffMember, candidatePassword) => {
+  if (!staffMember.password) return false;
+  return bcrypt.compare(candidatePassword, staffMember.password);
 };
 
 module.exports = {
   findById,
   findByEmail,
-  findByRefreshToken,
   findByPasswordResetToken,
   findAll,
   create,

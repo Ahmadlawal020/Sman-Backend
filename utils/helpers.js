@@ -7,18 +7,8 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Normalizes a Nigerian phone number to 234XXXXXXXXXX format.
- * @param {string} phone
- * @returns {string}
- */
-function normalizePhone(phone) {
-  if (!phone) return phone;
-  let cleaned = phone.replace(/[\s\-()+]/g, "");
-  if (cleaned.startsWith("0")) cleaned = "234" + cleaned.slice(1);
-  if (/^[789]\d{9}$/.test(cleaned)) cleaned = "234" + cleaned;
-  return cleaned;
-}
+// `normalizePhone` lived here as a deprecated alias for utils/phone's toE164.
+// Its only caller now imports toE164 directly, so the indirection is gone.
 
 /**
  * Returns uppercase initials from a full name (e.g. "John Doe" → "J D").
@@ -35,4 +25,4 @@ function getCustomerInitials(name) {
     .join(" ");
 }
 
-module.exports = { escapeRegex, normalizePhone, getCustomerInitials };
+module.exports = { escapeRegex, getCustomerInitials };

@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { customerRepo, orderRepo, depositRepo } = require("../../repositories");
-const { normalizePhone } = require("../../utils/helpers");
+const { toE164 } = require("../../utils/phone");
 
 const getCustomers = asyncHandler(async (req, res) => {
   const { search, searchType, status, page = 1, limit = 50 } = req.query;
@@ -36,7 +36,18 @@ const createCustomer = asyncHandler(async (req, res) => {
     });
   }
 
-  const normalizedPhone = normalizePhone(phone);
+  const normalizedPhone = toE164(phone);
+
+  // toE164 returns null for a number that is not valid anywhere. Without this
+  // guard the null would reach customers.phone, which is notNull, and surface
+  // as a 500 instead of a 400.
+  if (!normalizedPhone) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "A valid phone number is required. International numbers must include a country code, e.g. +447400123456",
+    });
+  }
 
   if (await customerRepo.existsByPhone(normalizedPhone)) {
     return res.status(409).json({
@@ -85,15 +96,25 @@ const updateCustomer = asyncHandler(async (req, res) => {
     "status", "balance", "deposit", "previousDeposit",
   ];
 
+  // Validate before building updateData, so an invalid number cannot be
+  // written as null into the notNull phone column.
+  if (req.body.phone !== undefined && !toE164(req.body.phone)) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "A valid phone number is required. International numbers must include a country code, e.g. +447400123456",
+    });
+  }
+
   const updateData = {};
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
-      updateData[field] = field === "phone" ? normalizePhone(req.body[field]) : req.body[field];
+      updateData[field] = field === "phone" ? toE164(req.body[field]) : req.body[field];
     }
   }
 
   if (req.body.phone) {
-    const normalizedPhone = normalizePhone(req.body.phone);
+    const normalizedPhone = toE164(req.body.phone);
     if (await customerRepo.existsByPhone(normalizedPhone, customer.id)) {
       return res.status(409).json({
         success: false,

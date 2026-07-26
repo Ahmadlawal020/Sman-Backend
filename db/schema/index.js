@@ -1,5 +1,5 @@
 const enums = require("./enums");
-const adminSchema = require("./admin");
+const staffSchema = require("./staff");
 const customerSchema = require("./customer");
 const truckSchema = require("./truck");
 const driverSchema = require("./driver");
@@ -19,10 +19,12 @@ const deliveryNoteSchema = require("./deliveryNote");
 const deliveryInventorySchema = require("./deliveryInventory");
 const deliverySaleSchema = require("./deliverySale");
 const webhookEventSchema = require("./webhookEvent");
+const sessionSchema = require("./session");
+const customerOtpSchema = require("./customerOtp");
 
 module.exports = {
   ...enums,
-  ...adminSchema,
+  ...staffSchema,
   ...customerSchema,
   ...truckSchema,
   ...driverSchema,
@@ -42,4 +44,6 @@ module.exports = {
   ...deliveryInventorySchema,
   ...deliverySaleSchema,
   ...webhookEventSchema,
+  ...sessionSchema,
+  ...customerOtpSchema,
 };

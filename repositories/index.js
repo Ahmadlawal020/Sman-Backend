@@ -1,5 +1,5 @@
 module.exports = {
-  adminRepo: require("./admin.repository"),
+  staffRepo: require("./staff.repository"),
   customerRepo: require("./customer.repository"),
   truckRepo: require("./truck.repository"),
   driverRepo: require("./driver.repository"),
@@ -14,4 +14,6 @@ module.exports = {
   deliveryInventoryRepo: require("./deliveryInventory.repository"),
   deliverySaleRepo: require("./deliverySale.repository"),
   webhookEventRepo: require("./webhookEvent.repository"),
+  sessionRepo: require("./session.repository"),
+  customerOtpRepo: require("./customerOtp.repository"),
 };

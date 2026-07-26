@@ -19,6 +19,8 @@ app.use(cors(corsOptions));
 app.use("/api/webhooks", require("./routes/webhook.route"));
 
 app.use(express.json());
+// Express 5 has res.cookie but no req.cookies — it was removed in 6244c4f.
+app.use(require("cookie-parser")());
 
 // Express 5 leaves req.body undefined when no body was parsed (v4 defaulted
 // to {}). Controllers destructure req.body directly, so restore the v4 shape.
@@ -29,7 +31,7 @@ app.use((req, _res, next) => {
 
 // Routes
 app.use("/api/auth", require("./routes/administration/auth.route"));
-app.use("/api/admin", require("./routes/administration/admin.route"));
+app.use("/api/admin", require("./routes/administration/staff.route"));
 app.use("/api/dashboard", require("./routes/administration/dashboard.route"));
 app.use("/api/trucks", require("./routes/administration/truck.route"));
 app.use("/api/drivers", require("./routes/administration/driver.route"));
@@ -44,6 +46,11 @@ app.use("/api/delivery-sales", require("./routes/administration/deliverySale.rou
 app.use("/api/orders", require("./routes/administration/order.route"));
 app.use("/api/tickets", require("./routes/administration/ticket.route"));
 app.use("/api/deposits", require("./routes/administration/deposit.route"));
+
+// Customer-facing portal. Note it sits one character from the staff-only
+// /api/customers above — a readability hazard, not a routing bug: Express
+// matches mounts at segment boundaries, order-independently.
+app.use("/api/customer/auth", require("./routes/portal/auth.route"));
 
 // Health check
 app.get("/api/health", (req, res) => {
