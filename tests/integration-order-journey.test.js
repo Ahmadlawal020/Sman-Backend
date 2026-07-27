@@ -235,4 +235,102 @@ describe("integration — customer register → order → release → gates → 
     assert.equal(releasedEvent.actorType, "staff");
     assert.equal(releasedEvent.actorStaffId, release.staff.id);
   });
+
+  test("the same journey, but the CUSTOMER places their own order", async () => {
+    // Identical to the first journey in every downstream step — the only
+    // difference is the door the order comes through: the customer places it
+    // themselves at the portal, not the desk. Everything after must behave the
+    // same, proving the two order-entry paths converge on one lifecycle.
+    const phone = `+234813${String(RUN).slice(-6)}9`;
+
+    // ── 1. Customer registers, proves the phone, funds the wallet ────────────
+    const registered = await request(app)
+      .post(`${PORTAL}/register`)
+      .send({ name: "Self Serve", phone });
+    assert.equal(registered.status, 200, JSON.stringify(registered.body));
+
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`)
+      .set(NATIVE_TRANSPORT)
+      .send({ phone, code: DEV_CODE });
+    assert.equal(verified.status, 200, JSON.stringify(verified.body));
+    const customerToken = verified.body.data.accessToken;
+
+    const cust = await customerRepo.findByPhone(phone);
+    await customerRepo.update(cust.id, {
+      virtualAccountNumber: "1234500009",
+      virtualAccountBank: "Test Bank",
+      virtualAccountName: "SOROMANNIGERI/ SS",
+    });
+    await customerRepo.creditBalance(cust.id, TOTAL);
+
+    // ── 2. The customer places their OWN order (wallet pays → Paid) ──────────
+    const placed = await request(app)
+      .post("/api/customer/orders")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({
+        depot: depotId,
+        product: productId,
+        state: "Lagos",
+        quantity: ORDER_QTY,
+        deliveryType: "delivery",
+      });
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const orderId = placed.body.data.order.id;
+    assert.equal(placed.body.data.order.customerId, cust.id, "the order is the customer's own");
+    assert.equal(placed.body.data.order.status, "Paid", "wallet payment advanced it to Paid");
+
+    // ── 3. Release desk allocates the fleet trucks ──────────────────────────
+    const released = await request(app)
+      .post(`/api/orders/${orderId}/release`)
+      .set("Authorization", `Bearer ${release.accessToken}`)
+      .send({
+        trucks: [
+          { truckNumber: "SS-T1", quantity: 30000, driverName: "Ada", driverPhone: "+2348010000003" },
+          { truckNumber: "SS-T2", quantity: 30000, driverName: "Uche", driverPhone: "+2348010000004" },
+        ],
+      });
+    assert.equal(released.status, 200, JSON.stringify(released.body));
+    const [t1, t2] = await orderTruckRepo.findByOrder(orderId);
+
+    // ── 4. Gate each in (first opens Loading), load each, gate each out ─────
+    for (const t of [t1, t2]) {
+      const gin = await request(app)
+        .post(`/api/orders/${orderId}/gate-in`)
+        .set("Authorization", `Bearer ${entry.accessToken}`)
+        .send({ loadId: t.id });
+      assert.equal(gin.status, 200, JSON.stringify(gin.body));
+    }
+    assert.equal((await orderRepo.findById(orderId)).status, "Loading");
+
+    for (const t of [t1, t2]) {
+      const load = await request(app)
+        .post(`/api/orders/${orderId}/trucks/${t.id}/load`)
+        .set("Authorization", `Bearer ${ticketing.accessToken}`)
+        .send({});
+      assert.equal(load.status, 200);
+      assert.ok(await ticketRepo.findByOrderTruck(t.id), "each truck ticketed");
+    }
+
+    const out1 = await request(app)
+      .post(`/api/orders/${orderId}/trucks/${t1.id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(out1.body.data.orderCompleted, false);
+
+    const out2 = await request(app)
+      .post(`/api/orders/${orderId}/trucks/${t2.id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(out2.body.data.orderCompleted, true, "last truck out completed it");
+
+    // ── 5. Same destination as the desk-placed order ────────────────────────
+    assert.equal((await orderRepo.findById(orderId)).status, "Completed");
+    const timeline = await auditLogRepo.findStateTimeline("order", orderId);
+    assert.deepEqual(
+      timeline.map((e) => e.newState),
+      ["Paid", "Released", "Loading", "Completed"],
+      "a customer-placed order reaches the same pipeline end"
+    );
+  });
 });
