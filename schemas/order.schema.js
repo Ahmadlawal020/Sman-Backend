@@ -1,40 +1,29 @@
-const { z } = require("zod");
+const z = require("zod");
+const { id, quantity, requiredString, enumOf, searchTerm, pagination } = require("./fields");
 
-const objectIdRegex = /^[0-9a-fA-F]{24}$/;
-
-const createOrderSchema = z.object({
-  customer: z.string().regex(objectIdRegex, "Invalid customer ID"),
-  state: z.string().min(1, "State is required").max(100),
-  depot: z.string().regex(objectIdRegex, "Invalid depot ID"),
-  product: z.string().regex(objectIdRegex, "Invalid product ID"),
-  quantity: z.coerce.number().positive("Quantity must be positive").max(1000000, "Quantity too large"),
-  deliveryType: z.enum(["delivery", "pickup"], {
-    errorMap: () => ({ message: "Delivery type must be 'delivery' or 'pickup'" }),
-  }),
+/**
+ * Note what is absent: `price` and `totalAmount`. They are resolved server-side
+ * from the depot's configured price, and stripping them here means a
+ * client-supplied price cannot reach the controller at all — it is no longer
+ * merely ignored, it is gone.
+ */
+const createOrder = z.object({
+  customer: id("Customer"),
+  depot: id("Depot"),
+  product: id("Product"),
+  state: requiredString("State", 100),
+  quantity: quantity("Quantity"),
+  deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
 });
 
-const updateOrderSchema = z.object({
-  status: z.enum(["Pending", "Completed", "Cancelled"]).optional(),
-  paymentStatus: z.enum(["Paid", "Unpaid"]).optional(),
+const listOrders = pagination.extend({
+  search: searchTerm,
+  status: enumOf("Status", ["Pending", "Completed", "Cancelled"]).optional(),
+  customer: id("Customer").optional(),
+  dateFrom: z.string().trim().max(40, "Start date is too long").optional(),
+  dateTo: z.string().trim().max(40, "End date is too long").optional(),
 });
 
-const orderQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
-  search: z.string().max(100).optional(),
-  status: z.enum(["Pending", "Completed", "Cancelled"]).optional(),
-  customer: z.string().regex(objectIdRegex).optional(),
-  dateFrom: z.string().datetime().optional(),
-  dateTo: z.string().datetime().optional(),
-});
+const idParam = z.object({ id: id("Order id") });
 
-const orderIdParamSchema = z.object({
-  id: z.string().regex(objectIdRegex, "Invalid order ID"),
-});
-
-module.exports = {
-  createOrderSchema,
-  updateOrderSchema,
-  orderQuerySchema,
-  orderIdParamSchema,
-};
+module.exports = { createOrder, listOrders, idParam };

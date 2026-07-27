@@ -1,22 +1,29 @@
-const { z } = require("zod");
+const z = require("zod");
+const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination } = require("./fields");
 
-const objectIdRegex = /^[0-9a-fA-F]{24}$/;
-
-const depositQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
-  search: z.string().max(100).optional(),
-  type: z.enum(["credit", "debit"]).optional(),
-  customer: z.string().regex(objectIdRegex).optional(),
-  dateFrom: z.string().datetime().optional(),
-  dateTo: z.string().datetime().optional(),
+/**
+ * `amount` must be strictly positive: a zero-value ledger entry is noise, and
+ * a negative one is a debit wearing a credit's clothing. Direction belongs in
+ * `type`, not in the sign.
+ */
+const createDeposit = z.object({
+  customer: id("Customer"),
+  amount: money("Amount", { min: 0.01 }),
+  type: enumOf("Type", ["credit", "debit"]),
+  description: optionalString("Description", 500),
+  reference: optionalString("Reference", 100),
 });
 
-const depositIdParamSchema = z.object({
-  id: z.string().regex(objectIdRegex, "Invalid deposit ID"),
+const syncPaystack = z.object({
+  reference: requiredString("Payment reference", 100),
 });
 
-module.exports = {
-  depositQuerySchema,
-  depositIdParamSchema,
-};
+const listDeposits = pagination.extend({
+  search: searchTerm,
+  type: enumOf("Type", ["credit", "debit"]).optional(),
+  customer: id("Customer").optional(),
+});
+
+const idParam = z.object({ id: id("Deposit id") });
+
+module.exports = { createDeposit, syncPaystack, listDeposits, idParam };

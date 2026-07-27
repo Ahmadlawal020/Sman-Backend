@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const verifyStaff = require("../../middleware/verifyStaff");
+const validate = require("../../middleware/validate");
+const dcSchemas = require("../../schemas/deliveryCustomer.schema");
 const {
   createDeliveryCustomer,
   getDeliveryCustomers,
@@ -9,11 +11,11 @@ const {
   deleteDeliveryCustomer,
 } = require("../../controllers/customer/deliveryCustomer.controller");
 
-router.get("/", verifyStaff, getDeliveryCustomers);
-router.post("/", verifyStaff, createDeliveryCustomer);
-router.patch("/:id", verifyStaff, updateDeliveryCustomer);
-router.put("/:id", verifyStaff, updateDeliveryCustomer);
-router.delete("/:id", verifyStaff, deleteDeliveryCustomer);
+router.get("/", verifyStaff, validate({ query: dcSchemas.listDeliveryCustomers }), getDeliveryCustomers);
+router.post("/", verifyStaff, validate({ body: dcSchemas.createDeliveryCustomer }), createDeliveryCustomer);
+router.patch("/:id", verifyStaff, validate({ params: dcSchemas.idParam, body: dcSchemas.updateDeliveryCustomer }), updateDeliveryCustomer);
+router.put("/:id", verifyStaff, validate({ params: dcSchemas.idParam, body: dcSchemas.updateDeliveryCustomer }), updateDeliveryCustomer);
+router.delete("/:id", verifyStaff, validate({ params: dcSchemas.idParam }), deleteDeliveryCustomer);
 router.post("/delivery-notes", verifyStaff, createDeliveryNote);
 
 module.exports = router;
