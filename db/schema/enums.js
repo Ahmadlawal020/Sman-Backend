@@ -121,6 +121,15 @@ const auditActorTypeEnum = pgEnum("audit_actor_type", [
 // matching the existing workflow.
 const fleetEntryTypeEnum = pgEnum("fleet_entry_type", ["expense", "income"]);
 
+// Sign-in providers beyond the phone number (which lives on customers
+// itself). One identity row per provider per customer.
+const customerIdentityProviderEnum = pgEnum("customer_identity_provider", [
+  "email",
+  "google",
+  "apple",
+  "pin",
+]);
+
 
 const dailyReportStatusEnum = pgEnum("daily_report_status", [
   "submitted",
@@ -177,6 +186,7 @@ module.exports = {
   webhookStatusEnum,
   auditActorTypeEnum,
   fleetEntryTypeEnum,
+  customerIdentityProviderEnum,
   dailyReportStatusEnum,
   incidentTypeEnum,
   incidentStatusEnum,
