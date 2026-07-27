@@ -17,8 +17,9 @@ const {
 const { fleetTruckRepo } = require("../repositories");
 
 // Read-only aggregation, SQL-side, over the same records the existing
-// screens use: delivery_sales is the delivery sales ledger, fleet_ledger_
-// entries the fleet book. Nothing here writes.
+// screens use: delivery_sales is the delivery sales ledger (rows keyed in
+// manually by staff), fleet_ledger_entries the fleet book. Nothing here
+// writes.
 
 const num = (value) => Number(value || 0);
 

@@ -3,8 +3,8 @@ const { emitEvent } = require("./events");
 
 // Allocation release workflow, same as the Django flow: pending -> confirmed
 // -> released, one-way. Releasing assigns the delivery ticket; the financial
-// record stays in delivery_sales (entered/uploaded by staff, settled by DVA
-// payments), exactly as the existing screens expect.
+// record stays in delivery_sales — the simple ledger staff key in manually,
+// exactly as the existing screens expect. Nothing here writes sales rows.
 
 const TRANSITIONS = {
   pending: ["confirmed"],
