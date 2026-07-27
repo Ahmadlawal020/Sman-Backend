@@ -16,6 +16,7 @@ module.exports = {
   webhookEventRepo: require("./webhookEvent.repository"),
   sessionRepo: require("./session.repository"),
   customerOtpRepo: require("./customerOtp.repository"),
+  customerIdentityRepo: require("./customerIdentity.repository"),
   auditEventRepo: require("./auditEvent.repository"),
   fleetTruckRepo: require("./fleetTruck.repository"),
   dailyReportRepo: require("./dailyReport.repository"),
