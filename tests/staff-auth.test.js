@@ -13,14 +13,25 @@ const { signAccessToken, verifyAccessToken, TokenError } = require("../services/
 const { secretFor, ISSUER } = require("../config/auth");
 const { TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff, staffTokenWithRoles, closeDb } = require("./helpers");
 
-// Most of this suite needs to hold a refresh token, which only the native
-// transport returns in the body. Browsers get an httpOnly cookie instead —
-// that path is covered in cookie-csrf.test.js.
-const login = () =>
-  request(app)
+/**
+ * Most of this suite needs to hold a refresh token, which only the native
+ * transport returns in the body. Browsers get an httpOnly cookie instead —
+ * that path is covered in cookie-csrf.test.js.
+ *
+ * Re-asserts the fixture on every call rather than trusting the `before` hook.
+ * Several tests here deliberately deactivate or suspend this row and restore
+ * it afterwards, and the suite runs against a shared database, so ambient
+ * state is not something to rely on: a login that silently returned 401 showed
+ * up as `body.data` being undefined several assertions later, which is a
+ * miserable thing to debug.
+ */
+const login = async () => {
+  await ensureTestStaff();
+  return request(app)
     .post("/api/auth/login")
     .set(NATIVE_TRANSPORT)
     .send({ email: TEST_STAFF.email, password: TEST_STAFF.password });
+};
 
 describe("staff auth — opaque refresh tokens, rotation, reuse detection", () => {
   let staffRow;

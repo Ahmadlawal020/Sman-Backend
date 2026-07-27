@@ -19,7 +19,9 @@ app.use(cors(corsOptions));
 app.use("/api/webhooks", require("./routes/webhook.route"));
 
 app.use(express.json());
-// Express 5 has res.cookie but no req.cookies — it was removed in 6244c4f.
+// `res.cookie` is built in, but `req.cookies` is not and never was — parsing
+// the Cookie header has always been cookie-parser's job, in Express 4 as well.
+// Required here because the refresh token travels in an httpOnly cookie.
 app.use(require("cookie-parser")());
 
 // Express 5 leaves req.body undefined when no body was parsed (v4 defaulted
@@ -46,6 +48,7 @@ app.use("/api/delivery-sales", require("./routes/administration/deliverySale.rou
 app.use("/api/orders", require("./routes/administration/order.route"));
 app.use("/api/tickets", require("./routes/administration/ticket.route"));
 app.use("/api/deposits", require("./routes/administration/deposit.route"));
+app.use("/api/settlements", require("./routes/administration/settlement.route"));
 
 // ERP modules
 app.use("/api/fleet", require("./routes/administration/fleet.route"));

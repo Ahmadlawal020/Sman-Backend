@@ -153,8 +153,13 @@ const createOrder = asyncHandler(async (req, res) => {
     virtualAccountName,
   });
 
-  // Commit wallet funds to the order. The debit ledger row is written when
-  // the order completes (hold converts); cancellation just releases the hold.
+  // Commit wallet funds to the order. placeHold takes a row lock on the
+  // customer (SELECT ... FOR UPDATE) and checks affordability inside that
+  // same transaction, so a balance read here — however recent — can never be
+  // the thing that decides whether this order is paid. The debit ledger row
+  // itself is written later, when the order completes (hold converts);
+  // cancellation just releases the hold. Losing the race leaves the order
+  // Unpaid, exactly as it was created — never optimistically Paid.
   const holdResult = await walletService.placeHold({
     customerId,
     orderId: order.id,
@@ -170,7 +175,10 @@ const createOrder = asyncHandler(async (req, res) => {
   // Decrement depot product capacity
   await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity));
 
-  // Generate loading ticket if paid immediately
+  // Generate loading ticket if paid immediately. Reads order.paymentStatus,
+  // which was only ever set to "Paid" above after holdResult.success — unlike
+  // an optimistic insert, there is no window where this reads "Paid" for an
+  // order the hold actually failed to fund.
   if (order.paymentStatus === "Paid") {
     try {
       await generateTicketForOrder(order.id);

@@ -277,6 +277,10 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
     // The hold is the sufficiency check: it either commits the funds under a
     // row lock or fails, so concurrent runs can't pay the same order twice
     // (unique hold per order) or spend the same money twice (locked balance).
+    // This supersedes a bare guarded UPDATE (`WHERE balance >= amount`
+    // without a paired ledger write) — the hold and its eventual ledger entry
+    // are the same transactional unit, so there is no window where the
+    // balance has moved but no record says why.
     const holdResult = await walletService.placeHold({
       customerId,
       orderId: order.id,
@@ -309,13 +313,30 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
   return processedOrders;
 };
 
+/**
+ * Settle every unpaid order that the customer's wallet can cover.
+ *
+ * Previously called findAll({ limit: 1000 }) — which clamps to 100 — so it
+ * silently covered only the hundred most recently created customers. The
+ * `limit: 1000` at the call site read as deliberate coverage, which is exactly
+ * why nobody looked again.
+ *
+ * Both counts are logged: a sweep that considers 0 customers and a sweep that
+ * settles 0 orders look identical in the return value, and only one of them is
+ * a problem.
+ */
 const processAllUnpaidOrders = async () => {
-  const customerIds = await customerRepo.findIdsWithPositiveBalance();
+  const funded = await customerRepo.findWithPositiveBalance();
+
   let totalProcessed = 0;
-  for (const customerId of customerIds) {
-    const processed = await processUnpaidOrdersForCustomer(customerId);
+  for (const cust of funded) {
+    const processed = await processUnpaidOrdersForCustomer(cust.id);
     totalProcessed += processed.length;
   }
+
+  console.log(
+    `[settlement] considered ${funded.length} customer(s) with a balance; settled ${totalProcessed} order(s)`
+  );
   return totalProcessed;
 };
 

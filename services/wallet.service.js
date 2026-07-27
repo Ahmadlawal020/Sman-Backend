@@ -1,12 +1,17 @@
 const { eq, and, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { customers, deposits, walletHolds } = require("../db/schema");
+const customerRepo = require("../repositories/customer.repository");
 
-// Every operation here runs inside a single database transaction and takes a
-// row lock (SELECT ... FOR UPDATE) on the customer before reading the balance,
-// so two concurrent debits cannot both pass the sufficiency check. Nothing
-// outside this file should write customers.balance or insert deposits rows
-// for wallet money movements.
+// Every operation here runs inside a single database transaction, and every
+// balance change goes through customerRepo.creditBalance/debitBalance — an
+// atomically guarded UPDATE (`WHERE balance >= amount` on the debit side), not
+// a separate read-then-write. Two concurrent debits racing the same balance
+// cannot both pass: the database itself serializes the two UPDATEs, and the
+// second one's guard simply fails to match. Nothing outside this file should
+// write customers.balance or insert deposits rows for wallet money movements
+// — every business debit/credit must land its ledger row in the same
+// transaction as the balance change, and this is the one place that does both.
 //
 // The invariant these operations maintain:
 //
@@ -23,16 +28,6 @@ const isUniqueViolation = (err) =>
 
 const money = (value) => Number(value || 0);
 const asDecimal = (value) => money(value).toFixed(2);
-
-const lockCustomer = async (tx, customerId) => {
-  const [row] = await tx
-    .select()
-    .from(customers)
-    .where(eq(customers.id, customerId))
-    .for("update")
-    .limit(1);
-  return row || null;
-};
 
 /**
  * Credit the wallet. Idempotent when a `reference` is supplied: a second call
@@ -74,12 +69,30 @@ const credit = async ({
         }
       }
 
-      const customer = await lockCustomer(tx, customerId);
-      if (!customer) {
+      // Credits can never overdraw, so the guarded UPDATE only needs to
+      // match on id; it returns null solely when the customer doesn't exist.
+      let updated = await customerRepo.creditBalance(customerId, value, tx);
+      if (!updated) {
         return { success: false, message: "Customer not found" };
       }
 
-      const newBalance = money(customer.balance) + value;
+      if (trackDeposit) {
+        // previousDeposit is the counter as of right after the balance-only
+        // update above — deposit/previousDeposit are untouched by
+        // creditBalance, so this is exactly "before this credit's deposit
+        // counter changed", computed inside the same transaction rather than
+        // from a separate earlier read.
+        const [withDeposit] = await tx
+          .update(customers)
+          .set({
+            previousDeposit: updated.deposit,
+            deposit: sql`${customers.deposit} + ${value}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(customers.id, customerId))
+          .returning();
+        updated = withDeposit;
+      }
 
       const [deposit] = await tx
         .insert(deposits)
@@ -90,27 +103,12 @@ const credit = async ({
           description,
           reference,
           recordedBy,
-          balanceAfter: asDecimal(newBalance),
+          balanceAfter: asDecimal(updated.balance),
           paystackDetails,
         })
         .returning();
 
-      const update = {
-        balance: asDecimal(newBalance),
-        updatedAt: new Date(),
-      };
-      if (trackDeposit) {
-        update.previousDeposit = asDecimal(customer.deposit);
-        update.deposit = asDecimal(money(customer.deposit) + value);
-      }
-
-      const [updatedCustomer] = await tx
-        .update(customers)
-        .set(update)
-        .where(eq(customers.id, customerId))
-        .returning();
-
-      return { success: true, deposit, customer: updatedCustomer };
+      return { success: true, deposit, customer: updated };
     });
   } catch (err) {
     // Two requests raced past the pre-check with the same reference; the
@@ -134,7 +132,8 @@ const credit = async ({
 
 /**
  * Debit the wallet directly (no hold involved). Fails rather than allowing
- * the balance to go negative.
+ * the balance to go negative — debitBalance's guard is in the WHERE clause
+ * of the UPDATE itself, not in a preceding read, so it cannot be raced.
  */
 const debit = async ({
   customerId,
@@ -149,16 +148,12 @@ const debit = async ({
   }
 
   return db.transaction(async (tx) => {
-    const customer = await lockCustomer(tx, customerId);
-    if (!customer) {
-      return { success: false, message: "Customer not found" };
-    }
-
-    if (money(customer.balance) < value) {
+    const updated = await customerRepo.debitBalance(customerId, value, tx);
+    if (!updated) {
+      // Same guarded result whether the customer doesn't exist or simply
+      // doesn't have enough — either way, this debit does not happen.
       return { success: false, insufficient: true, message: "Insufficient wallet balance" };
     }
-
-    const newBalance = money(customer.balance) - value;
 
     const [deposit] = await tx
       .insert(deposits)
@@ -169,17 +164,11 @@ const debit = async ({
         description,
         reference,
         recordedBy,
-        balanceAfter: asDecimal(newBalance),
+        balanceAfter: asDecimal(updated.balance),
       })
       .returning();
 
-    const [updatedCustomer] = await tx
-      .update(customers)
-      .set({ balance: asDecimal(newBalance), updatedAt: new Date() })
-      .where(eq(customers.id, customerId))
-      .returning();
-
-    return { success: true, deposit, customer: updatedCustomer };
+    return { success: true, deposit, customer: updated };
   });
 };
 
@@ -187,7 +176,8 @@ const debit = async ({
  * Commit funds to an order. Decrements the balance so the money cannot be
  * spent twice, but writes no ledger row yet — that happens on conversion.
  * The unique index on orderId makes re-attempts fail closed (alreadyHeld)
- * instead of holding the same money twice.
+ * instead of holding the same money twice: if the hold insert below violates
+ * it, the whole transaction — including the balance decrement — rolls back.
  */
 const placeHold = async ({ customerId, orderId, amount, description = "" }) => {
   const value = money(amount);
@@ -197,12 +187,8 @@ const placeHold = async ({ customerId, orderId, amount, description = "" }) => {
 
   try {
     return await db.transaction(async (tx) => {
-      const customer = await lockCustomer(tx, customerId);
-      if (!customer) {
-        return { success: false, message: "Customer not found" };
-      }
-
-      if (money(customer.balance) < value) {
+      const updated = await customerRepo.debitBalance(customerId, value, tx);
+      if (!updated) {
         return { success: false, insufficient: true, message: "Insufficient wallet balance" };
       }
 
@@ -216,16 +202,7 @@ const placeHold = async ({ customerId, orderId, amount, description = "" }) => {
         })
         .returning();
 
-      const [updatedCustomer] = await tx
-        .update(customers)
-        .set({
-          balance: asDecimal(money(customer.balance) - value),
-          updatedAt: new Date(),
-        })
-        .where(eq(customers.id, customerId))
-        .returning();
-
-      return { success: true, hold, customer: updatedCustomer };
+      return { success: true, hold, customer: updated };
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -252,21 +229,15 @@ const releaseHold = async (orderId) => {
       return { success: false, noActiveHold: true, hold: hold || null };
     }
 
-    const customer = await lockCustomer(tx, hold.customerId);
-
     const [updatedHold] = await tx
       .update(walletHolds)
       .set({ status: "released", resolvedAt: new Date() })
       .where(eq(walletHolds.id, hold.id))
       .returning();
 
-    await tx
-      .update(customers)
-      .set({
-        balance: asDecimal(money(customer.balance) + money(hold.amount)),
-        updatedAt: new Date(),
-      })
-      .where(eq(customers.id, hold.customerId));
+    // A release can never overdraw — it is only ever returning money this
+    // same hold already took.
+    await customerRepo.creditBalance(hold.customerId, money(hold.amount), tx);
 
     return { success: true, hold: updatedHold };
   });
@@ -290,7 +261,7 @@ const convertHold = async (orderId, description = "") => {
       return { success: false, noActiveHold: true, hold: hold || null };
     }
 
-    const customer = await lockCustomer(tx, hold.customerId);
+    const customer = await customerRepo.findById(hold.customerId);
 
     const [deposit] = await tx
       .insert(deposits)

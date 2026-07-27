@@ -3,6 +3,8 @@ const router = express.Router();
 const generateLimiter = require("../../middleware/generateLimiter");
 const { authenticateCustomer } = require("../../middleware/verifyCustomer");
 const { requireCsrfForCookieAuth } = require("../../middleware/csrf");
+const validate = require("../../middleware/validate");
+const authSchemas = require("../../schemas/auth.schema");
 const {
   handleRegister,
   handleRequestOtp,
@@ -38,17 +40,17 @@ const verifyLimiter = generateLimiter({
   message: "Too many verification attempts. Please try again later.",
 });
 
-router.post("/register", registerLimiter, handleRegister);
-router.post("/request-otp", otpLimiter, handleRequestOtp);
-router.post("/verify-otp", verifyLimiter, handleVerifyOtp);
+router.post("/register", registerLimiter, validate({ body: authSchemas.register }), handleRegister);
+router.post("/request-otp", otpLimiter, validate({ body: authSchemas.requestOtp }), handleRequestOtp);
+router.post("/verify-otp", verifyLimiter, validate({ body: authSchemas.verifyOtp }), handleVerifyOtp);
 // CSRF applies only when the refresh token arrives in a cookie; a caller
 // sending it in the body is not exposed to CSRF in the first place.
-router.post("/refresh", otpLimiter, requireCsrfForCookieAuth("customer"), handleRefresh);
-router.post("/logout", requireCsrfForCookieAuth("customer"), handleLogout);
+router.post("/refresh", otpLimiter, requireCsrfForCookieAuth("customer"), validate({ body: authSchemas.refresh }), handleRefresh);
+router.post("/logout", requireCsrfForCookieAuth("customer"), validate({ body: authSchemas.refresh }), handleLogout);
 
 router.get("/me", authenticateCustomer, handleGetMe);
 router.post("/logout-all", authenticateCustomer, handleLogoutAll);
 router.get("/sessions", authenticateCustomer, handleListSessions);
-router.delete("/sessions/:id", authenticateCustomer, handleRevokeSession);
+router.delete("/sessions/:id", authenticateCustomer, validate({ params: authSchemas.sessionIdParam }), handleRevokeSession);
 
 module.exports = router;

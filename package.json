@@ -15,7 +15,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:check": "drizzle-kit check",
-    "test": "RATE_LIMIT_DISABLED=true OTP_DEV_MODE=true OTP_DEV_CODE=000000 OTP_DAILY_SEND_CAP=1000000 node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
+    "test": "NODE_ENV=test RATE_LIMIT_DISABLED=true OTP_DEV_MODE=true OTP_DEV_CODE=000000 OTP_DAILY_SEND_CAP=1000000 node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
     "test:watch": "node --test --watch \"tests/**/*.test.js\""
   },
   "keywords": [],
@@ -40,7 +40,7 @@
     "qrcode": "^1.5.4",
     "resend": "^6.17.2",
     "uuid": "^11.1.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",

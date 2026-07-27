@@ -33,36 +33,15 @@
     {
       "idx": 4,
       "version": "7",
-      "when": 1785102906345,
-      "tag": "0004_bizarre_luminals",
+      "when": 1785091196613,
+      "tag": "0004_balance_non_negative",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
-      "when": 1785105391960,
-      "tag": "0005_overrated_triathlon",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1785144397496,
-      "tag": "0006_drop_generic_ledger",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1785144426265,
-      "tag": "0007_fleet_ledger_entries",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1785153471471,
-      "tag": "0008_customer_identities",
+      "when": 1785167686301,
+      "tag": "0005_erp_wallet_and_identity",
       "breakpoints": true
     }
   ]

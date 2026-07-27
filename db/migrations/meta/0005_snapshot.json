@@ -1,6 +1,6 @@
 {
-  "id": "6390eba0-8e5f-4d17-82a7-35988021a85c",
-  "prevId": "e0646ead-a081-4cf3-a180-ca7361ae5d0d",
+  "id": "f8241f81-86e8-4885-9971-8c8ae1b0dbcf",
+  "prevId": "5c8d13eb-9cc4-4636-9b48-391fe6665330",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -304,6 +304,472 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customer_identities": {
+      "name": "customer_identities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "customer_identity_provider",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_user_id": {
+          "name": "provider_user_id",
+          "type": "varchar(320)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "secret_hash": {
+          "name": "secret_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verified": {
+          "name": "verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "failed_attempts": {
+          "name": "failed_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "locked_until": {
+          "name": "locked_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "customer_identities_provider_uid_idx": {
+          "name": "customer_identities_provider_uid_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_identities_customer_provider_idx": {
+          "name": "customer_identities_customer_provider_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "customer_identities_customer_id_customers_id_fk": {
+          "name": "customer_identities_customer_id_customers_id_fk",
+          "tableFrom": "customer_identities",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customer_trusted_devices": {
+      "name": "customer_trusted_devices",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "device_name": {
+          "name": "device_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "customer_trusted_devices_token_idx": {
+          "name": "customer_trusted_devices_token_idx",
+          "columns": [
+            {
+              "expression": "token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_trusted_devices_customer_idx": {
+          "name": "customer_trusted_devices_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "customer_trusted_devices_customer_id_customers_id_fk": {
+          "name": "customer_trusted_devices_customer_id_customers_id_fk",
+          "tableFrom": "customer_trusted_devices",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customer_passkeys": {
+      "name": "customer_passkeys",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_id": {
+          "name": "credential_id",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "public_key": {
+          "name": "public_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "counter": {
+          "name": "counter",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "transports": {
+          "name": "transports",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "device_name": {
+          "name": "device_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "customer_passkeys_credential_idx": {
+          "name": "customer_passkeys_credential_idx",
+          "columns": [
+            {
+              "expression": "credential_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_passkeys_customer_idx": {
+          "name": "customer_passkeys_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "customer_passkeys_customer_id_customers_id_fk": {
+          "name": "customer_passkeys_customer_id_customers_id_fk",
+          "tableFrom": "customer_passkeys",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.webauthn_challenges": {
+      "name": "webauthn_challenges",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "challenge": {
+          "name": "challenge",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "webauthn_challenges_challenge_idx": {
+          "name": "webauthn_challenges_challenge_idx",
+          "columns": [
+            {
+              "expression": "challenge",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "webauthn_challenges_expires_idx": {
+          "name": "webauthn_challenges_expires_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "webauthn_challenges_customer_id_customers_id_fk": {
+          "name": "webauthn_challenges_customer_id_customers_id_fk",
+          "tableFrom": "webauthn_challenges",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -2838,6 +3304,159 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.fleet_ledger_entries": {
+      "name": "fleet_ledger_entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "truck_id": {
+          "name": "truck_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_type": {
+          "name": "entry_type",
+          "type": "fleet_entry_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_date": {
+          "name": "entry_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "entered_by": {
+          "name": "entered_by",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "recorded_by": {
+          "name": "recorded_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fleet_ledger_truck_date_idx": {
+          "name": "fleet_ledger_truck_date_idx",
+          "columns": [
+            {
+              "expression": "truck_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entry_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fleet_ledger_category_idx": {
+          "name": "fleet_ledger_category_idx",
+          "columns": [
+            {
+              "expression": "category",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fleet_ledger_entries_truck_id_fleet_trucks_id_fk": {
+          "name": "fleet_ledger_entries_truck_id_fleet_trucks_id_fk",
+          "tableFrom": "fleet_ledger_entries",
+          "tableTo": "fleet_trucks",
+          "columnsFrom": [
+            "truck_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fleet_ledger_entries_recorded_by_staff_id_fk": {
+          "name": "fleet_ledger_entries_recorded_by_staff_id_fk",
+          "tableFrom": "fleet_ledger_entries",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "recorded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fleet_ledger_amount_check": {
+          "name": "fleet_ledger_amount_check",
+          "value": "\"fleet_ledger_entries\".\"amount\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.fleet_trucks": {
       "name": "fleet_trucks",
       "schema": "",
@@ -3075,163 +3694,6 @@
         "fleet_trucks_mileage_check": {
           "name": "fleet_trucks_mileage_check",
           "value": "\"fleet_trucks\".\"mileage\" IS NULL OR \"fleet_trucks\".\"mileage\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.fleet_trips": {
-      "name": "fleet_trips",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "fleet_truck_id": {
-          "name": "fleet_truck_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "trip_date": {
-          "name": "trip_date",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "origin": {
-          "name": "origin",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "destination": {
-          "name": "destination",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "allocation_code": {
-          "name": "allocation_code",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "quantity_litres": {
-          "name": "quantity_litres",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "fuel_used_litres": {
-          "name": "fuel_used_litres",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "mileage_start": {
-          "name": "mileage_start",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "mileage_end": {
-          "name": "mileage_end",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "driver_name": {
-          "name": "driver_name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "notes": {
-          "name": "notes",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "fleet_trips_truck_date_idx": {
-          "name": "fleet_trips_truck_date_idx",
-          "columns": [
-            {
-              "expression": "fleet_truck_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "trip_date",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "fleet_trips_fleet_truck_id_fleet_trucks_id_fk": {
-          "name": "fleet_trips_fleet_truck_id_fleet_trucks_id_fk",
-          "tableFrom": "fleet_trips",
-          "tableTo": "fleet_trucks",
-          "columnsFrom": [
-            "fleet_truck_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "fleet_trips_created_by_staff_id_fk": {
-          "name": "fleet_trips_created_by_staff_id_fk",
-          "tableFrom": "fleet_trips",
-          "tableTo": "staff",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "fleet_trips_mileage_check": {
-          "name": "fleet_trips_mileage_check",
-          "value": "\"fleet_trips\".\"mileage_end\" IS NULL OR \"fleet_trips\".\"mileage_start\" IS NULL OR \"fleet_trips\".\"mileage_end\" >= \"fleet_trips\".\"mileage_start\""
         }
       },
       "isRLSEnabled": false
@@ -5263,290 +5725,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.ledger_accounts": {
-      "name": "ledger_accounts",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "owner_type": {
-          "name": "owner_type",
-          "type": "ledger_owner_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "varchar(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'NGN'"
-        },
-        "running_balance": {
-          "name": "running_balance",
-          "type": "numeric(15, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "ledger_accounts_owner_idx": {
-          "name": "ledger_accounts_owner_idx",
-          "columns": [
-            {
-              "expression": "owner_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "owner_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.ledger_entries": {
-      "name": "ledger_entries",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "direction": {
-          "name": "direction",
-          "type": "ledger_direction",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "category": {
-          "name": "category",
-          "type": "ledger_category",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric(15, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "reference": {
-          "name": "reference",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "entry_date": {
-          "name": "entry_date",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "balance_after": {
-          "name": "balance_after",
-          "type": "numeric(15, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "recorded_by": {
-          "name": "recorded_by",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "ledger_entries_account_created_idx": {
-          "name": "ledger_entries_account_created_idx",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ledger_entries_account_date_idx": {
-          "name": "ledger_entries_account_date_idx",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entry_date",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ledger_entries_category_idx": {
-          "name": "ledger_entries_category_idx",
-          "columns": [
-            {
-              "expression": "category",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ledger_entries_reference_idx": {
-          "name": "ledger_entries_reference_idx",
-          "columns": [
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"ledger_entries\".\"reference\" IS NOT NULL AND \"ledger_entries\".\"reference\" != ''",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "ledger_entries_account_id_ledger_accounts_id_fk": {
-          "name": "ledger_entries_account_id_ledger_accounts_id_fk",
-          "tableFrom": "ledger_entries",
-          "tableTo": "ledger_accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "ledger_entries_recorded_by_staff_id_fk": {
-          "name": "ledger_entries_recorded_by_staff_id_fk",
-          "tableFrom": "ledger_entries",
-          "tableTo": "staff",
-          "columnsFrom": [
-            "recorded_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "ledger_entries_amount_check": {
-          "name": "ledger_entries_amount_check",
-          "value": "\"ledger_entries\".\"amount\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.offline_sales": {
       "name": "offline_sales",
       "schema": "",
@@ -6096,47 +6274,22 @@
         "system"
       ]
     },
-    "public.ledger_owner_type": {
-      "name": "ledger_owner_type",
+    "public.fleet_entry_type": {
+      "name": "fleet_entry_type",
       "schema": "public",
       "values": [
-        "delivery_customer",
-        "filling_station",
-        "fleet_truck"
-      ]
-    },
-    "public.ledger_direction": {
-      "name": "ledger_direction",
-      "schema": "public",
-      "values": [
-        "debit",
-        "credit"
-      ]
-    },
-    "public.ledger_category": {
-      "name": "ledger_category",
-      "schema": "public",
-      "values": [
-        "opening_balance",
-        "sale",
-        "purchase",
-        "payment",
-        "credit_note",
-        "debit_note",
-        "discount",
-        "adjustment",
         "expense",
-        "income",
-        "fuel",
-        "repairs",
-        "tyres",
-        "maintenance",
-        "driver_allowance",
-        "toll",
-        "insurance",
-        "registration",
-        "commission",
-        "other"
+        "income"
+      ]
+    },
+    "public.customer_identity_provider": {
+      "name": "customer_identity_provider",
+      "schema": "public",
+      "values": [
+        "email",
+        "google",
+        "apple",
+        "pin"
       ]
     },
     "public.daily_report_status": {

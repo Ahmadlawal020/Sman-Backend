@@ -107,6 +107,43 @@ const updateAdmin = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "User not found" });
   }
 
+  // --- AUDIT H5: privilege escalation ------------------------------------
+  //
+  // This endpoint edits ordinary profile fields AND the two fields that decide
+  // what an account may do. It carried no role gate, so any `admin` could
+  // PATCH their own row with roles:[0] and become a super_admin — defeating
+  // the super_admin gates on create and delete.
+  //
+  // The gate is per-field rather than per-route on purpose. Putting
+  // requireRole("super_admin") on the route would fix the escalation and break
+  // every staff member's ability to edit their own name and phone number.
+  const isSuperAdmin = (req.user?.roles || []).includes("super_admin");
+  const changesPrivileges = roles !== undefined || suspended !== undefined;
+
+  if (changesPrivileges && !isSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: "Only a super admin can change roles or suspension",
+    });
+  }
+
+  // A super_admin locking themselves out takes everyone with them: the roles
+  // that can restore access are exactly the ones being given away.
+  if (changesPrivileges && admin.id === req.user.id) {
+    if (suspended === true) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot suspend your own account",
+      });
+    }
+    if (roles && roles.length > 0 && !mapRolesToBackend(roles).includes("super_admin")) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot remove your own super admin role",
+      });
+    }
+  }
+
   const updateData = {};
   if (first_name) updateData.firstName = first_name.trim();
   if (surname) updateData.surname = surname.trim();

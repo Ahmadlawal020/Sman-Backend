@@ -1,5 +1,5 @@
 {
-  "id": "e0646ead-a081-4cf3-a180-ca7361ae5d0d",
+  "id": "5c8d13eb-9cc4-4636-9b48-391fe6665330",
   "prevId": "9c1cace2-2de9-4d54-ac98-d7ea386d03a6",
   "version": "7",
   "dialect": "postgresql",
@@ -143,9 +143,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "customers_email_idx": {
           "name": "customers_email_idx",
@@ -158,9 +158,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "customers_virtual_account_idx": {
           "name": "customers_virtual_account_idx",
@@ -173,9 +173,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -258,9 +258,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "customer_otps_sweep_idx": {
           "name": "customer_otps_sweep_idx",
@@ -273,9 +273,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "customer_otps_created_idx": {
           "name": "customer_otps_created_idx",
@@ -288,24 +288,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "customer_otps_customer_id_customers_id_fk": {
           "name": "customer_otps_customer_id_customers_id_fk",
           "tableFrom": "customer_otps",
-          "tableTo": "customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -515,9 +515,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_customers_type_idx": {
           "name": "delivery_customers_type_idx",
@@ -530,9 +530,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_customers_status_idx": {
           "name": "delivery_customers_status_idx",
@@ -545,9 +545,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_customers_virtual_account_idx": {
           "name": "delivery_customers_virtual_account_idx",
@@ -560,24 +560,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "delivery_customers_created_by_staff_id_fk": {
           "name": "delivery_customers_created_by_staff_id_fk",
           "tableFrom": "delivery_customers",
-          "tableTo": "staff",
           "columnsFrom": [
             "created_by"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -766,9 +766,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_inventory_pfi_idx": {
           "name": "delivery_inventory_pfi_idx",
@@ -781,9 +781,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_inventory_customer_idx": {
           "name": "delivery_inventory_customer_idx",
@@ -796,9 +796,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_inventory_status_idx": {
           "name": "delivery_inventory_status_idx",
@@ -811,50 +811,50 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "delivery_inventory_truck_id_trucks_id_fk": {
           "name": "delivery_inventory_truck_id_trucks_id_fk",
           "tableFrom": "delivery_inventory",
-          "tableTo": "trucks",
           "columnsFrom": [
             "truck_id"
           ],
+          "tableTo": "trucks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "delivery_inventory_pfi_id_pfis_id_fk": {
           "name": "delivery_inventory_pfi_id_pfis_id_fk",
           "tableFrom": "delivery_inventory",
-          "tableTo": "pfis",
           "columnsFrom": [
             "pfi_id"
           ],
+          "tableTo": "pfis",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "delivery_inventory_customer_id_delivery_customers_id_fk": {
           "name": "delivery_inventory_customer_id_delivery_customers_id_fk",
           "tableFrom": "delivery_inventory",
-          "tableTo": "delivery_customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "delivery_customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -1012,9 +1012,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_notes_customer_idx": {
           "name": "delivery_notes_customer_idx",
@@ -1027,9 +1027,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_notes_status_idx": {
           "name": "delivery_notes_status_idx",
@@ -1042,50 +1042,50 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "delivery_notes_customer_id_delivery_customers_id_fk": {
           "name": "delivery_notes_customer_id_delivery_customers_id_fk",
           "tableFrom": "delivery_notes",
-          "tableTo": "delivery_customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "delivery_customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "delivery_notes_order_id_orders_id_fk": {
           "name": "delivery_notes_order_id_orders_id_fk",
           "tableFrom": "delivery_notes",
-          "tableTo": "orders",
           "columnsFrom": [
             "order_id"
           ],
+          "tableTo": "orders",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "delivery_notes_created_by_staff_id_fk": {
           "name": "delivery_notes_created_by_staff_id_fk",
           "tableFrom": "delivery_notes",
-          "tableTo": "staff",
           "columnsFrom": [
             "created_by"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -1308,9 +1308,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_sales_truck_idx": {
           "name": "delivery_sales_truck_idx",
@@ -1323,9 +1323,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "delivery_sales_paystack_ref_unique_idx": {
           "name": "delivery_sales_paystack_ref_unique_idx",
@@ -1338,25 +1338,25 @@
             }
           ],
           "isUnique": true,
-          "where": "\"delivery_sales\".\"paystack_reference\" IS NOT NULL AND \"delivery_sales\".\"paystack_reference\" != ''",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"delivery_sales\".\"paystack_reference\" IS NOT NULL AND \"delivery_sales\".\"paystack_reference\" != ''",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "delivery_sales_customer_id_delivery_customers_id_fk": {
           "name": "delivery_sales_customer_id_delivery_customers_id_fk",
           "tableFrom": "delivery_sales",
-          "tableTo": "delivery_customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "delivery_customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -1460,9 +1460,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "deposits_reference_unique_idx": {
           "name": "deposits_reference_unique_idx",
@@ -1475,38 +1475,38 @@
             }
           ],
           "isUnique": true,
-          "where": "\"deposits\".\"reference\" IS NOT NULL AND \"deposits\".\"reference\" != ''",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"deposits\".\"reference\" IS NOT NULL AND \"deposits\".\"reference\" != ''",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "deposits_customer_id_customers_id_fk": {
           "name": "deposits_customer_id_customers_id_fk",
           "tableFrom": "deposits",
-          "tableTo": "customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "deposits_recorded_by_staff_id_fk": {
           "name": "deposits_recorded_by_staff_id_fk",
           "tableFrom": "deposits",
-          "tableTo": "staff",
           "columnsFrom": [
             "recorded_by"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -1626,9 +1626,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -1689,24 +1689,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "depot_price_history_depot_product_price_id_depot_product_prices_id_fk": {
           "name": "depot_price_history_depot_product_price_id_depot_product_prices_id_fk",
           "tableFrom": "depot_price_history",
-          "tableTo": "depot_product_prices",
           "columnsFrom": [
             "depot_product_price_id"
           ],
+          "tableTo": "depot_product_prices",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1776,9 +1776,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "depot_product_cap_depot_idx": {
           "name": "depot_product_cap_depot_idx",
@@ -1791,37 +1791,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "depot_product_capacities_depot_id_depots_id_fk": {
           "name": "depot_product_capacities_depot_id_depots_id_fk",
           "tableFrom": "depot_product_capacities",
-          "tableTo": "depots",
           "columnsFrom": [
             "depot_id"
           ],
+          "tableTo": "depots",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "depot_product_capacities_product_id_products_id_fk": {
           "name": "depot_product_capacities_product_id_products_id_fk",
           "tableFrom": "depot_product_capacities",
-          "tableTo": "products",
           "columnsFrom": [
             "product_id"
           ],
+          "tableTo": "products",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1896,9 +1896,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "depot_product_price_depot_idx": {
           "name": "depot_product_price_depot_idx",
@@ -1911,37 +1911,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "depot_product_prices_depot_id_depots_id_fk": {
           "name": "depot_product_prices_depot_id_depots_id_fk",
           "tableFrom": "depot_product_prices",
-          "tableTo": "depots",
           "columnsFrom": [
             "depot_id"
           ],
+          "tableTo": "depots",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "depot_product_prices_product_id_products_id_fk": {
           "name": "depot_product_prices_product_id_products_id_fk",
           "tableFrom": "depot_product_prices",
-          "tableTo": "products",
           "columnsFrom": [
             "product_id"
           ],
+          "tableTo": "products",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2003,9 +2003,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "depot_staff_depot_idx": {
           "name": "depot_staff_depot_idx",
@@ -2018,9 +2018,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "depot_staff_staff_idx": {
           "name": "depot_staff_staff_idx",
@@ -2033,37 +2033,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "depot_staff_depot_id_depots_id_fk": {
           "name": "depot_staff_depot_id_depots_id_fk",
           "tableFrom": "depot_staff",
-          "tableTo": "depots",
           "columnsFrom": [
             "depot_id"
           ],
+          "tableTo": "depots",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "depot_staff_staff_id_staff_id_fk": {
           "name": "depot_staff_staff_id_staff_id_fk",
           "tableFrom": "depot_staff",
-          "tableTo": "staff",
           "columnsFrom": [
             "staff_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2174,9 +2174,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "drivers_status_idx": {
           "name": "drivers_status_idx",
@@ -2189,9 +2189,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "drivers_truck_idx": {
           "name": "drivers_truck_idx",
@@ -2204,9 +2204,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2267,9 +2267,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "driver_truck_history_truck_idx": {
           "name": "driver_truck_history_truck_idx",
@@ -2282,37 +2282,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "driver_truck_history_driver_id_drivers_id_fk": {
           "name": "driver_truck_history_driver_id_drivers_id_fk",
           "tableFrom": "driver_truck_history",
-          "tableTo": "drivers",
           "columnsFrom": [
             "driver_id"
           ],
+          "tableTo": "drivers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "driver_truck_history_truck_id_trucks_id_fk": {
           "name": "driver_truck_history_truck_id_trucks_id_fk",
           "tableFrom": "driver_truck_history",
-          "tableTo": "trucks",
           "columnsFrom": [
             "truck_id"
           ],
+          "tableTo": "trucks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2453,9 +2453,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2591,9 +2591,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "trucks_status_idx": {
           "name": "trucks_status_idx",
@@ -2606,9 +2606,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "trucks_driver_idx": {
           "name": "trucks_driver_idx",
@@ -2621,9 +2621,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2756,9 +2756,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -3054,9 +3054,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "pfis_location_product_status_idx": {
           "name": "pfis_location_product_status_idx",
@@ -3081,9 +3081,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "pfis_status_idx": {
           "name": "pfis_status_idx",
@@ -3096,115 +3096,115 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "pfis_location_id_depots_id_fk": {
           "name": "pfis_location_id_depots_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "depots",
           "columnsFrom": [
             "location_id"
           ],
+          "tableTo": "depots",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_product_id_products_id_fk": {
           "name": "pfis_product_id_products_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "products",
           "columnsFrom": [
             "product_id"
           ],
+          "tableTo": "products",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_audit_officer_id_staff_id_fk": {
           "name": "pfis_audit_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "audit_officer_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_product_officer_id_staff_id_fk": {
           "name": "pfis_product_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "product_officer_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_it_compliance_officer_id_staff_id_fk": {
           "name": "pfis_it_compliance_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "it_compliance_officer_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_security_exit_officer_id_staff_id_fk": {
           "name": "pfis_security_exit_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "security_exit_officer_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_commission_officer_id_staff_id_fk": {
           "name": "pfis_commission_officer_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "commission_officer_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "pfis_sales_manager_id_staff_id_fk": {
           "name": "pfis_sales_manager_id_staff_id_fk",
           "tableFrom": "pfis",
-          "tableTo": "staff",
           "columnsFrom": [
             "sales_manager_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -3357,9 +3357,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "orders_customer_payment_created_idx": {
           "name": "orders_customer_payment_created_idx",
@@ -3384,9 +3384,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "orders_virtual_account_payment_idx": {
           "name": "orders_virtual_account_payment_idx",
@@ -3405,9 +3405,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "orders_status_idx": {
           "name": "orders_status_idx",
@@ -3420,63 +3420,63 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "orders_customer_id_customers_id_fk": {
           "name": "orders_customer_id_customers_id_fk",
           "tableFrom": "orders",
-          "tableTo": "customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "orders_depot_id_depots_id_fk": {
           "name": "orders_depot_id_depots_id_fk",
           "tableFrom": "orders",
-          "tableTo": "depots",
           "columnsFrom": [
             "depot_id"
           ],
+          "tableTo": "depots",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "orders_product_id_products_id_fk": {
           "name": "orders_product_id_products_id_fk",
           "tableFrom": "orders",
-          "tableTo": "products",
           "columnsFrom": [
             "product_id"
           ],
+          "tableTo": "products",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "orders_pfi_id_pfis_id_fk": {
           "name": "orders_pfi_id_pfis_id_fk",
           "tableFrom": "orders",
-          "tableTo": "pfis",
           "columnsFrom": [
             "pfi_id"
           ],
+          "tableTo": "pfis",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -3573,9 +3573,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "tickets_order_idx": {
           "name": "tickets_order_idx",
@@ -3588,9 +3588,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "tickets_status_idx": {
           "name": "tickets_status_idx",
@@ -3603,196 +3603,43 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "tickets_order_id_orders_id_fk": {
           "name": "tickets_order_id_orders_id_fk",
           "tableFrom": "tickets",
-          "tableTo": "orders",
           "columnsFrom": [
             "order_id"
           ],
+          "tableTo": "orders",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         },
         "tickets_redeemed_by_staff_id_fk": {
           "name": "tickets_redeemed_by_staff_id_fk",
           "tableFrom": "tickets",
-          "tableTo": "staff",
           "columnsFrom": [
             "redeemed_by"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.wallet_holds": {
-      "name": "wallet_holds",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "customer_id": {
-          "name": "customer_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric(15, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "wallet_hold_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "deposit_id": {
-          "name": "deposit_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "wallet_holds_order_idx": {
-          "name": "wallet_holds_order_idx",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "wallet_holds_customer_status_idx": {
-          "name": "wallet_holds_customer_status_idx",
-          "columns": [
-            {
-              "expression": "customer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "wallet_holds_customer_id_customers_id_fk": {
-          "name": "wallet_holds_customer_id_customers_id_fk",
-          "tableFrom": "wallet_holds",
-          "tableTo": "customers",
-          "columnsFrom": [
-            "customer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "wallet_holds_order_id_orders_id_fk": {
-          "name": "wallet_holds_order_id_orders_id_fk",
-          "tableFrom": "wallet_holds",
-          "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "wallet_holds_deposit_id_deposits_id_fk": {
-          "name": "wallet_holds_deposit_id_deposits_id_fk",
-          "tableFrom": "wallet_holds",
-          "tableTo": "deposits",
-          "columnsFrom": [
-            "deposit_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "wallet_holds_amount_check": {
-          "name": "wallet_holds_amount_check",
-          "value": "\"wallet_holds\".\"amount\" > 0"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.webhook_events": {
@@ -3871,9 +3718,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -3993,9 +3840,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "sessions_staff_idx": {
           "name": "sessions_staff_idx",
@@ -4014,10 +3861,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"sessions\".\"staff_id\" IS NOT NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"sessions\".\"staff_id\" IS NOT NULL",
+          "concurrently": false
         },
         "sessions_customer_idx": {
           "name": "sessions_customer_idx",
@@ -4036,10 +3883,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"sessions\".\"customer_id\" IS NOT NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"sessions\".\"customer_id\" IS NOT NULL",
+          "concurrently": false
         },
         "sessions_family_idx": {
           "name": "sessions_family_idx",
@@ -4052,9 +3899,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "sessions_expiry_idx": {
           "name": "sessions_expiry_idx",
@@ -4067,38 +3914,38 @@
             }
           ],
           "isUnique": false,
-          "where": "\"sessions\".\"revoked_at\" IS NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"sessions\".\"revoked_at\" IS NULL",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "sessions_staff_id_staff_id_fk": {
           "name": "sessions_staff_id_staff_id_fk",
           "tableFrom": "sessions",
-          "tableTo": "staff",
           "columnsFrom": [
             "staff_id"
           ],
+          "tableTo": "staff",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "sessions_customer_id_customers_id_fk": {
           "name": "sessions_customer_id_customers_id_fk",
           "tableFrom": "sessions",
-          "tableTo": "customers",
           "columnsFrom": [
             "customer_id"
           ],
+          "tableTo": "customers",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -4207,15 +4054,6 @@
         "debit"
       ]
     },
-    "public.wallet_hold_status": {
-      "name": "wallet_hold_status",
-      "schema": "public",
-      "values": [
-        "active",
-        "converted",
-        "released"
-      ]
-    },
     "public.delivery_customer_type": {
       "name": "delivery_customer_type",
       "schema": "public",
@@ -4280,10 +4118,10 @@
     }
   },
   "schemas": {},
+  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

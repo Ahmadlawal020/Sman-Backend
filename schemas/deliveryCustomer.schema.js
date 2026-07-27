@@ -1,39 +1,55 @@
-const { z } = require("zod");
+const z = require("zod");
+const {
+  id, money, quantity, requiredString, optionalString, optionalEmail,
+  enumOf, searchTerm, pagination,
+} = require("./fields");
 
-const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+/**
+ * AUDIT H4 — `update(id, req.body)` took the raw body, which made these
+ * settable from a request. They are the reason it mattered:
+ *
+ *   virtualAccountNumber  the Paystack webhook matches an incoming payment to
+ *                         a customer BY ACCOUNT NUMBER. Overwriting it
+ *                         redirects someone else's money.
+ *   virtualAccountBank
+ *   virtualAccountName
+ *   paystackCustomerId
+ *
+ * All four are absent here; they are written only by the DVA service.
+ */
+const base = {
+  customerType: enumOf("Customer type", ["customer", "filling_station"]).optional(),
+  customerCode: optionalString("Customer code", 64),
+  name: optionalString("Name", 255),
+  phoneNumber: optionalString("Phone number", 30),
+  altPhoneNumber: optionalString("Alt phone number", 30),
+  email: optionalEmail(),
+  homeAddress: optionalString("Home address", 1000),
+  officeAddress: optionalString("Office address", 1000),
+  contactPerson: optionalString("Contact person", 255),
+  contactPersonPhone: optionalString("Contact person phone", 30),
+  stationAddress: optionalString("Station address", 1000),
+  tankCapacity: money("Tank capacity").optional(),
+  pumpCount: z.number().int("Pump count must be a whole number").nonnegative("Pump count cannot be negative").optional(),
+  creditLimit: money("Credit limit").optional(),
+  status: enumOf("Status", ["active", "dormant", "suspended"]).optional(),
+  notes: optionalString("Notes", 1000),
+};
 
-const createDeliveryCustomerSchema = z.object({
-  name: z.string().min(1, "Name is required").max(200),
-  email: z.string().email("Invalid email").max(255).optional().or(z.literal("")),
-  phone: z.string().min(1, "Phone is required").max(20),
-  companyName: z.string().max(200).optional().or(z.literal("")),
-  address: z.string().max(500).optional().or(z.literal("")),
-  state: z.string().max(100).optional().or(z.literal("")),
+const createDeliveryCustomer = z.object({ ...base, name: requiredString("Name", 255) });
+const updateDeliveryCustomer = z.object(base).partial();
+
+const listDeliveryCustomers = pagination.extend({
+  type: enumOf("Type", ["customer", "filling_station"]).optional(),
+  search: searchTerm,
+  status: enumOf("Status", ["active", "dormant", "suspended", "all"]).optional(),
 });
 
-const updateDeliveryCustomerSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  email: z.string().email().max(255).optional().or(z.literal("")),
-  phone: z.string().min(1).max(20).optional(),
-  companyName: z.string().max(200).optional().or(z.literal("")),
-  address: z.string().max(500).optional().or(z.literal("")),
-  state: z.string().max(100).optional().or(z.literal("")),
-  isActive: z.boolean().optional(),
-});
-
-const deliveryCustomerQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
-  search: z.string().max(100).optional(),
-});
-
-const deliveryCustomerIdParamSchema = z.object({
-  id: z.string().regex(objectIdRegex, "Invalid delivery customer ID"),
-});
+const idParam = z.object({ id: id("Customer id") });
 
 module.exports = {
-  createDeliveryCustomerSchema,
-  updateDeliveryCustomerSchema,
-  deliveryCustomerQuerySchema,
-  deliveryCustomerIdParamSchema,
+  createDeliveryCustomer,
+  updateDeliveryCustomer,
+  listDeliveryCustomers,
+  idParam,
 };

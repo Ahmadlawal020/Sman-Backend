@@ -5,12 +5,24 @@ const PORT = process.env.PORT || 5002;
 
 // REFRESH_TOKEN_SECRET is deliberately absent: refresh tokens are opaque
 // random strings looked up by hash, so there is nothing to sign.
-const REQUIRED_ENV_VARS = ["DATABASE_URL", "PAYSTACK_SECRET_KEY"];
+const REQUIRED_ENV_VARS = ["DATABASE_URL", "PAYSTACK_SECRET_KEY", "NODE_ENV"];
 
 const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missing.length > 0) {
   console.error(`Fatal: Missing required environment variables: ${missing.join(", ")}`);
   console.error("Please configure these in your .env file before starting the server.");
+  process.exit(1);
+}
+
+// NODE_ENV is required and constrained because the error handler decides
+// whether to expose stack traces from it. A typo like "prodcution" would
+// otherwise read as non-production and leak internals — so an unrecognised
+// value is fatal rather than silently permissive.
+const VALID_ENVS = ["production", "staging", "development", "test"];
+if (!VALID_ENVS.includes(process.env.NODE_ENV)) {
+  console.error(
+    `Fatal: NODE_ENV must be one of ${VALID_ENVS.join(", ")} — got "${process.env.NODE_ENV}"`
+  );
   process.exit(1);
 }
 
@@ -43,20 +55,17 @@ if (process.env.NODE_ENV === "production" && !process.env.TURNSTILE_SECRET_KEY) 
   process.exit(1);
 }
 
-const { processAllUnpaidOrders } = require("./services/payment.service");
-
+// The settlement sweep deliberately does NOT run here.
+//
+// It moves money. Running it inside app.listen meant every restart — including
+// a crash loop or a routine deploy — settled orders and minted loading tickets
+// on a code path nobody triggered, before the app was known healthy, with its
+// only error handling a console.error. It is now a scheduled job: POST
+// /api/settlements/run, finance-gated, driven by cron.
 testConnection()
   .then(async () => {
-    app.listen(PORT, async () => {
+    app.listen(PORT, () => {
       console.log(`Dashboard server running on port ${PORT}`);
-      try {
-        const count = await processAllUnpaidOrders();
-        if (count > 0) {
-          console.log(`Auto-processed ${count} unpaid order(s) using available customer balance.`);
-        }
-      } catch (err) {
-        console.error("Error running startup auto-order fulfillment:", err.message);
-      }
     });
   })
   .catch(() => {
