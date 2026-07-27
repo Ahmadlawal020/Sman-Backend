@@ -4,11 +4,11 @@ const { getCustomerInitials } = require("../utils/helpers");
 
 const {
   customerRepo,
-  deliveryCustomerRepo,
   deliverySaleRepo,
   depositRepo,
   orderRepo,
 } = require("../repositories");
+const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
 
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
@@ -120,6 +120,9 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
 
   // Idempotency check
   const existingDeposit = await depositRepo.findByReference(reference);
+  // Delivery sales are no longer auto-settled from DVA payments, but rows
+  // recorded before that path was removed still carry Paystack references —
+  // this keeps a replayed old webhook from crediting a wallet instead.
   const existingDeliverySale = await deliverySaleRepo.findByPaystackReference(reference);
   if (existingDeposit || existingDeliverySale) {
     return {
@@ -205,37 +208,43 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
     rawEvent: rawEventName,
   };
 
+  // Wallet customers only. The delivery sales ledger is keyed in manually —
+  // payments arriving on a delivery customer's account are deliberately NOT
+  // auto-recorded; they stay in webhook_events as unmatched for staff to
+  // enter by hand, exactly like the paper process.
   let customer = null;
-  let deliveryCustomer = null;
 
   if (accountNumber) {
     customer = await customerRepo.findByVirtualAccount(accountNumber);
-    if (!customer) {
-      deliveryCustomer = await deliveryCustomerRepo.findByVirtualAccount(accountNumber);
-    }
   }
 
-  if (!customer && !deliveryCustomer && customerCode) {
+  if (!customer && customerCode) {
     customer = await customerRepo.findByPaystackCustomerId(customerCode);
   }
 
-  if (!customer && !deliveryCustomer && customerEmail) {
+  if (!customer && customerEmail) {
     customer = await customerRepo.findByEmail(customerEmail);
   }
 
   if (customer) {
-    const newDeposit = await depositRepo.create({
+    // Ledger row + balance update happen atomically, and the unique index on
+    // deposits.reference makes a concurrent duplicate webhook a no-op.
+    const creditResult = await walletService.credit({
       customerId: customer.id,
-      amount: String(amount),
-      type: "credit",
+      amount,
       description: "Payment received via bank transfer",
-      reference: reference,
-      balanceAfter: String(Number(customer.balance || 0) + amount),
-      paystackDetails: paystackDetails,
+      reference,
+      paystackDetails,
     });
 
-    const previousDeposit = Number(customer.deposit || 0);
-    await customerRepo.updateDeposit(customer.id, amount, previousDeposit);
+    if (creditResult.alreadyProcessed) {
+      return {
+        success: true,
+        alreadyProcessed: true,
+        message: creditResult.message,
+        deposit: creditResult.deposit,
+      };
+    }
 
     // Automatically process unpaid orders using updated wallet balance
     const autoPaidOrders = await processUnpaidOrdersForCustomer(customer.id);
@@ -243,82 +252,21 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
     return {
       success: true,
       customerType: "customer",
-      customer: customer,
-      deposit: newDeposit,
+      customer: creditResult.customer,
+      deposit: creditResult.deposit,
       amount: amount,
       reference: reference,
       autoPaidOrdersCount: autoPaidOrders.length,
     };
-  } else if (deliveryCustomer) {
-    let deliverySale = null;
-    const pendingSale = await deliverySaleRepo.findPendingByCustomer(deliveryCustomer.id);
-
-    if (pendingSale) {
-      const previousPayment = Number(pendingSale.paymentAmount || 0);
-      const newPaymentAmount = previousPayment + amount;
-      const newBalance = Number(pendingSale.salesValue || 0) - newPaymentAmount;
-
-      deliverySale = await deliverySaleRepo.update(pendingSale.id, {
-        paymentAmount: String(newPaymentAmount),
-        balance: String(newBalance),
-        payerName: paystackDetails.senderName || pendingSale.payerName,
-        bank: `Paystack DVA (${paystackDetails.receiverBankName || "Paystack"})`,
-        dateOfPayment: paystackDetails.paidAt
-          ? new Date(paystackDetails.paidAt).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0],
-        depositStatus: newBalance <= 0 ? "paid" : "partial",
-        paymentMethod: "paystack_dva",
-        paystackReference: reference,
-        paystackDetails: paystackDetails,
-      });
-    } else {
-      deliverySale = await deliverySaleRepo.create({
-        customerId: deliveryCustomer.id,
-        customerName: deliveryCustomer.name,
-        paymentAmount: String(amount),
-        salesValue: "0",
-        balance: "0",
-        payerName: paystackDetails.senderName || "",
-        bank: `Paystack DVA (${paystackDetails.receiverBankName || "Paystack"})`,
-        dateOfPayment: paystackDetails.paidAt
-          ? new Date(paystackDetails.paidAt).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0],
-        depositStatus: "paid",
-        paymentMethod: "paystack_dva",
-        paystackReference: reference,
-        paystackDetails: paystackDetails,
-        enteredBy: "Paystack Webhook",
-        remarks: `Auto-recorded from DVA payment. Sender: ${paystackDetails.senderName || "Unknown"}`,
-      });
-    }
-
-    await deliveryCustomerRepo.update(deliveryCustomer.id, {
-      lastTransactionDate: new Date(),
-    });
-
-    return {
-      success: true,
-      customerType: "deliveryCustomer",
-      deliveryCustomer: deliveryCustomer,
-      deliverySale: deliverySale,
-      amount: amount,
-      reference: reference,
-    };
   } else {
     return {
       success: false,
-      message: `No customer or delivery customer found matching virtual account '${accountNumber}', customer code '${customerCode}', or email '${customerEmail}'.`,
+      message: `No wallet customer found matching virtual account '${accountNumber}', customer code '${customerCode}', or email '${customerEmail}'. If this is a delivery customer payment, enter it in the delivery sales ledger manually.`,
     };
   }
 };
 
 const processUnpaidOrdersForCustomer = async (customerId) => {
-  const customer = await customerRepo.findById(customerId);
-  if (!customer) return [];
-
-  let currentBalance = Number(customer.balance || 0);
-  if (currentBalance <= 0) return [];
-
   const unpaidOrders = (await orderRepo.findUnpaidByCustomer(customerId)) || [];
   const processedOrders = [];
 
@@ -326,46 +274,40 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
     const orderTotal = Number(order.totalAmount || 0);
     if (orderTotal <= 0) continue;
 
-    if (currentBalance >= orderTotal) {
-      // 1. Debit FIRST, guarded. Marking the order Paid before taking the
-      //    money means a lost race leaves a Paid order that was never funded.
-      const debited = await customerRepo.debitBalance(customerId, orderTotal);
-      if (!debited) {
-        // A concurrent order or sweep spent the balance. Leave this order
-        // unpaid; it will be picked up next time funds arrive.
-        console.warn(
-          `[settlement] insufficient funds for order ${order.orderNumber} — skipped`
-        );
-        break;
-      }
-      currentBalance = Number(debited.balance);
+    // The hold is the sufficiency check: it either commits the funds under a
+    // row lock or fails, so concurrent runs can't pay the same order twice
+    // (unique hold per order) or spend the same money twice (locked balance).
+    // This supersedes a bare guarded UPDATE (`WHERE balance >= amount`
+    // without a paired ledger write) — the hold and its eventual ledger entry
+    // are the same transactional unit, so there is no window where the
+    // balance has moved but no record says why.
+    const holdResult = await walletService.placeHold({
+      customerId,
+      orderId: order.id,
+      amount: orderTotal,
+      description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
+    });
 
-      // 2. Now that the money is taken, mark the order Paid
-      await orderRepo.update(order.id, { paymentStatus: "Paid" });
-
-      // 3. Record debit deposit entry for accounting
-      try {
-        await depositRepo.create({
-          customerId,
-          amount: String(orderTotal),
-          type: "debit",
-          description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
-          balanceAfter: String(currentBalance),
-        });
-      } catch (depErr) {
-        console.error("Failed to record debit deposit for auto-paid order:", depErr.message);
-      }
-
-      // 4. Generate loading ticket so order automatically passes through
-      try {
-        await generateTicketForOrder(order.id);
-        console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
-      } catch (tktErr) {
-        console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
-      }
-
-      processedOrders.push(order);
+    if (!holdResult.success) {
+      // alreadyHeld on an unpaid order means an earlier run placed the hold
+      // and crashed before marking it paid — finish that job. An inactive
+      // (released/converted) hold is history, not a claim; skip.
+      if (!holdResult.alreadyHeld) continue;
+      const existingHold = await walletService.findHoldByOrder(order.id);
+      if (!existingHold || existingHold.status !== "active") continue;
     }
+
+    await orderRepo.update(order.id, { paymentStatus: "Paid" });
+
+    // Generate loading ticket so order automatically passes through
+    try {
+      await generateTicketForOrder(order.id);
+      console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
+    } catch (tktErr) {
+      console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
+    }
+
+    processedOrders.push(order);
   }
 
   return processedOrders;

@@ -52,9 +52,26 @@ const ticketStatusEnum = pgEnum("ticket_status", ["Active", "Redeemed"]);
 
 const depositTypeEnum = pgEnum("deposit_type", ["credit", "debit"]);
 
+// Lifecycle of a wallet hold: money committed at order time ("active"),
+// then either spent ("converted", a debit deposit row is written) or
+// returned ("released", balance restored with no ledger entry).
+const walletHoldStatusEnum = pgEnum("wallet_hold_status", [
+  "active",
+  "converted",
+  "released",
+]);
+
+// "customer" is the legacy catch-all; new records should use a specific type.
 const deliveryCustomerTypeEnum = pgEnum("delivery_customer_type", [
   "customer",
   "filling_station",
+  "third_party",
+  "bulk",
+  "retail",
+  "wholesale",
+  "corporate",
+  "government",
+  "other",
 ]);
 
 const deliveryCustomerStatusEnum = pgEnum("delivery_customer_status", [
@@ -93,6 +110,60 @@ const webhookStatusEnum = pgEnum("webhook_status", [
   "failed",
 ]);
 
+const auditActorTypeEnum = pgEnum("audit_actor_type", [
+  "staff",
+  "customer",
+  "system",
+]);
+
+// Fleet ledger entries mirror Django's FleetLedgerEntry: an entry is either
+// money spent on a truck or money it earned. Category stays free text there,
+// matching the existing workflow.
+const fleetEntryTypeEnum = pgEnum("fleet_entry_type", ["expense", "income"]);
+
+// Sign-in providers beyond the phone number (which lives on customers
+// itself). One identity row per provider per customer.
+const customerIdentityProviderEnum = pgEnum("customer_identity_provider", [
+  "email",
+  "google",
+  "apple",
+  "pin",
+]);
+
+
+const dailyReportStatusEnum = pgEnum("daily_report_status", [
+  "submitted",
+  "approved",
+  "rejected",
+]);
+
+const incidentTypeEnum = pgEnum("incident_type", [
+  "incident",
+  "expense",
+  "maintenance",
+  "observation",
+  "compliance",
+]);
+
+const incidentStatusEnum = pgEnum("incident_status", [
+  "submitted",
+  "reviewed",
+  "resolved",
+  "rejected",
+]);
+
+const offlineSaleStatusEnum = pgEnum("offline_sale_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+const releaseStatusEnum = pgEnum("release_status", [
+  "pending",
+  "confirmed",
+  "released",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -105,6 +176,7 @@ module.exports = {
   pfiStatusEnum,
   ticketStatusEnum,
   depositTypeEnum,
+  walletHoldStatusEnum,
   deliveryCustomerTypeEnum,
   deliveryCustomerStatusEnum,
   deliveryNoteStatusEnum,
@@ -112,4 +184,12 @@ module.exports = {
   depositStatusEnum,
   paymentMethodEnum,
   webhookStatusEnum,
+  auditActorTypeEnum,
+  fleetEntryTypeEnum,
+  customerIdentityProviderEnum,
+  dailyReportStatusEnum,
+  incidentTypeEnum,
+  incidentStatusEnum,
+  offlineSaleStatusEnum,
+  releaseStatusEnum,
 };

@@ -14,6 +14,7 @@ const pfiSchema = require("./pfi");
 const orderSchema = require("./order");
 const ticketSchema = require("./ticket");
 const depositSchema = require("./deposit");
+const walletHoldSchema = require("./walletHold");
 const deliveryCustomerSchema = require("./deliveryCustomer");
 const deliveryNoteSchema = require("./deliveryNote");
 const deliveryInventorySchema = require("./deliveryInventory");
@@ -21,6 +22,13 @@ const deliverySaleSchema = require("./deliverySale");
 const webhookEventSchema = require("./webhookEvent");
 const sessionSchema = require("./session");
 const customerOtpSchema = require("./customerOtp");
+const customerIdentitySchema = require("./customerIdentity");
+const auditEventSchema = require("./auditEvent");
+const fleetTruckSchema = require("./fleetTruck");
+const fleetLedgerSchema = require("./fleetLedgerEntry");
+const dailyReportSchema = require("./dailyReport");
+const incidentRecordSchema = require("./incidentRecord");
+const offlineSaleSchema = require("./offlineSale");
 
 module.exports = {
   ...enums,
@@ -39,6 +47,7 @@ module.exports = {
   ...orderSchema,
   ...ticketSchema,
   ...depositSchema,
+  ...walletHoldSchema,
   ...deliveryCustomerSchema,
   ...deliveryNoteSchema,
   ...deliveryInventorySchema,
@@ -46,4 +55,11 @@ module.exports = {
   ...webhookEventSchema,
   ...sessionSchema,
   ...customerOtpSchema,
+  ...customerIdentitySchema,
+  ...auditEventSchema,
+  ...fleetTruckSchema,
+  ...fleetLedgerSchema,
+  ...dailyReportSchema,
+  ...incidentRecordSchema,
+  ...offlineSaleSchema,
 };

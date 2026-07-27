@@ -36,6 +36,13 @@
       "when": 1785091196613,
       "tag": "0004_balance_non_negative",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785167686301,
+      "tag": "0005_erp_wallet_and_identity",
+      "breakpoints": true
     }
   ]
 }

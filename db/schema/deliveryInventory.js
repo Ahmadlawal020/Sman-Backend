@@ -6,12 +6,13 @@ const {
   integer,
   real,
   decimal,
+  boolean,
   timestamp,
   jsonb,
   index,
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
-const { loadingStatusEnum } = require("./enums");
+const { loadingStatusEnum, releaseStatusEnum } = require("./enums");
 const { trucks } = require("./truck");
 const { pfis } = require("./pfi");
 const { deliveryCustomers } = require("./deliveryCustomer");
@@ -41,6 +42,18 @@ const deliveryInventory = pgTable(
     notes: text("notes").default(""),
     createdBy: varchar("created_by", { length: 255 }).default(""),
     offloadedBy: varchar("offloaded_by", { length: 255 }).default(""),
+    // Release workflow: pending -> confirmed (payment verified) -> released
+    // (ticket issued, product leaves the depot). Transitions are one-way and
+    // enforced by the delivery service, which also emits the audit events.
+    releaseStatus: releaseStatusEnum("release_status").default("pending").notNull(),
+    confirmedBy: varchar("confirmed_by", { length: 255 }).default(""),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    releasedBy: varchar("released_by", { length: 255 }).default(""),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    rejectionReason: text("rejection_reason").default(""),
+    ticketNumber: varchar("ticket_number", { length: 100 }).default(""),
+    ticketGeneratedAt: timestamp("ticket_generated_at", { withTimezone: true }),
+    isFullyPaid: boolean("is_fully_paid").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

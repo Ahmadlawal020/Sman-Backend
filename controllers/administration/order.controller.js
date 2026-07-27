@@ -1,7 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { v4: uuidv4 } = require("uuid");
-const { orderRepo, customerRepo, depotRepo, productRepo, pfiRepo, depositRepo } = require("../../repositories");
-const { db } = require("../../config/db");
+const { orderRepo, customerRepo, depotRepo, pfiRepo } = require("../../repositories");
+const walletService = require("../../services/wallet.service");
 const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendOrderInvoiceEmail } = require("../../services/email.service");
 const { sendOrderSummarySMS } = require("../../services/sms.service");
@@ -132,10 +132,9 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
-  // Check wallet balance
-  let isPaidWithWallet = Number(customer.balance || 0) >= totalAmount;
-
-  // Create order
+  // Create order unpaid; whether the wallet covers it is decided by
+  // placeHold under a row lock, not by the customer row read earlier,
+  // which may be stale by now.
   const order = await orderRepo.create({
     orderNumber,
     customerId,
@@ -148,56 +147,39 @@ const createOrder = asyncHandler(async (req, res) => {
     totalAmount: String(totalAmount),
     deliveryType,
     status: "Pending",
-    paymentStatus: isPaidWithWallet ? "Paid" : "Unpaid",
+    paymentStatus: "Unpaid",
     virtualAccountNumber,
     virtualAccountBank,
     virtualAccountName,
   });
 
-  // If paid with wallet, deduct balance.
-  //
-  // `isPaidWithWallet` was decided from a snapshot read many async steps and
-  // two HTTP calls ago, so it cannot be trusted here. debitBalance re-checks
-  // atomically in the WHERE and returns null if the funds are gone — which is
-  // what happens when a concurrent order spent them in the meantime.
-  let debited = null;
-  if (isPaidWithWallet) {
-    debited = await customerRepo.debitBalance(customerId, totalAmount);
-    if (!debited) {
-      // Lost the race. Leave the order Unpaid rather than marking it Paid
-      // against money that is no longer there; the customer can still settle
-      // it by transfer, and the webhook path will pick it up.
-      await orderRepo.update(order.id, { paymentStatus: "Unpaid" });
-      isPaidWithWallet = false;
-    }
-  }
+  // Commit wallet funds to the order. placeHold takes a row lock on the
+  // customer (SELECT ... FOR UPDATE) and checks affordability inside that
+  // same transaction, so a balance read here — however recent — can never be
+  // the thing that decides whether this order is paid. The debit ledger row
+  // itself is written later, when the order completes (hold converts);
+  // cancellation just releases the hold. Losing the race leaves the order
+  // Unpaid, exactly as it was created — never optimistically Paid.
+  const holdResult = await walletService.placeHold({
+    customerId,
+    orderId: order.id,
+    amount: totalAmount,
+    description: `Payment for Order ${orderNumber} (Wallet Balance)`,
+  });
 
-  if (isPaidWithWallet) {
-    try {
-      await depositRepo.create({
-        customerId,
-        amount: String(totalAmount),
-        type: "debit",
-        description: `Payment for Order ${orderNumber} (Wallet Balance)`,
-        // From the guarded update, not the snapshot read before it — the
-        // snapshot may be stale by several concurrent debits.
-        balanceAfter: String(debited.balance),
-      });
-    } catch (depErr) {
-      console.error("Failed to record wallet payment debit deposit:", depErr.message);
-    }
+  if (holdResult.success) {
+    await orderRepo.update(order.id, { paymentStatus: "Paid" });
+    order.paymentStatus = "Paid";
   }
 
   // Decrement depot product capacity
   await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity));
 
-  // Generate loading ticket if paid immediately.
-  //
-  // Reads isPaidWithWallet, NOT order.paymentStatus — `order` is the row as
-  // inserted, so its in-memory status is still "Paid" even when the debit
-  // subsequently lost the race. Trusting it would mint a redeemable loading
-  // ticket for an order nobody paid for.
-  if (isPaidWithWallet) {
+  // Generate loading ticket if paid immediately. Reads order.paymentStatus,
+  // which was only ever set to "Paid" above after holdResult.success — unlike
+  // an optimistic insert, there is no window where this reads "Paid" for an
+  // order the hold actually failed to fund.
+  if (order.paymentStatus === "Paid") {
     try {
       await generateTicketForOrder(order.id);
     } catch (ticketErr) {
@@ -284,6 +266,15 @@ const updateOrder = asyncHandler(async (req, res) => {
   if (status !== undefined) updateData.status = status;
   if (paymentStatus !== undefined) updateData.paymentStatus = paymentStatus;
 
+  // Keep wallet holds in step with status changes made through this generic
+  // endpoint, so held funds can't be stranded on a cancelled order or left
+  // unconverted on a completed one.
+  if (status === "Cancelled" && order.status !== "Cancelled") {
+    await walletService.releaseHold(order.id);
+  } else if (status === "Completed" && order.status !== "Completed") {
+    await walletService.convertHold(order.id, `Payment for Order ${order.orderNumber} (Wallet Balance)`);
+  }
+
   await orderRepo.update(order.id, updateData);
 
   if (order.status === "Completed" || order.paymentStatus === "Paid" || status === "Completed" || paymentStatus === "Paid") {
@@ -323,26 +314,18 @@ const cancelOrder = asyncHandler(async (req, res) => {
   // Restore depot capacity
   await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity);
 
-  // If order was paid, refund to balance
-  if (order.paymentStatus === "Paid") {
-    const credited = await customerRepo.creditBalance(
-      order.customerId,
-      Number(order.totalAmount)
-    );
-
-    try {
-      await depositRepo.create({
-        customerId: order.customerId,
-        amount: String(order.totalAmount),
-        type: "credit",
-        description: `Refund for cancelled Order ${order.orderNumber}`,
-        // From the update's return value rather than a separate read, which
-        // could be stale by the time the credit lands.
-        balanceAfter: String(credited.balance),
-      });
-    } catch (depErr) {
-      console.error("Failed to record cancellation refund:", depErr.message);
-    }
+  // Money back: an active hold is simply released (balance restored, no
+  // ledger rows — the money never actually moved). Only an order paid some
+  // other way (externally marked Paid, or a legacy pre-hold order) needs a
+  // refund credit in the ledger.
+  const released = await walletService.releaseHold(order.id);
+  if (!released.success && order.paymentStatus === "Paid") {
+    await walletService.credit({
+      customerId: order.customerId,
+      amount: Number(order.totalAmount),
+      description: `Refund for cancelled Order ${order.orderNumber}`,
+      trackDeposit: false,
+    });
   }
 
   await orderRepo.update(order.id, { status: "Cancelled" });
@@ -366,6 +349,10 @@ const completeOrder = asyncHandler(async (req, res) => {
   if (order.status === "Completed") {
     return res.status(400).json({ success: false, message: "Order is already completed" });
   }
+
+  // The order is fulfilled: the wallet hold becomes a real debit in the
+  // ledger. No-op for orders paid outside the wallet.
+  await walletService.convertHold(order.id, `Payment for Order ${order.orderNumber} (Wallet Balance)`);
 
   await orderRepo.update(order.id, { status: "Completed" });
 
