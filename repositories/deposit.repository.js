@@ -95,8 +95,8 @@ const findAll = async ({ customer, page = 1, limit = 50 } = {}) => {
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(deposits).values(data).returning();
+const create = async (data, tx = db) => {
+  const [row] = await tx.insert(deposits).values(data).returning();
   return row;
 };
 

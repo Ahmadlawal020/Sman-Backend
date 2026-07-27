@@ -2,8 +2,8 @@ const { eq, and, or, ilike, desc, count, ne, gte, sql } = require("drizzle-orm")
 const { db } = require("../config/db");
 const { customers } = require("../db/schema");
 
-const findById = async (id) => {
-  const [row] = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
+const findById = async (id, tx = db) => {
+  const [row] = await tx.select().from(customers).where(eq(customers.id, id)).limit(1);
   return row || null;
 };
 
@@ -109,8 +109,8 @@ const create = async (data) => {
   return row;
 };
 
-const update = async (id, data) => {
-  const [row] = await db
+const update = async (id, data, tx = db) => {
+  const [row] = await tx
     .update(customers)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(customers.id, id))

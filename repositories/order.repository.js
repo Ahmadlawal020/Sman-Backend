@@ -2,8 +2,8 @@ const { eq, and, or, ilike, desc, asc, count, sql, gte, lte } = require("drizzle
 const { db } = require("../config/db");
 const { orders, customers, depots, products, pfis } = require("../db/schema");
 
-const findById = async (id) => {
-  const [row] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+const findById = async (id, tx = db) => {
+  const [row] = await tx.select().from(orders).where(eq(orders.id, id)).limit(1);
   return row || null;
 };
 
@@ -16,8 +16,8 @@ const findByNumber = async (orderNumber) => {
   return row || null;
 };
 
-const findByIdFull = async (id) => {
-  const [row] = await db
+const findByIdFull = async (id, tx = db) => {
+  const [row] = await tx
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
@@ -160,13 +160,13 @@ const findAll = async ({
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(orders).values(data).returning();
+const create = async (data, tx = db) => {
+  const [row] = await tx.insert(orders).values(data).returning();
   return row;
 };
 
-const update = async (id, data) => {
-  const [row] = await db
+const update = async (id, data, tx = db) => {
+  const [row] = await tx
     .update(orders)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(orders.id, id))

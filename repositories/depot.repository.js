@@ -10,8 +10,8 @@ const {
   staff,
 } = require("../db/schema");
 
-const findById = async (id) => {
-  const [row] = await db.select().from(depots).where(eq(depots.id, id)).limit(1);
+const findById = async (id, tx = db) => {
+  const [row] = await tx.select().from(depots).where(eq(depots.id, id)).limit(1);
   return row || null;
 };
 
@@ -187,9 +187,9 @@ const upsertProductCapacity = async (depotId, productId, capacity) => {
   return row;
 };
 
-const decrementProductCapacity = async (depotId, productId, amount) => {
+const decrementProductCapacity = async (depotId, productId, amount, tx = db) => {
   const numericProductId = parseInt(productId, 10) || productId;
-  const [row] = await db
+  const [row] = await tx
     .update(depotProductCapacities)
     .set({
       capacity: sql`${depotProductCapacities.capacity} - ${amount}`,
@@ -205,9 +205,9 @@ const decrementProductCapacity = async (depotId, productId, amount) => {
   return row || null;
 };
 
-const incrementProductCapacity = async (depotId, productId, amount) => {
+const incrementProductCapacity = async (depotId, productId, amount, tx = db) => {
   const numericProductId = parseInt(productId, 10) || productId;
-  const [row] = await db
+  const [row] = await tx
     .update(depotProductCapacities)
     .set({
       capacity: sql`${depotProductCapacities.capacity} + ${amount}`,
@@ -256,8 +256,8 @@ const getProductPrices = async (depotId) => {
   }));
 };
 
-const getProductPrice = async (depotId, productId) => {
-  const [row] = await db
+const getProductPrice = async (depotId, productId, tx = db) => {
+  const [row] = await tx
     .select()
     .from(depotProductPrices)
     .where(

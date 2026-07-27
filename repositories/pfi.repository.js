@@ -108,8 +108,8 @@ const deleteById = async (id) => {
   return row || null;
 };
 
-const reserveStock = async (pfiId, quantity) => {
-  const [row] = await db
+const reserveStock = async (pfiId, quantity, tx = db) => {
+  const [row] = await tx
     .update(pfis)
     .set({
       soldQtyLitres: sql`${pfis.soldQtyLitres} + ${quantity}`,
@@ -126,13 +126,13 @@ const reserveStock = async (pfiId, quantity) => {
   return row || null;
 };
 
-const releaseStock = async (pfiId, quantity) => {
-  const [pfi] = await db.select().from(pfis).where(eq(pfis.id, pfiId)).limit(1);
+const releaseStock = async (pfiId, quantity, tx = db) => {
+  const [pfi] = await tx.select().from(pfis).where(eq(pfis.id, pfiId)).limit(1);
   if (!pfi) return null;
 
   const wasFinished = pfi.status === "finished";
 
-  const [row] = await db
+  const [row] = await tx
     .update(pfis)
     .set({
       soldQtyLitres: sql`${pfis.soldQtyLitres} - ${quantity}`,
@@ -145,8 +145,8 @@ const releaseStock = async (pfiId, quantity) => {
   return row || null;
 };
 
-const markFinishedIfComplete = async (pfiId) => {
-  const [row] = await db
+const markFinishedIfComplete = async (pfiId, tx = db) => {
+  const [row] = await tx
     .update(pfis)
     .set({ status: "finished", updatedAt: new Date() })
     .where(

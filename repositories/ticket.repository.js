@@ -84,8 +84,8 @@ const findByIdOrCodeFull = async (idOrCode) => {
   return findByIdFull(ticket.id);
 };
 
-const findByOrder = async (orderId) => {
-  const [row] = await db
+const findByOrder = async (orderId, tx = db) => {
+  const [row] = await tx
     .select()
     .from(tickets)
     .where(eq(tickets.orderId, orderId))
@@ -155,13 +155,13 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(tickets).values(data).returning();
+const create = async (data, tx = db) => {
+  const [row] = await tx.insert(tickets).values(data).returning();
   return row;
 };
 
-const update = async (id, data) => {
-  const [row] = await db
+const update = async (id, data, tx = db) => {
+  const [row] = await tx
     .update(tickets)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(tickets.id, id))
