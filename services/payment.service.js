@@ -10,6 +10,7 @@ const {
   orderRepo,
 } = require("../repositories");
 const { generateTicketForOrder } = require("./ticket.service");
+const orderStatus = require("./orderStatus.service");
 
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
 
@@ -340,8 +341,24 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
       }
       currentBalance = Number(debited.balance);
 
-      // 2. Now that the money is taken, mark the order Paid
+      // 2. Now that the money is taken, mark the order Paid and drive the
+      //    lifecycle Pending→Paid through the state machine (system actor) so it
+      //    reaches the "Paid" stage release requires and writes an order.paid
+      //    audit row. Guarded on the current status so a settled order that has
+      //    already moved on (or was cancelled) is left untouched, not errored.
       await orderRepo.update(order.id, { paymentStatus: "Paid" });
+      if (order.status === "Pending") {
+        try {
+          await orderStatus.transition(order.id, "Paid", {
+            actor: { type: "system" },
+            action: "order.paid",
+            set: { paymentConfirmedAt: new Date() },
+            metadata: { via: "settlement", amount: String(orderTotal) },
+          });
+        } catch (stErr) {
+          console.error(`Failed to advance order ${order.orderNumber} to Paid:`, stErr.message);
+        }
+      }
 
       // 3. Record debit deposit entry for accounting
       try {

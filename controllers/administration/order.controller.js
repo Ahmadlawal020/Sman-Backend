@@ -208,7 +208,22 @@ const createOrder = asyncHandler(async (req, res) => {
 
     await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
 
-    return { order: created, isPaidWithWallet: paid };
+    // Wallet payment confirms the order NOW — drive the lifecycle Pending→Paid
+    // through the state machine (system actor) so it enters the "Paid" stage
+    // that release requires, and an order.paid audit row is written. Without
+    // this a wallet-paid order was stuck at Pending and could never be released.
+    let orderRow = created;
+    if (paid) {
+      orderRow = await orderStatus.transition(created.id, "Paid", {
+        tx,
+        actor: { type: "system" },
+        action: "order.paid",
+        set: { paymentConfirmedAt: new Date() },
+        metadata: { via: "wallet", amount: String(totalAmount) },
+      });
+    }
+
+    return { order: orderRow, isPaidWithWallet: paid };
   });
 
   // --- Post-commit side effects. The order is durable; these are best-effort.
