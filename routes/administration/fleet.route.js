@@ -8,8 +8,7 @@ const {
   updateFleetTruckSchema,
   fleetQuerySchema,
   fleetLedgerEntrySchema,
-  fleetTripSchema,
-  statementQuerySchema,
+  fleetLedgerQuerySchema,
 } = require("../../schemas/fleet.schema");
 const {
   getFleetTrucks,
@@ -18,9 +17,7 @@ const {
   updateFleetTruck,
   getComplianceWatchlist,
   recordLedgerEntry,
-  getStatement,
-  recordTrip,
-  getTrips,
+  getLedgerEntries,
 } = require("../../controllers/administration/fleet.controller");
 
 router.get("/", verifyStaff, validate({ query: fleetQuerySchema }), getFleetTrucks);
@@ -35,32 +32,19 @@ router.patch(
   updateFleetTruck
 );
 
-// Fleet ledger (immutable): entries are appended, never edited.
+// Fleet ledger — same workflow as the Django FleetLedgerEntry screens:
+// entries are appended, never edited.
 router.get(
   "/:id/ledger",
   verifyStaff,
-  validate({ params: idParamSchema, query: statementQuerySchema }),
-  getStatement
+  validate({ params: idParamSchema, query: fleetLedgerQuerySchema }),
+  getLedgerEntries
 );
 router.post(
   "/:id/ledger",
   verifyStaff,
   validate({ params: idParamSchema, body: fleetLedgerEntrySchema }),
   recordLedgerEntry
-);
-
-// Trips
-router.get(
-  "/:id/trips",
-  verifyStaff,
-  validate({ params: idParamSchema, query: statementQuerySchema }),
-  getTrips
-);
-router.post(
-  "/:id/trips",
-  verifyStaff,
-  validate({ params: idParamSchema, body: fleetTripSchema }),
-  recordTrip
 );
 
 module.exports = router;

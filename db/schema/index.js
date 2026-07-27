@@ -23,8 +23,8 @@ const webhookEventSchema = require("./webhookEvent");
 const sessionSchema = require("./session");
 const customerOtpSchema = require("./customerOtp");
 const auditEventSchema = require("./auditEvent");
-const ledgerSchema = require("./ledger");
 const fleetTruckSchema = require("./fleetTruck");
+const fleetLedgerSchema = require("./fleetLedgerEntry");
 const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
@@ -55,8 +55,8 @@ module.exports = {
   ...sessionSchema,
   ...customerOtpSchema,
   ...auditEventSchema,
-  ...ledgerSchema,
   ...fleetTruckSchema,
+  ...fleetLedgerSchema,
   ...dailyReportSchema,
   ...incidentRecordSchema,
   ...offlineSaleSchema,

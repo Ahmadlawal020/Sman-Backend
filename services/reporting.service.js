@@ -7,15 +7,18 @@ const {
   walletHolds,
   pfis,
   deliveryInventory,
-  ledgerAccounts,
-  ledgerEntries,
+  deliverySales,
+  deliveryCustomers,
+  fleetTrucks,
+  fleetLedgerEntries,
   dailyReports,
   offlineSales,
 } = require("../db/schema");
-const ledgerService = require("./ledger.service");
+const { fleetTruckRepo } = require("../repositories");
 
-// Read-only aggregation, SQL-side. Nothing here writes, and nothing here is
-// trusted for money movement — the ledgers and wallet are; these summarise.
+// Read-only aggregation, SQL-side, over the same records the existing
+// screens use: delivery_sales is the delivery sales ledger, fleet_ledger_
+// entries the fleet book. Nothing here writes.
 
 const num = (value) => Number(value || 0);
 
@@ -98,6 +101,29 @@ const pfiSummary = async () => {
   return { byStatus: rows };
 };
 
+// Delivery sales ledger totals: sales value vs payments received, and the
+// gap between them — the same arithmetic the Django ledger screens show.
+const deliverySalesTotals = async ({ dateFrom, dateTo, customerType } = {}) => {
+  const conditions = [];
+  if (dateFrom) conditions.push(gte(deliverySales.dateLoaded, dateFrom));
+  if (dateTo) conditions.push(lte(deliverySales.dateLoaded, dateTo));
+  if (customerType) conditions.push(eq(deliveryCustomers.customerType, customerType));
+
+  const [totals] = await db
+    .select({
+      saleCount: sql`count(*)::int`,
+      quantity: sql`COALESCE(SUM(${deliverySales.quantity}), 0)`,
+      salesValue: sql`COALESCE(SUM(${deliverySales.salesValue}), 0)`,
+      paymentAmount: sql`COALESCE(SUM(${deliverySales.paymentAmount}), 0)`,
+      outstanding: sql`COALESCE(SUM(${deliverySales.salesValue} - ${deliverySales.paymentAmount}), 0)`,
+    })
+    .from(deliverySales)
+    .leftJoin(deliveryCustomers, eq(deliverySales.customerId, deliveryCustomers.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  return totals;
+};
+
 const deliverySummary = async ({ dateFrom, dateTo } = {}) => {
   const conditions = dateConditions(deliveryInventory.createdAt, dateFrom, dateTo);
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -113,65 +139,72 @@ const deliverySummary = async ({ dateFrom, dateTo } = {}) => {
     .where(whereClause)
     .groupBy(deliveryInventory.loadingStatus, deliveryInventory.releaseStatus);
 
-  const ledger = await ledgerService.summarize({ ownerType: "delivery_customer", dateFrom, dateTo });
+  const salesLedger = await deliverySalesTotals({ dateFrom, dateTo });
 
-  return { byStatus, ledger };
+  return { byStatus, salesLedger };
+};
+
+const stationSummary = async ({ dateFrom, dateTo } = {}) => {
+  const totals = await deliverySalesTotals({ dateFrom, dateTo, customerType: "filling_station" });
+
+  const [stations] = await db
+    .select({
+      stationCount: sql`count(*)::int`,
+      active: sql`COUNT(*) FILTER (WHERE ${deliveryCustomers.status} = 'active')::int`,
+    })
+    .from(deliveryCustomers)
+    .where(eq(deliveryCustomers.customerType, "filling_station"));
+
+  return { stations, salesLedger: totals };
 };
 
 const fleetSummary = async ({ dateFrom, dateTo } = {}) => {
-  const ledger = await ledgerService.summarize({ ownerType: "fleet_truck", dateFrom, dateTo });
+  const ledger = await fleetTruckRepo.summarizeLedger({ dateFrom, dateTo });
 
-  // Per-truck net position, most costly first.
+  const conditions = [];
+  if (dateFrom) conditions.push(gte(fleetLedgerEntries.entryDate, dateFrom));
+  if (dateTo) conditions.push(lte(fleetLedgerEntries.entryDate, dateTo));
+
   const perTruck = await db
     .select({
-      accountId: ledgerAccounts.id,
-      name: ledgerAccounts.name,
-      ownerId: ledgerAccounts.ownerId,
-      netCost: ledgerAccounts.runningBalance,
+      truckId: fleetTrucks.id,
+      plateNumber: fleetTrucks.plateNumber,
+      expenses: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'expense' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
+      income: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'income' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
     })
-    .from(ledgerAccounts)
-    .where(eq(ledgerAccounts.ownerType, "fleet_truck"))
-    .orderBy(desc(ledgerAccounts.runningBalance))
+    .from(fleetLedgerEntries)
+    .innerJoin(fleetTrucks, eq(fleetLedgerEntries.truckId, fleetTrucks.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .groupBy(fleetTrucks.id, fleetTrucks.plateNumber)
+    .orderBy(desc(sql`SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'expense' THEN ${fleetLedgerEntries.amount} ELSE 0 END)`))
     .limit(50);
 
   return { ledger, perTruck };
 };
 
-const stationSummary = async ({ dateFrom, dateTo } = {}) => {
-  return ledgerService.summarize({ ownerType: "filling_station", dateFrom, dateTo });
-};
-
 /**
- * Who owes us money, biggest first — across any ledger book.
+ * Who owes us money on the delivery sales ledger, biggest first:
+ * outstanding = sales value - payments, per customer.
  */
-const outstandingPayments = async ({ ownerType, limit = 50 } = {}) => {
-  const conditions = [gte(ledgerAccounts.runningBalance, "0.01")];
-  if (ownerType) conditions.push(eq(ledgerAccounts.ownerType, ownerType));
-
-  const accounts = await db
-    .select()
-    .from(ledgerAccounts)
-    .where(and(...conditions))
-    .orderBy(desc(ledgerAccounts.runningBalance))
+const outstandingPayments = async ({ limit = 50 } = {}) => {
+  const rows = await db
+    .select({
+      customerId: deliverySales.customerId,
+      customerName: sql`COALESCE(MAX(${deliveryCustomers.name}), MAX(${deliverySales.customerName}))`,
+      customerType: sql`MAX(${deliveryCustomers.customerType})`,
+      salesValue: sql`COALESCE(SUM(${deliverySales.salesValue}), 0)`,
+      paymentAmount: sql`COALESCE(SUM(${deliverySales.paymentAmount}), 0)`,
+      outstanding: sql`COALESCE(SUM(${deliverySales.salesValue} - ${deliverySales.paymentAmount}), 0)`,
+    })
+    .from(deliverySales)
+    .leftJoin(deliveryCustomers, eq(deliverySales.customerId, deliveryCustomers.id))
+    .groupBy(deliverySales.customerId)
+    .having(sql`SUM(${deliverySales.salesValue} - ${deliverySales.paymentAmount}) > 0`)
+    .orderBy(desc(sql`SUM(${deliverySales.salesValue} - ${deliverySales.paymentAmount})`))
     .limit(Math.min(200, limit));
 
-  const totalOutstanding = accounts.reduce((sum, account) => sum + num(account.runningBalance), 0);
-  return { totalOutstanding, accounts };
-};
-
-const commissionsSummary = async ({ dateFrom, dateTo } = {}) => {
-  const conditions = [eq(ledgerEntries.category, "commission")];
-  if (dateFrom) conditions.push(gte(ledgerEntries.entryDate, dateFrom));
-  if (dateTo) conditions.push(lte(ledgerEntries.entryDate, dateTo));
-
-  const [totals] = await db
-    .select({
-      entryCount: sql`count(*)::int`,
-      total: sql`COALESCE(SUM(${ledgerEntries.amount}), 0)`,
-    })
-    .from(ledgerEntries)
-    .where(and(...conditions));
-  return totals;
+  const totalOutstanding = rows.reduce((sum, row) => sum + num(row.outstanding), 0);
+  return { totalOutstanding, customers: rows };
 };
 
 const dailyReportSummary = async ({ dateFrom, dateTo, location } = {}) => {
@@ -209,10 +242,13 @@ const revenueSummary = async ({ dateFrom, dateTo } = {}) => {
     .from(offlineSales)
     .where(and(...offlineConditions));
 
+  const deliveryRevenue = await deliverySalesTotals({ dateFrom, dateTo });
+
   return {
     orders: orderRevenue,
     offlineSales: offlineRevenue,
-    combined: num(orderRevenue.total) + num(offlineRevenue.total),
+    deliverySales: deliveryRevenue,
+    combined: num(orderRevenue.total) + num(offlineRevenue.total) + num(deliveryRevenue.paymentAmount),
   };
 };
 
@@ -224,7 +260,6 @@ module.exports = {
   fleetSummary,
   stationSummary,
   outstandingPayments,
-  commissionsSummary,
   dailyReportSummary,
   revenueSummary,
 };

@@ -17,8 +17,8 @@ const { sql } = require("drizzle-orm");
 const { staff } = require("./staff");
 
 // Fleet registry — the company's own tanker fleet, distinct from the ops
-// `trucks` table (third-party/loading trucks). Financials live in the
-// ledger engine (owner_type fleet_truck), never as mutable columns here.
+// `trucks` table (third-party/loading trucks). Mirrors the Django FleetTruck
+// model; financials live in fleet_ledger_entries, never as columns here.
 const fleetTrucks = pgTable(
   "fleet_trucks",
   {
@@ -64,35 +64,4 @@ const fleetTrucks = pgTable(
   ]
 );
 
-// Trip history: one row per journey, carrying mileage and fuel so fleet
-// reporting can derive consumption without touching the truck row.
-const fleetTrips = pgTable(
-  "fleet_trips",
-  {
-    id: serial("id").primaryKey(),
-    fleetTruckId: integer("fleet_truck_id")
-      .notNull()
-      .references(() => fleetTrucks.id, { onDelete: "restrict" }),
-    tripDate: date("trip_date").notNull(),
-    origin: varchar("origin", { length: 255 }).default(""),
-    destination: varchar("destination", { length: 255 }).default(""),
-    allocationCode: varchar("allocation_code", { length: 100 }).default(""),
-    quantityLitres: real("quantity_litres"),
-    fuelUsedLitres: real("fuel_used_litres"),
-    mileageStart: integer("mileage_start"),
-    mileageEnd: integer("mileage_end"),
-    driverName: varchar("driver_name", { length: 255 }).default(""),
-    notes: text("notes").default(""),
-    createdBy: integer("created_by").references(() => staff.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    index("fleet_trips_truck_date_idx").on(table.fleetTruckId, table.tripDate),
-    check(
-      "fleet_trips_mileage_check",
-      sql`${table.mileageEnd} IS NULL OR ${table.mileageStart} IS NULL OR ${table.mileageEnd} >= ${table.mileageStart}`
-    ),
-  ]
-);
-
-module.exports = { fleetTrucks, fleetTrips };
+module.exports = { fleetTrucks };

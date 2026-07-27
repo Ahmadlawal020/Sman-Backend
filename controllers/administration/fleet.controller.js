@@ -42,19 +42,14 @@ const recordLedgerEntry = asyncHandler(async (req, res) => {
   sendServiceResult(res, result, { successStatus: 201, message: "Ledger entry recorded" });
 });
 
-const getStatement = asyncHandler(async (req, res) => {
-  const statement = await fleetService.getStatement(req.params.id, req.query);
-  res.json({ success: true, data: statement });
-});
-
-const recordTrip = asyncHandler(async (req, res) => {
-  const result = await fleetService.recordTrip(req.params.id, req.body, { actor: staffActor(req) });
-  sendServiceResult(res, result, { successStatus: 201, message: "Trip recorded" });
-});
-
-const getTrips = asyncHandler(async (req, res) => {
-  const result = await fleetTruckRepo.findTrips({ ...req.query, fleetTruckId: req.params.id });
-  res.json({ success: true, data: result });
+const getLedgerEntries = asyncHandler(async (req, res) => {
+  const result = await fleetTruckRepo.findLedgerEntries({ ...req.query, truckId: req.params.id });
+  const summary = await fleetTruckRepo.summarizeLedger({
+    truckId: req.params.id,
+    dateFrom: req.query.dateFrom,
+    dateTo: req.query.dateTo,
+  });
+  res.json({ success: true, data: { ...result, summary } });
 });
 
 module.exports = {
@@ -64,7 +59,5 @@ module.exports = {
   updateFleetTruck,
   getComplianceWatchlist,
   recordLedgerEntry,
-  getStatement,
-  recordTrip,
-  getTrips,
+  getLedgerEntries,
 };

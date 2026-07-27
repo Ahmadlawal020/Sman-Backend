@@ -10,7 +10,6 @@ router.get("/deliveries", verifyStaff, reporting.deliverySummary);
 router.get("/fleet", verifyStaff, reporting.fleetSummary);
 router.get("/stations", verifyStaff, reporting.stationSummary);
 router.get("/outstanding", verifyStaff, reporting.outstandingPayments);
-router.get("/commissions", verifyStaff, reporting.commissionsSummary);
 router.get("/daily-reports", verifyStaff, reporting.dailyReportSummary);
 router.get("/revenue", verifyStaff, reporting.revenueSummary);
 router.get("/audit-trail", verifyStaff, reporting.auditTrail);

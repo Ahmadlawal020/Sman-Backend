@@ -1,10 +1,10 @@
 const { deliveryInventoryRepo, deliveryCustomerRepo } = require("../repositories");
-const ledgerService = require("./ledger.service");
 const { emitEvent } = require("./events");
 
-// Allocation release workflow: pending -> confirmed -> released. One-way.
-// Releasing is the financial moment — the sale hits the customer's delivery
-// ledger there, exactly once (idempotent by allocation reference).
+// Allocation release workflow, same as the Django flow: pending -> confirmed
+// -> released, one-way. Releasing assigns the delivery ticket; the financial
+// record stays in delivery_sales (entered/uploaded by staff, settled by DVA
+// payments), exactly as the existing screens expect.
 
 const TRANSITIONS = {
   pending: ["confirmed"],
@@ -63,41 +63,19 @@ const releaseAllocation = async (allocationId, { actor }) => {
     ticketGeneratedAt: allocation.ticketGeneratedAt || new Date(),
   });
 
-  // Post the sale to the customer's delivery ledger. Reference makes a retry
-  // (double-click, replay) a no-op instead of a second sale.
-  let ledgerEntry = null;
-  const quantity = Number(allocation.quantityAllocated || 0);
-  const rate = Number(allocation.rate || 0);
-  const salesValue = quantity * rate;
-  if (allocation.customerId && salesValue > 0) {
-    const customer = await deliveryCustomerRepo.findById(allocation.customerId);
-    const posted = await ledgerService.postEntry({
-      ownerType: "delivery_customer",
-      ownerId: allocation.customerId,
-      ownerName: customer?.name || allocation.customerName || "",
-      direction: "debit",
-      category: "sale",
-      amount: salesValue,
-      description: `Delivery release ${ticketNumber} — ${quantity.toLocaleString()}L @ ${rate}`,
-      reference: `delivery-release-${allocationId}`,
-      metadata: { allocationId, allocationCode: allocation.allocationCode || "", quantity, rate },
-      recordedBy: actor?.id || null,
-      actor,
-    });
-    ledgerEntry = posted.entry || null;
-  }
+  const customer = allocation.customerId
+    ? await deliveryCustomerRepo.findById(allocation.customerId)
+    : null;
 
   emitEvent("delivery.released", {
     actor,
     entityType: "delivery_inventory",
     entityId: allocationId,
     allocation: updated,
-    customerPhone: allocation.customerId
-      ? (await deliveryCustomerRepo.findById(allocation.customerId))?.phoneNumber
-      : "",
+    customerPhone: customer?.phoneNumber || "",
   });
 
-  return { success: true, allocation: updated, ledgerEntry };
+  return { success: true, allocation: updated };
 };
 
 const rejectAllocation = async (allocationId, { actor, reason = "" }) => {

@@ -52,49 +52,21 @@ const fleetQuerySchema = z.object({
   order: z.enum(["asc", "desc"]).optional(),
 });
 
+// Same shape as the Django FleetLedgerEntry form: expense|income, free-text
+// category, amount, business date.
 const fleetLedgerEntrySchema = z.object({
-  category: z.enum([
-    "fuel",
-    "repairs",
-    "tyres",
-    "maintenance",
-    "driver_allowance",
-    "toll",
-    "insurance",
-    "registration",
-    "expense",
-    "income",
-    "payment",
-  ]),
+  entryType: z.enum(["expense", "income"]),
+  category: z.string().min(1).max(100),
   amount: z.coerce.number().positive().max(1000000000),
-  description: z.string().max(1000).optional(),
-  entryDate: z.string().date().optional(),
-  reference: z.string().max(255).optional(),
-  metadata: z.record(z.any()).optional(),
+  entryDate: z.string().date(),
+  description: z.string().max(5000).optional(),
 });
 
-const fleetTripSchema = z.object({
-  tripDate: z.string().date(),
-  origin: z.string().max(255).optional(),
-  destination: z.string().max(255).optional(),
-  allocationCode: z.string().max(100).optional(),
-  quantityLitres: z.coerce.number().nonnegative().optional(),
-  fuelUsedLitres: z.coerce.number().nonnegative().optional(),
-  mileageStart: z.coerce.number().int().nonnegative().optional(),
-  mileageEnd: z.coerce.number().int().nonnegative().optional(),
-  driverName: z.string().max(255).optional(),
-  notes: z.string().max(5000).optional(),
-}).refine(
-  (data) =>
-    data.mileageEnd === undefined ||
-    data.mileageStart === undefined ||
-    data.mileageEnd >= data.mileageStart,
-  { message: "mileageEnd cannot be less than mileageStart" }
-);
-
-const statementQuerySchema = z.object({
+const fleetLedgerQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
+  entryType: z.enum(["expense", "income"]).optional(),
+  category: z.string().max(100).optional(),
   dateFrom: z.string().date().optional(),
   dateTo: z.string().date().optional(),
 });
@@ -105,6 +77,5 @@ module.exports = {
   updateFleetTruckSchema,
   fleetQuerySchema,
   fleetLedgerEntrySchema,
-  fleetTripSchema,
-  statementQuerySchema,
+  fleetLedgerQuerySchema,
 };

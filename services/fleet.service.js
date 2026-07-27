@@ -1,23 +1,10 @@
 const { fleetTruckRepo } = require("../repositories");
-const ledgerService = require("./ledger.service");
 const { emitEvent } = require("./events");
 
-// Fleet domain: registry + trips are operational data; every naira a truck
-// earns or costs goes through the ledger engine (owner_type fleet_truck),
-// never onto the truck row.
-
-const EXPENSE_CATEGORIES = [
-  "fuel",
-  "repairs",
-  "tyres",
-  "maintenance",
-  "driver_allowance",
-  "toll",
-  "insurance",
-  "registration",
-  "expense",
-];
-const INCOME_CATEGORIES = ["income", "payment"];
+// Fleet domain, same shape as the Django workflow: a truck registry
+// ("fleet directory") and per-truck expense/income ledger entries. Entries
+// are append-only — the repository exposes no update or delete — so the
+// financial history can't be rewritten.
 
 const createTruck = async (data, { actor }) => {
   const existing = await fleetTruckRepo.findByPlate(data.plateNumber);
@@ -59,87 +46,36 @@ const updateTruck = async (id, data, { actor }) => {
   return { success: true, truck: updated };
 };
 
-/**
- * Record a financial movement for a truck. Category decides the direction:
- * expenses debit the truck's account (cost), income credits it.
- */
 const recordLedgerEntry = async (
-  fleetTruckId,
-  { category, amount, description, entryDate, reference, metadata },
+  truckId,
+  { entryType, category, amount, entryDate, description },
   { actor }
 ) => {
-  const truck = await fleetTruckRepo.findById(fleetTruckId);
+  const truck = await fleetTruckRepo.findById(truckId);
   if (!truck) return { success: false, notFound: true, message: "Fleet truck not found" };
 
-  let direction;
-  if (EXPENSE_CATEGORIES.includes(category)) direction = "debit";
-  else if (INCOME_CATEGORIES.includes(category)) direction = "credit";
-  else return { success: false, message: `'${category}' is not a fleet ledger category` };
-
-  const result = await ledgerService.postEntry({
-    ownerType: "fleet_truck",
-    ownerId: fleetTruckId,
-    ownerName: truck.plateNumber,
-    direction,
+  const entry = await fleetTruckRepo.createLedgerEntry({
+    truckId,
+    entryType,
     category,
-    amount,
-    description: description || "",
-    reference: reference || "",
+    amount: Number(amount).toFixed(2),
     entryDate,
-    metadata: metadata || null,
+    description: description || "",
+    enteredBy: actor?.name || "",
     recordedBy: actor?.id || null,
-    actor,
   });
 
-  if (result.success && !result.alreadyProcessed) {
-    emitEvent("fleet.expense_recorded", {
-      actor,
-      entityType: "fleet_truck",
-      entityId: fleetTruckId,
-      category,
-      direction,
-      amount: String(amount),
-    });
-  }
-
-  return result;
-};
-
-const recordTrip = async (fleetTruckId, data, { actor }) => {
-  const truck = await fleetTruckRepo.findById(fleetTruckId);
-  if (!truck) return { success: false, notFound: true, message: "Fleet truck not found" };
-
-  const trip = await fleetTruckRepo.createTrip({
-    ...data,
-    fleetTruckId,
-    createdBy: actor?.id || null,
-  });
-
-  // A trip with an end mileage advances the truck's odometer, monotonically.
-  if (data.mileageEnd && (!truck.mileage || data.mileageEnd > truck.mileage)) {
-    await fleetTruckRepo.update(fleetTruckId, { mileage: data.mileageEnd });
-  }
-
-  emitEvent("fleet.trip_recorded", {
+  emitEvent("fleet.ledger_entry_added", {
     actor,
     entityType: "fleet_truck",
-    entityId: fleetTruckId,
-    tripId: trip.id,
-    tripDate: data.tripDate,
+    entityId: truckId,
+    plateNumber: truck.plateNumber,
+    entryType,
+    category,
+    amount: entry.amount,
   });
 
-  return { success: true, trip };
+  return { success: true, entry };
 };
 
-const getStatement = (fleetTruckId, options = {}) =>
-  ledgerService.getStatement({ ownerType: "fleet_truck", ownerId: fleetTruckId, ...options });
-
-module.exports = {
-  createTruck,
-  updateTruck,
-  recordLedgerEntry,
-  recordTrip,
-  getStatement,
-  EXPENSE_CATEGORIES,
-  INCOME_CATEGORIES,
-};
+module.exports = { createTruck, updateTruck, recordLedgerEntry };

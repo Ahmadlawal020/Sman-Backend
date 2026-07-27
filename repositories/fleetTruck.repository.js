@@ -1,6 +1,6 @@
-const { eq, and, or, ilike, desc, asc, count, lte, gte } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, asc, count, lte, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { fleetTrucks, fleetTrips } = require("../db/schema");
+const { fleetTrucks, fleetLedgerEntries } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(fleetTrucks).where(eq(fleetTrucks.id, id)).limit(1);
@@ -95,40 +95,81 @@ const findExpiringCompliance = async (byDate) => {
     .orderBy(asc(fleetTrucks.plateNumber));
 };
 
-// ── Trips ────────────────────────────────────────────────────────────────────
+// ── Fleet ledger (append-only: no update, no delete) ─────────────────────────
 
-const createTrip = async (data) => {
-  const [row] = await db.insert(fleetTrips).values(data).returning();
+const createLedgerEntry = async (data) => {
+  const [row] = await db.insert(fleetLedgerEntries).values(data).returning();
   return row;
 };
 
-const findTrips = async ({ fleetTruckId, dateFrom, dateTo, page = 1, limit = 50 } = {}) => {
+const findLedgerEntries = async ({
+  truckId,
+  entryType,
+  category,
+  dateFrom,
+  dateTo,
+  page = 1,
+  limit = 50,
+} = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-  if (fleetTruckId) conditions.push(eq(fleetTrips.fleetTruckId, fleetTruckId));
-  if (dateFrom) conditions.push(gte(fleetTrips.tripDate, dateFrom));
-  if (dateTo) conditions.push(lte(fleetTrips.tripDate, dateTo));
+  if (truckId) conditions.push(eq(fleetLedgerEntries.truckId, truckId));
+  if (entryType) conditions.push(eq(fleetLedgerEntries.entryType, entryType));
+  if (category) conditions.push(ilike(fleetLedgerEntries.category, `%${category}%`));
+  if (dateFrom) conditions.push(gte(fleetLedgerEntries.entryDate, dateFrom));
+  if (dateTo) conditions.push(lte(fleetLedgerEntries.entryDate, dateTo));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(fleetTrips)
+      .from(fleetLedgerEntries)
       .where(whereClause)
-      .orderBy(desc(fleetTrips.tripDate), desc(fleetTrips.id))
+      .orderBy(desc(fleetLedgerEntries.entryDate), desc(fleetLedgerEntries.id))
       .limit(limitNum)
       .offset(offset),
-    db.select({ total: count() }).from(fleetTrips).where(whereClause),
+    db.select({ total: count() }).from(fleetLedgerEntries).where(whereClause),
   ]);
 
   return {
-    trips: rows,
+    entries: rows,
     pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
   };
+};
+
+// Totals for a truck (or the whole fleet when truckId is omitted).
+const summarizeLedger = async ({ truckId, dateFrom, dateTo } = {}) => {
+  const conditions = [];
+  if (truckId) conditions.push(eq(fleetLedgerEntries.truckId, truckId));
+  if (dateFrom) conditions.push(gte(fleetLedgerEntries.entryDate, dateFrom));
+  if (dateTo) conditions.push(lte(fleetLedgerEntries.entryDate, dateTo));
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [totals] = await db
+    .select({
+      expenses: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'expense' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
+      income: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'income' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
+      entryCount: sql`count(*)::int`,
+    })
+    .from(fleetLedgerEntries)
+    .where(whereClause);
+
+  const byCategory = await db
+    .select({
+      category: fleetLedgerEntries.category,
+      entryType: fleetLedgerEntries.entryType,
+      total: sql`COALESCE(SUM(${fleetLedgerEntries.amount}), 0)`,
+      entryCount: sql`count(*)::int`,
+    })
+    .from(fleetLedgerEntries)
+    .where(whereClause)
+    .groupBy(fleetLedgerEntries.category, fleetLedgerEntries.entryType);
+
+  return { totals, byCategory };
 };
 
 module.exports = {
@@ -138,6 +179,7 @@ module.exports = {
   create,
   update,
   findExpiringCompliance,
-  createTrip,
-  findTrips,
+  createLedgerEntry,
+  findLedgerEntries,
+  summarizeLedger,
 };

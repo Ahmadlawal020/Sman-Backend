@@ -48,9 +48,6 @@ app.use("/api/tickets", require("./routes/administration/ticket.route"));
 app.use("/api/deposits", require("./routes/administration/deposit.route"));
 
 // ERP modules
-const { deliveryLedgerRouter, stationLedgerRouter } = require("./routes/administration/ledgerBook.route");
-app.use("/api/delivery-ledger", deliveryLedgerRouter);
-app.use("/api/station-ledger", stationLedgerRouter);
 app.use("/api/fleet", require("./routes/administration/fleet.route"));
 app.use("/api/daily-reports", require("./routes/administration/dailyReport.route"));
 app.use("/api/incidents", require("./routes/administration/incident.route"));

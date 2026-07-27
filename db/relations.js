@@ -16,10 +16,8 @@ const {
   tickets,
   deposits,
   walletHolds,
-  ledgerAccounts,
-  ledgerEntries,
   fleetTrucks,
-  fleetTrips,
+  fleetLedgerEntries,
   deliveryCustomers,
   deliveryNotes,
   deliveryInventory,
@@ -257,33 +255,20 @@ const walletHoldsRelations = relations(walletHolds, ({ one }) => ({
   }),
 }));
 
-// ─── Ledger Relations ────────────────────────────────────────────────────────
-
-const ledgerAccountsRelations = relations(ledgerAccounts, ({ many }) => ({
-  entries: many(ledgerEntries),
-}));
-
-const ledgerEntriesRelations = relations(ledgerEntries, ({ one }) => ({
-  account: one(ledgerAccounts, {
-    fields: [ledgerEntries.accountId],
-    references: [ledgerAccounts.id],
-  }),
-  recorder: one(staff, {
-    fields: [ledgerEntries.recordedBy],
-    references: [staff.id],
-  }),
-}));
-
 // ─── Fleet Relations ─────────────────────────────────────────────────────────
 
 const fleetTrucksRelations = relations(fleetTrucks, ({ many }) => ({
-  trips: many(fleetTrips),
+  ledgerEntries: many(fleetLedgerEntries),
 }));
 
-const fleetTripsRelations = relations(fleetTrips, ({ one }) => ({
+const fleetLedgerEntriesRelations = relations(fleetLedgerEntries, ({ one }) => ({
   truck: one(fleetTrucks, {
-    fields: [fleetTrips.fleetTruckId],
+    fields: [fleetLedgerEntries.truckId],
     references: [fleetTrucks.id],
+  }),
+  recorder: one(staff, {
+    fields: [fleetLedgerEntries.recordedBy],
+    references: [staff.id],
   }),
 }));
 
@@ -363,10 +348,8 @@ module.exports = {
   ticketsRelations,
   depositsRelations,
   walletHoldsRelations,
-  ledgerAccountsRelations,
-  ledgerEntriesRelations,
   fleetTrucksRelations,
-  fleetTripsRelations,
+  fleetLedgerEntriesRelations,
   deliveryCustomersRelations,
   deliveryNotesRelations,
   deliveryInventoryRelations,

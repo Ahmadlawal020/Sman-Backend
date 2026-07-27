@@ -116,40 +116,11 @@ const auditActorTypeEnum = pgEnum("audit_actor_type", [
   "system",
 ]);
 
-// Which kind of thing a ledger account belongs to. One engine, three books:
-// delivery customers, filling stations, fleet trucks.
-const ledgerOwnerTypeEnum = pgEnum("ledger_owner_type", [
-  "delivery_customer",
-  "filling_station",
-  "fleet_truck",
-]);
+// Fleet ledger entries mirror Django's FleetLedgerEntry: an entry is either
+// money spent on a truck or money it earned. Category stays free text there,
+// matching the existing workflow.
+const fleetEntryTypeEnum = pgEnum("fleet_entry_type", ["expense", "income"]);
 
-// Debit increases what the owner owes us (sale, expense); credit decreases it
-// (payment, income). Running balance = debits - credits = outstanding.
-const ledgerDirectionEnum = pgEnum("ledger_direction", ["debit", "credit"]);
-
-const ledgerCategoryEnum = pgEnum("ledger_category", [
-  "opening_balance",
-  "sale",
-  "purchase",
-  "payment",
-  "credit_note",
-  "debit_note",
-  "discount",
-  "adjustment",
-  "expense",
-  "income",
-  "fuel",
-  "repairs",
-  "tyres",
-  "maintenance",
-  "driver_allowance",
-  "toll",
-  "insurance",
-  "registration",
-  "commission",
-  "other",
-]);
 
 const dailyReportStatusEnum = pgEnum("daily_report_status", [
   "submitted",
@@ -205,9 +176,7 @@ module.exports = {
   paymentMethodEnum,
   webhookStatusEnum,
   auditActorTypeEnum,
-  ledgerOwnerTypeEnum,
-  ledgerDirectionEnum,
-  ledgerCategoryEnum,
+  fleetEntryTypeEnum,
   dailyReportStatusEnum,
   incidentTypeEnum,
   incidentStatusEnum,

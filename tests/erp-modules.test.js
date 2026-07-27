@@ -9,17 +9,15 @@ const { db } = require("../config/db");
 const {
   deliveryCustomers,
   deliveryInventory,
-  ledgerAccounts,
-  ledgerEntries,
   fleetTrucks,
-  fleetTrips,
+  fleetLedgerEntries,
   dailyReports,
   auditEvents,
 } = require("../db/schema");
-const ledgerService = require("../services/ledger.service");
 const deliveryService = require("../services/delivery.service");
 const fleetService = require("../services/fleet.service");
 const dailyReportService = require("../services/dailyReport.service");
+const { fleetTruckRepo } = require("../repositories");
 const { ensureTestStaff, closeDb } = require("./helpers");
 
 // In the app this happens in app.js; tests exercising services directly need
@@ -29,7 +27,7 @@ require("../services/audit.service").registerAuditListener();
 const suffix = Date.now().toString(36);
 const actor = { type: "staff", id: null, name: "erp-test@soroman.test" };
 
-describe("ERP modules — ledger engine, delivery release, fleet, daily reports", () => {
+describe("ERP modules — delivery release, fleet ledger, daily reports", () => {
   let customer;
   let staffRow;
 
@@ -46,105 +44,23 @@ describe("ERP modules — ledger engine, delivery release, fleet, daily reports"
   });
 
   after(async () => {
-    const accounts = await db
-      .select({ id: ledgerAccounts.id })
-      .from(ledgerAccounts)
-      .where(eq(ledgerAccounts.ownerId, customer.id));
     const fleetRows = await db
       .select({ id: fleetTrucks.id })
       .from(fleetTrucks)
       .where(eq(fleetTrucks.plateNumber, `ERP-${suffix}`));
-    const fleetAccountIds = [];
-    for (const row of fleetRows) {
-      const accts = await db
-        .select({ id: ledgerAccounts.id })
-        .from(ledgerAccounts)
-        .where(eq(ledgerAccounts.ownerId, row.id));
-      fleetAccountIds.push(...accts.map((a) => a.id));
+    if (fleetRows.length > 0) {
+      await db
+        .delete(fleetLedgerEntries)
+        .where(inArray(fleetLedgerEntries.truckId, fleetRows.map((r) => r.id)));
+      await db.delete(fleetTrucks).where(inArray(fleetTrucks.id, fleetRows.map((r) => r.id)));
     }
-    const allAccountIds = [...accounts.map((a) => a.id), ...fleetAccountIds];
-    if (allAccountIds.length > 0) {
-      await db.delete(ledgerEntries).where(inArray(ledgerEntries.accountId, allAccountIds));
-      await db.delete(ledgerAccounts).where(inArray(ledgerAccounts.id, allAccountIds));
-    }
-    await db.delete(fleetTrips).where(inArray(fleetTrips.fleetTruckId, fleetRows.map((r) => r.id)));
-    await db.delete(fleetTrucks).where(eq(fleetTrucks.plateNumber, `ERP-${suffix}`));
     await db.delete(deliveryInventory).where(eq(deliveryInventory.customerId, customer.id));
     await db.delete(dailyReports).where(eq(dailyReports.location, `ERP Test Location ${suffix}`));
     await db.delete(deliveryCustomers).where(eq(deliveryCustomers.id, customer.id));
     await closeDb();
   });
 
-  test("ledger: entries are immutable movements and the running balance follows", async () => {
-    const sale = await ledgerService.postEntry({
-      ownerType: "filling_station",
-      ownerId: customer.id,
-      ownerName: customer.name,
-      direction: "debit",
-      category: "sale",
-      amount: 500000,
-      description: "test purchase",
-      actor,
-    });
-    assert.equal(sale.success, true);
-    assert.equal(Number(sale.entry.balanceAfter), 500000);
-
-    const payment = await ledgerService.postEntry({
-      ownerType: "filling_station",
-      ownerId: customer.id,
-      direction: "credit",
-      category: "payment",
-      amount: 200000,
-      reference: `erp-test-payment-${suffix}`,
-      actor,
-    });
-    assert.equal(payment.success, true);
-    assert.equal(Number(payment.entry.balanceAfter), 300000);
-
-    // Same reference again: no-op, not a second payment.
-    const duplicate = await ledgerService.postEntry({
-      ownerType: "filling_station",
-      ownerId: customer.id,
-      direction: "credit",
-      category: "payment",
-      amount: 200000,
-      reference: `erp-test-payment-${suffix}`,
-      actor,
-    });
-    assert.equal(duplicate.alreadyProcessed, true);
-
-    const account = await ledgerService.getAccount("filling_station", customer.id);
-    assert.equal(Number(account.runningBalance), 300000);
-    assert.equal(await ledgerService.getDerivedBalance(account.id), 300000);
-  });
-
-  test("ledger: concurrent postings serialise; the balance never tears", async () => {
-    const results = await Promise.all([
-      ledgerService.postEntry({
-        ownerType: "filling_station",
-        ownerId: customer.id,
-        direction: "debit",
-        category: "sale",
-        amount: 100000,
-        actor,
-      }),
-      ledgerService.postEntry({
-        ownerType: "filling_station",
-        ownerId: customer.id,
-        direction: "credit",
-        category: "payment",
-        amount: 50000,
-        actor,
-      }),
-    ]);
-    assert.equal(results.filter((r) => r.success).length, 2);
-
-    const account = await ledgerService.getAccount("filling_station", customer.id);
-    assert.equal(Number(account.runningBalance), 350000);
-    assert.equal(await ledgerService.getDerivedBalance(account.id), 350000);
-  });
-
-  test("delivery release workflow posts the sale exactly once", async () => {
+  test("delivery release workflow: pending -> confirmed -> released, one-way", async () => {
     const [allocation] = await db
       .insert(deliveryInventory)
       .values({
@@ -164,35 +80,26 @@ describe("ERP modules — ledger engine, delivery release, fleet, daily reports"
     const confirmed = await deliveryService.confirmAllocation(allocation.id, { actor });
     assert.equal(confirmed.success, true);
     assert.equal(confirmed.allocation.releaseStatus, "confirmed");
+    assert.ok(confirmed.allocation.confirmedAt, "confirmation timestamped");
 
-    const before = await ledgerService.getStatement({
-      ownerType: "delivery_customer",
-      ownerId: customer.id,
-    });
+    // Confirming twice is a state-machine violation.
+    const reconfirm = await deliveryService.confirmAllocation(allocation.id, { actor });
+    assert.equal(reconfirm.success, false);
 
     const released = await deliveryService.releaseAllocation(allocation.id, { actor });
     assert.equal(released.success, true);
     assert.equal(released.allocation.releaseStatus, "released");
     assert.ok(released.allocation.ticketNumber, "ticket assigned on release");
-    assert.ok(released.ledgerEntry, "sale posted to the delivery ledger");
-    assert.equal(Number(released.ledgerEntry.amount), 10000 * 1000);
+    assert.ok(released.allocation.releasedAt, "release timestamped");
 
-    // Releasing again is a state-machine violation, not a second sale.
+    // Releasing or rejecting after release is refused.
     const again = await deliveryService.releaseAllocation(allocation.id, { actor });
     assert.equal(again.success, false);
-
-    const afterStatement = await ledgerService.getStatement({
-      ownerType: "delivery_customer",
-      ownerId: customer.id,
-    });
-    assert.equal(
-      afterStatement.pagination.total,
-      before.pagination.total + 1,
-      "exactly one ledger entry from the release"
-    );
+    const reject = await deliveryService.rejectAllocation(allocation.id, { actor, reason: "no" });
+    assert.equal(reject.success, false);
   });
 
-  test("fleet: financial movements land in the truck's ledger, not on the truck", async () => {
+  test("fleet: directory + append-only expense/income ledger, Django-shaped", async () => {
     const created = await fleetService.createTruck(
       { plateNumber: `ERP-${suffix}`, driverName: "Test Driver", maxCapacity: 45000 },
       { actor }
@@ -206,31 +113,30 @@ describe("ERP modules — ledger engine, delivery release, fleet, daily reports"
 
     const fuel = await fleetService.recordLedgerEntry(
       truckId,
-      { category: "fuel", amount: 80000, description: "Diesel top-up" },
+      { entryType: "expense", category: "Fuel", amount: 80000, entryDate: "2026-07-26" },
       { actor }
     );
     assert.equal(fuel.success, true);
+    assert.equal(fuel.entry.entryType, "expense");
 
-    const income = await fleetService.recordLedgerEntry(
+    const revenue = await fleetService.recordLedgerEntry(
       truckId,
-      { category: "income", amount: 250000, description: "Trip revenue" },
+      { entryType: "income", category: "Trip Revenue", amount: 250000, entryDate: "2026-07-26" },
       { actor }
     );
-    assert.equal(income.success, true);
+    assert.equal(revenue.success, true);
 
-    const statement = await fleetService.getStatement(truckId);
-    // Net cost = expenses - income = 80000 - 250000 = -170000 (earning truck).
-    assert.equal(Number(statement.account.runningBalance), -170000);
+    const { entries, pagination } = await fleetTruckRepo.findLedgerEntries({ truckId });
+    assert.equal(pagination.total, 2);
+    assert.ok(entries.every((e) => Number(e.amount) > 0));
 
-    const trip = await fleetService.recordTrip(
-      truckId,
-      { tripDate: "2026-07-26", mileageStart: 1000, mileageEnd: 1450, fuelUsedLitres: 300 },
-      { actor }
-    );
-    assert.equal(trip.success, true);
+    const { totals } = await fleetTruckRepo.summarizeLedger({ truckId });
+    assert.equal(Number(totals.expenses), 80000);
+    assert.equal(Number(totals.income), 250000);
 
-    const truckAfter = await require("../repositories").fleetTruckRepo.findById(truckId);
-    assert.equal(truckAfter.mileage, 1450, "odometer advanced by the trip");
+    // Append-only: the repository exposes no update or delete for entries.
+    assert.equal(fleetTruckRepo.updateLedgerEntry, undefined);
+    assert.equal(fleetTruckRepo.deleteLedgerEntry, undefined);
   });
 
   test("daily report: duplicate submissions rejected, self-review forbidden", async () => {
@@ -249,7 +155,7 @@ describe("ERP modules — ledger engine, delivery release, fleet, daily reports"
 
     const submitted = await dailyReportService.submitReport(payload, { actor: reportActor });
     assert.equal(submitted.success, true);
-    // Derived scalars: 15000L, value 9000000+4750000=13750000, avg 916.67.
+    // Derived scalars: 15000L, value 9000000+4750000=13750000.
     assert.equal(Number(submitted.report.litresSold), 15000);
     assert.equal(Number(submitted.report.totalSalesAmount), 13750000);
 

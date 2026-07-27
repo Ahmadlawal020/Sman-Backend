@@ -17,7 +17,6 @@ module.exports = {
   fleetSummary: wrap(reportingService.fleetSummary),
   stationSummary: wrap(reportingService.stationSummary),
   outstandingPayments: wrap(reportingService.outstandingPayments),
-  commissionsSummary: wrap(reportingService.commissionsSummary),
   dailyReportSummary: wrap(reportingService.dailyReportSummary),
   revenueSummary: wrap(reportingService.revenueSummary),
   auditTrail: asyncHandler(async (req, res) => {
