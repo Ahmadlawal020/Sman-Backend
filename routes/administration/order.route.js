@@ -52,7 +52,7 @@ router.post(
   "/:id/trucks/:loadId/load",
   authenticateStaff,
   requireRole("ticketing", "super_admin", { message: "Ticketing access required" }),
-  validate({ params: orderSchemas.loadParam }),
+  validate({ params: orderSchemas.loadParam, body: orderSchemas.loadTruck }),
   markTruckLoaded
 );
 router.post(

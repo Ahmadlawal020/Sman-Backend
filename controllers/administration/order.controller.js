@@ -7,6 +7,7 @@ const {
   depositRepo,
   truckRepo,
   orderTruckRepo,
+  auditLogRepo,
 } = require("../../repositories");
 const { db } = require("../../config/db");
 const { generateTicketForTruck } = require("../../services/ticket.service");
@@ -51,7 +52,7 @@ const getOrderById = asyncHandler(async (req, res) => {
 const createOrder = asyncHandler(async (req, res) => {
   const {
     customer: customerId, state, depot: depotId,
-    product: productId, quantity, deliveryType,
+    product: productId, quantity, deliveryType, trucks,
   } = req.body;
 
   if (!customerId || !state || !depotId || !productId || !quantity || !deliveryType) {
@@ -62,7 +63,7 @@ const createOrder = asyncHandler(async (req, res) => {
   }
 
   const { order, payment } = await placeOrder({
-    customerId, state, depotId, productId, quantity, deliveryType,
+    customerId, state, depotId, productId, quantity, deliveryType, trucks,
   });
 
   res.status(201).json({
@@ -115,7 +116,7 @@ const releaseOrder = asyncHandler(async (req, res) => {
   } else if (trucks.length > 0) {
     return res.status(400).json({
       success: false,
-      message: "Pickup trucks are captured by security at the gate, not at release",
+      message: "Pickup trucks are declared by the customer at order, not at release",
     });
   }
 
@@ -258,28 +259,47 @@ const gateInTruck = asyncHandler(async (req, res) => {
     }
 
     let gated;
-    if (order.deliveryType === "delivery") {
-      // The truck was allocated at release — flip that specific load.
-      if (loadId == null) throw httpErr(400, "loadId is required for a delivery order");
+    if (loadId != null) {
+      // A load already exists — a delivery truck allocated at release, or a
+      // pickup truck the customer declared at order. Flip that specific one.
       const existing = await orderTruckRepo.findById(loadId, tx);
       if (!existing || existing.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
       if (existing.status !== "pending") {
         throw httpErr(409, `Truck is already ${existing.status}`);
       }
+      // The truck that actually arrived may differ from the one declared (a
+      // pickup swap, or an unknown plate now known). Record the correction.
+      // optionalString yields "" for an omitted field — treat that as "not
+      // provided" so a blank body never wipes the declared plate/driver.
+      const plateChanged = Boolean(truckNumber) && truckNumber !== existing.truckNumber;
       gated = await orderTruckRepo.update(
         loadId,
         {
           status: "gated_in",
           securityEnteredAt: new Date(),
           securityEnteredBy: req.user.id,
-          // Security may correct the driver actually present.
-          ...(driverName != null ? { driverName } : {}),
-          ...(driverPhone != null ? { driverPhone } : {}),
+          ...(truckNumber ? { truckNumber } : {}),
+          ...(driverName ? { driverName } : {}),
+          ...(driverPhone ? { driverPhone } : {}),
         },
         tx
       );
-    } else {
-      // Pickup: the customer's own truck is captured HERE, first time it is seen.
+      if (plateChanged) {
+        await auditLogRepo.record(
+          {
+            entityType: "order_truck",
+            entityId: loadId,
+            action: "order_truck.plate_corrected",
+            actor,
+            metadata: { from: existing.truckNumber, to: truckNumber, at: "gate-in", orderId },
+            ...audit,
+          },
+          tx
+        );
+      }
+    } else if (order.deliveryType === "pickup") {
+      // No pre-declared load (a small pickup that didn't split up front): the
+      // customer's truck is captured HERE, the first time it is seen.
       if (!truckNumber || quantity == null) {
         throw httpErr(400, "A pickup gate-in needs the truck's plate (truckNumber) and quantity");
       }
@@ -300,6 +320,8 @@ const gateInTruck = asyncHandler(async (req, res) => {
         },
         tx
       );
+    } else {
+      throw httpErr(400, "loadId is required for a delivery order");
     }
 
     // First truck through the gate opens loading. Under the order lock, only the
@@ -320,10 +342,17 @@ const gateInTruck = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Truck gated in", data: { truck: load } });
 });
 
-// ticketing: the truck has loaded; issue its ticket.
+// ticketing: the truck has loaded; issue its ticket. This is the LAST moment
+// the plate can change — trucks get swapped at the gantry (the declared one
+// broke down, another came), and the ticket must name the truck that actually
+// loaded. An optional truckNumber/driver here records that actual truck; the
+// change is audited and the ticket is generated from the corrected load.
 const markTruckLoaded = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
   const loadId = Number(req.params.loadId);
+  const { truckNumber, driverName, driverPhone } = req.body;
+  const actor = { type: "staff", staffId: req.user.id };
+  const audit = { ipAddress: req.ip, userAgent: req.headers["user-agent"] };
 
   const result = await db.transaction(async (tx) => {
     const order = await orderRepo.lockById(orderId, tx);
@@ -335,11 +364,34 @@ const markTruckLoaded = asyncHandler(async (req, res) => {
       throw httpErr(409, `Truck is ${load.status}; only a gated-in truck can be marked loaded`);
     }
 
+    // optionalString yields "" for an omitted field — treat that as "not
+    // provided" so loading without an edit keeps the plate already on the load.
+    const plateChanged = Boolean(truckNumber) && truckNumber !== load.truckNumber;
     const updated = await orderTruckRepo.update(
       loadId,
-      { status: "loaded", loadedAt: new Date(), loadedBy: req.user.id },
+      {
+        status: "loaded",
+        loadedAt: new Date(),
+        loadedBy: req.user.id,
+        ...(truckNumber ? { truckNumber } : {}),
+        ...(driverName ? { driverName } : {}),
+        ...(driverPhone ? { driverPhone } : {}),
+      },
       tx
     );
+    if (plateChanged) {
+      await auditLogRepo.record(
+        {
+          entityType: "order_truck",
+          entityId: loadId,
+          action: "order_truck.truck_swapped",
+          actor,
+          metadata: { from: load.truckNumber, to: truckNumber, at: "loading", orderId },
+          ...audit,
+        },
+        tx
+      );
+    }
     const ticket = await generateTicketForTruck(order, updated, tx);
     return { truck: updated, ticket };
   });

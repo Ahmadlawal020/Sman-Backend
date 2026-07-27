@@ -6,6 +6,7 @@ const {
   depotRepo,
   pfiRepo,
   depositRepo,
+  orderTruckRepo,
 } = require("../repositories");
 const { createDedicatedAccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
@@ -42,9 +43,12 @@ function httpError(status, message) {
  * @param {number} input.productId
  * @param {number} input.quantity
  * @param {"delivery"|"pickup"} input.deliveryType
+ * @param {Array<{truckNumber?: string, quantity: number, driverName?: string, driverPhone?: string}>} [input.trucks]
+ *        Pickup only: the customer's declared trucks and the quantity on each.
+ *        Their quantities must sum to the order quantity; each ≤ 60,000 L.
  * @returns {{ order: object, payment: object, isPaidWithWallet: boolean }}
  */
-async function placeOrder({ customerId, state, depotId, productId, quantity, deliveryType }) {
+async function placeOrder({ customerId, state, depotId, productId, quantity, deliveryType, trucks }) {
   const customer = await customerRepo.findById(customerId);
   if (!customer) {
     throw httpError(404, "Customer not found");
@@ -111,6 +115,39 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
     );
   }
 
+  // --- Pickup truck declaration ---------------------------------------------
+  // A pickup customer brings their own trucks and may split the order across
+  // several — required once the order exceeds one tanker (60,000 L). They set
+  // the quantity per truck here; the plate is optional (it can be filled or
+  // corrected at the gate and at ticketing). Delivery orders never carry trucks
+  // at order time — their fleet is allocated at release.
+  const declaredTrucks = Array.isArray(trucks) ? trucks : [];
+  if (deliveryType === "delivery" && declaredTrucks.length) {
+    throw httpError(400, "Delivery trucks are allocated at release, not at order");
+  }
+  if (deliveryType === "pickup") {
+    if (declaredTrucks.length) {
+      const sum = declaredTrucks.reduce((s, t) => s + Number(t.quantity), 0);
+      if (sum !== Number(quantity)) {
+        throw httpError(
+          400,
+          `The truck quantities (${sum.toLocaleString()} L) must sum to the order quantity (${Number(
+            quantity
+          ).toLocaleString()} L)`
+        );
+      }
+      const tooBig = declaredTrucks.find((t) => Number(t.quantity) > 60000);
+      if (tooBig) {
+        throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
+      }
+    } else if (Number(quantity) > 60000) {
+      throw httpError(
+        400,
+        "A pickup over 60,000 L must be split across trucks — declare each truck and its quantity"
+      );
+    }
+  }
+
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
   // --- Atomic order creation (AUDIT H2) --------------------------------------
@@ -175,6 +212,30 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
     }
 
     await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
+
+    // Pickup: materialise the customer's declared trucks as pending loads now,
+    // one row per truck (plate + its quantity), inside the same transaction.
+    // The gate flow later flips each to gated_in → loaded → gated_out, and the
+    // plate can be corrected at the gate and at ticketing. Delivery declares no
+    // trucks here (allocated at release).
+    for (let i = 0; i < declaredTrucks.length; i += 1) {
+      const t = declaredTrucks[i];
+      await orderTruckRepo.create(
+        {
+          orderId: created.id,
+          truckIndex: i + 1,
+          truckId: null,
+          // optionalString yields "" for an omitted plate/driver — store null so
+          // an undeclared plate is a clean "to be captured at the gate".
+          truckNumber: t.truckNumber || null,
+          quantity: String(t.quantity),
+          driverName: t.driverName || null,
+          driverPhone: t.driverPhone || null,
+          status: "pending",
+        },
+        tx
+      );
+    }
 
     // Wallet payment confirms the order NOW — drive Pending→Paid through the
     // state machine (system actor) so it enters the stage release requires and

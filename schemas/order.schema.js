@@ -10,11 +10,27 @@ const {
   pagination,
 } = require("./fields");
 
+// A customer-declared PICKUP truck: their own vehicle, so no fleet truckId. The
+// plate is optional at order — they may not know it yet, and it can be filled or
+// corrected at the gate and at ticketing. The per-truck quantity is what the
+// customer splits across trucks; the DB caps each at 60,000 L and the
+// sum === order-quantity check lives in placeOrder (it needs the order row).
+const pickupTruck = z.object({
+  truckNumber: optionalString("Truck number", 100),
+  quantity: quantity("Truck quantity"),
+  driverName: optionalString("Driver name", 255),
+  driverPhone: optionalString("Driver phone", 50),
+});
+
 /**
  * Note what is absent: `price` and `totalAmount`. They are resolved server-side
  * from the depot's configured price, and stripping them here means a
  * client-supplied price cannot reach the controller at all — it is no longer
  * merely ignored, it is gone.
+ *
+ * `trucks` is the pickup split: for a pickup over one tanker (60,000 L) the
+ * customer declares each truck and its quantity here, at order time. Delivery
+ * orders leave it empty — their fleet trucks are allocated at release.
  */
 const createOrder = z.object({
   customer: id("Customer"),
@@ -23,6 +39,7 @@ const createOrder = z.object({
   state: requiredString("State", 100),
   quantity: quantity("Quantity"),
   deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
+  trucks: z.array(pickupTruck).max(20, "Too many trucks on one order").optional(),
 });
 
 const listOrders = pagination.extend({
@@ -52,6 +69,7 @@ const createMyOrder = z.object({
   state: requiredString("State", 100),
   quantity: quantity("Quantity"),
   deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
+  trucks: z.array(pickupTruck).max(20, "Too many trucks on one order").optional(),
 });
 
 const listMyOrders = pagination;
@@ -120,6 +138,16 @@ const gateIn = z.object({
     .optional(),
 });
 
+// Ticket-generation body. Optional because the truck usually loads as declared;
+// but trucks get swapped at the gantry (the first one broke down, another came),
+// so ticketing may record the ACTUAL plate/driver here. The change is audited
+// and the ticket names the corrected truck.
+const loadTruck = z.object({
+  truckNumber: optionalString("Truck number", 100),
+  driverName: optionalString("Driver name", 255),
+  driverPhone: optionalString("Driver phone", 50),
+});
+
 // A load-scoped route: /orders/:id/trucks/:loadId/...
 const loadParam = z.object({ id: id("Order id"), loadId: id("Load id") });
 
@@ -132,5 +160,6 @@ module.exports = {
   cancelOrder,
   releaseOrder,
   gateIn,
+  loadTruck,
   loadParam,
 };
