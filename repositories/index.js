@@ -17,4 +17,5 @@ module.exports = {
   sessionRepo: require("./session.repository"),
   customerOtpRepo: require("./customerOtp.repository"),
   auditLogRepo: require("./auditLog.repository"),
+  orderTruckRepo: require("./orderTruck.repository"),
 };

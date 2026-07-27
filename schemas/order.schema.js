@@ -1,5 +1,14 @@
 const z = require("zod");
-const { id, quantity, requiredString, enumOf, searchTerm, pagination } = require("./fields");
+const {
+  id,
+  quantity,
+  requiredString,
+  optionalString,
+  numberLike,
+  enumOf,
+  searchTerm,
+  pagination,
+} = require("./fields");
 
 /**
  * Note what is absent: `price` and `totalAmount`. They are resolved server-side
@@ -40,4 +49,41 @@ const cancelOrder = z.object({
   reason: z.string().trim().max(500, "Reason is too long").optional(),
 });
 
-module.exports = { createOrder, listOrders, idParam, cancelOrder };
+// One truck load in a release allocation. A plate is required — either a fleet
+// vehicle id (its plate is copied from the registry) or a free-form plate for
+// an external haulier. The per-load quantity ≤ one tanker; the cross-load
+// invariant (sum === order quantity) is enforced in the controller against the
+// order row, not here.
+const truckAllocation = z
+  .object({
+    truckId: id("Fleet truck").optional(),
+    truckNumber: optionalString("Truck number", 100),
+    quantity: quantity("Truck quantity"),
+    driverName: optionalString("Driver name", 255),
+    driverPhone: optionalString("Driver phone", 50),
+    loaderName: optionalString("Loader name", 255),
+    loaderPhone: optionalString("Loader phone", 50),
+    compartments: z
+      .array(
+        z.object({
+          qty: numberLike("Compartment quantity"),
+          ullage: numberLike("Compartment ullage").optional(),
+        })
+      )
+      .max(10, "A tanker has at most 10 compartments")
+      .optional(),
+  })
+  .refine((t) => t.truckId != null || (t.truckNumber && t.truckNumber.length), {
+    message: "Each truck needs a plate — a fleet truckId or a truckNumber",
+    path: ["truckNumber"],
+  });
+
+// Release body. Delivery orders carry the fleet-truck allocation here (captured
+// at release); pickup orders carry none — their trucks are captured by security
+// at gate-in. The delivery/pickup branch and the sum check live in the
+// controller, which has the order row.
+const releaseOrder = z.object({
+  trucks: z.array(truckAllocation).max(20, "Too many trucks on one order").optional(),
+});
+
+module.exports = { createOrder, listOrders, idParam, cancelOrder, releaseOrder };

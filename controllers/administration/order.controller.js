@@ -1,6 +1,15 @@
 const asyncHandler = require("express-async-handler");
 const { v4: uuidv4 } = require("uuid");
-const { orderRepo, customerRepo, depotRepo, productRepo, pfiRepo, depositRepo } = require("../../repositories");
+const {
+  orderRepo,
+  customerRepo,
+  depotRepo,
+  productRepo,
+  pfiRepo,
+  depositRepo,
+  truckRepo,
+  orderTruckRepo,
+} = require("../../repositories");
 const { db } = require("../../config/db");
 const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendOrderInvoiceEmail } = require("../../services/email.service");
@@ -283,18 +292,98 @@ const createOrder = asyncHandler(async (req, res) => {
 // locks the row, enforces the legal move and writes the audit trail atomically.
 //
 // Release is a staff action ("release" role): it clears a paid order for
-// loading. Fleet-truck capture at release is layered on in the next commit;
-// here it is the pure status transition.
+// loading. The fleet-truck allocation is captured HERE for a delivery order —
+// the plate/driver of each Soroman truck sent to load — and the loads are
+// created in the same transaction as the transition, so a bad allocation rolls
+// the release back. A pickup order carries no trucks at release: the customer's
+// own truck is captured by security at gate-in (see the gate flow).
 const releaseOrder = asyncHandler(async (req, res) => {
-  const order = await orderStatus.transition(Number(req.params.id), "Released", {
-    actor: { type: "staff", staffId: req.user.id },
-    set: { releasedAt: new Date(), releasedBy: req.user.id },
-    ipAddress: req.ip,
-    userAgent: req.headers["user-agent"],
+  const orderId = Number(req.params.id);
+  const trucks = req.body.trucks || [];
+
+  const order = await orderRepo.findById(orderId);
+  if (!order) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  const isDelivery = order.deliveryType === "delivery";
+  if (isDelivery) {
+    if (trucks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A delivery order needs at least one truck allocated at release",
+      });
+    }
+    // The loads must account for exactly the order quantity — no over- or
+    // under-allocation. Compared as numbers; the schema already coerced them.
+    const allocated = trucks.reduce((sum, t) => sum + Number(t.quantity), 0);
+    if (allocated !== Number(order.quantity)) {
+      return res.status(400).json({
+        success: false,
+        message: `Allocated truck quantity (${allocated}) must equal the order quantity (${order.quantity})`,
+      });
+    }
+  } else if (trucks.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Pickup trucks are captured by security at the gate, not at release",
+    });
+  }
+
+  const released = await db.transaction(async (tx) => {
+    const updated = await orderStatus.transition(orderId, "Released", {
+      tx,
+      actor: { type: "staff", staffId: req.user.id },
+      set: { releasedAt: new Date(), releasedBy: req.user.id },
+      metadata: { truckCount: isDelivery ? trucks.length : 0 },
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
+    if (isDelivery) {
+      let index = 1;
+      for (const t of trucks) {
+        // A fleet truck contributes its registered plate; the stored plate is
+        // still the source of truth, so a later fleet edit never rewrites this
+        // historical load.
+        let truckNumber = t.truckNumber || null;
+        if (t.truckId != null) {
+          const fleet = await truckRepo.findById(t.truckId);
+          if (!fleet) {
+            throw Object.assign(new Error(`Fleet truck ${t.truckId} not found`), { status: 400 });
+          }
+          truckNumber = truckNumber || fleet.plateNumber;
+        }
+
+        await orderTruckRepo.create(
+          {
+            orderId,
+            truckIndex: index++,
+            truckId: t.truckId ?? null,
+            truckNumber,
+            quantity: String(t.quantity),
+            compartments: t.compartments ?? null,
+            driverName: t.driverName ?? null,
+            driverPhone: t.driverPhone ?? null,
+            loaderName: t.loaderName ?? null,
+            loaderPhone: t.loaderPhone ?? null,
+            status: "pending",
+          },
+          tx
+        );
+      }
+    }
+
+    return updated;
   });
 
-  const fullOrder = await orderRepo.findByIdFull(order.id);
-  res.json({ success: true, message: "Order released for loading", data: { order: fullOrder } });
+  const fullOrder = await orderRepo.findByIdFull(released.id);
+  const loads = await orderTruckRepo.findByOrder(orderId);
+  res.json({
+    success: true,
+    message: "Order released for loading",
+    data: { order: fullOrder, trucks: loads },
+  });
 });
 
 // --- Cancel: any live status through Released → Cancelled --------------------

@@ -26,7 +26,7 @@ router.post(
   "/:id/release",
   authenticateStaff,
   requireRole("release", "super_admin", { message: "Release desk access required" }),
-  validate({ params: orderSchemas.idParam }),
+  validate({ params: orderSchemas.idParam, body: orderSchemas.releaseOrder }),
   releaseOrder
 );
 router.post(
