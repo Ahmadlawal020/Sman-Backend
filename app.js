@@ -64,6 +64,9 @@ require("./services/notification.service").registerNotificationListeners();
 // /api/customers above — a readability hazard, not a routing bug: Express
 // matches mounts at segment boundaries, order-independently.
 app.use("/api/customer/auth", require("./routes/portal/auth.route"));
+// Additional sign-in methods (password, PIN, Google, Apple, passkeys) beyond
+// the default phone+OTP flow above. Same path prefix, same cookie scope.
+app.use("/api/customer/auth", require("./routes/portal/identity.route"));
 
 // Health check
 app.get("/api/health", (req, res) => {
