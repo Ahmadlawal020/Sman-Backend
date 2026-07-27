@@ -93,6 +93,16 @@ const findByOrder = async (orderId, tx = db) => {
   return row || null;
 };
 
+/** The one ticket belonging to a specific truck load, if it has been issued. */
+const findByOrderTruck = async (orderTruckId, tx = db) => {
+  const [row] = await tx
+    .select()
+    .from(tickets)
+    .where(eq(tickets.orderTruckId, orderTruckId))
+    .limit(1);
+  return row || null;
+};
+
 const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
@@ -176,6 +186,7 @@ module.exports = {
   findByIdFull,
   findByIdOrCodeFull,
   findByOrder,
+  findByOrderTruck,
   findAll,
   create,
   update,

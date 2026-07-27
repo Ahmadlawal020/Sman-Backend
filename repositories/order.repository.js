@@ -7,6 +7,18 @@ const findById = async (id, tx = db) => {
   return row || null;
 };
 
+/**
+ * Row-lock an order for the caller's transaction. The gate flow uses this to
+ * serialise concurrent truck actions on one order: two trucks gating in (or
+ * out) at the same moment each take this lock in turn, so exactly one observes
+ * the "first in" / "last out" edge and drives the Released→Loading / Loading→
+ * Completed transition — the other sees the already-moved status and skips it.
+ */
+const lockById = async (id, tx = db) => {
+  const [row] = await tx.select().from(orders).where(eq(orders.id, id)).for("update").limit(1);
+  return row || null;
+};
+
 const findByNumber = async (orderNumber) => {
   const [row] = await db
     .select()
@@ -197,6 +209,7 @@ const countByPfi = async (pfiId) => {
 
 module.exports = {
   findById,
+  lockById,
   findByNumber,
   findByIdFull,
   findAll,

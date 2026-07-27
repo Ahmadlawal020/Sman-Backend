@@ -1,7 +1,42 @@
 const QRCode = require("qrcode");
+const { db } = require("../config/db");
 const { orderRepo, ticketRepo, customerRepo } = require("../repositories");
 const { sendTicketEmail } = require("./email.service");
 const { sendTicketSummarySMS } = require("./sms.service");
+
+/**
+ * Issue the ticket for a single truck load, idempotently, inside the caller's
+ * transaction (the "mark loaded" step). One ticket per load, numbered
+ * TCK-<orderSuffix>-<truckIndex>, linked by order_truck_id. Kept lean — no
+ * email/SMS here; those are the per-order buyer notifications. Returns the
+ * existing ticket if this load already has one, so a repeated load call is safe.
+ */
+const generateTicketForTruck = async (order, load, tx = db) => {
+  const existing = await ticketRepo.findByOrderTruck(load.id, tx);
+  if (existing) return existing;
+
+  const suffix = order.orderNumber.replace("ORD-", "");
+  const ticketNumber = `TCK-${suffix}-${load.truckIndex}`;
+
+  const created = await ticketRepo.create(
+    {
+      ticketNumber,
+      orderId: order.id,
+      orderTruckId: load.id,
+      status: "Active",
+      qrCodeDataUrl: "placeholder",
+    },
+    tx
+  );
+
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+  const qrCodeDataUrl = await QRCode.toDataURL(`${clientUrl}/ticket/details?id=${created.id}`, {
+    margin: 1,
+    width: 300,
+  });
+
+  return ticketRepo.update(created.id, { qrCodeDataUrl }, tx);
+};
 
 const generateTicketForOrder = async (orderIdOrDoc) => {
   try {
@@ -97,4 +132,4 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
   }
 };
 
-module.exports = { generateTicketForOrder };
+module.exports = { generateTicketForOrder, generateTicketForTruck };

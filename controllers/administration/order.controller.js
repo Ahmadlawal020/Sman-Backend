@@ -15,9 +15,14 @@ const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendOrderInvoiceEmail } = require("../../services/email.service");
 const { sendOrderSummarySMS } = require("../../services/sms.service");
 const { findPfiForOrder } = require("../../services/pfi.service");
-const { generateTicketForOrder } = require("../../services/ticket.service");
+const { generateTicketForOrder, generateTicketForTruck } = require("../../services/ticket.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 const orderStatus = require("../../services/orderStatus.service");
+
+/** Small helper: an HTTP error the error handler renders with its status. */
+function httpErr(status, message) {
+  return Object.assign(new Error(message), { status });
+}
 
 const getOrders = asyncHandler(async (req, res) => {
   const { page = 1, limit = 50, search, status, customer, dateFrom, dateTo } = req.query;
@@ -439,10 +444,181 @@ const cancelOrder = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Order cancelled successfully", data: { order: updatedOrder } });
 });
 
+// --- The truck gate flow ----------------------------------------------------
+//
+// Three physical checkpoints move a released order through loading:
+//
+//   gate-in  (security_entry)  pending  → gated_in   ; first truck ⇒ Released→Loading
+//   load     (ticketing)       gated_in → loaded     ; issues the per-truck ticket
+//   gate-out (security_exit)   loaded   → gated_out  ; last truck  ⇒ Loading→Completed
+//
+// Every action locks the ORDER row first (orderRepo.lockById), so concurrent
+// trucks on the same order serialise: exactly one sees the "first in" / "last
+// out" edge and drives the order transition; the others skip it. Each load's
+// own status guard makes an out-of-order or repeated action a clean 409.
+
+const GATEABLE = new Set(["Released", "Loading"]);
+
+// security_entry: a truck arrives at the entrance gate to load.
+const gateInTruck = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const { loadId, truckNumber, quantity, driverName, driverPhone, compartments } = req.body;
+  const actor = { type: "staff", staffId: req.user.id };
+  const audit = { ipAddress: req.ip, userAgent: req.headers["user-agent"] };
+
+  const load = await db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) throw httpErr(404, "Order not found");
+    if (!GATEABLE.has(order.status)) {
+      throw httpErr(409, `Order is ${order.status}; it is not open for gating`);
+    }
+
+    let gated;
+    if (order.deliveryType === "delivery") {
+      // The truck was allocated at release — flip that specific load.
+      if (loadId == null) throw httpErr(400, "loadId is required for a delivery order");
+      const existing = await orderTruckRepo.findById(loadId, tx);
+      if (!existing || existing.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
+      if (existing.status !== "pending") {
+        throw httpErr(409, `Truck is already ${existing.status}`);
+      }
+      gated = await orderTruckRepo.update(
+        loadId,
+        {
+          status: "gated_in",
+          securityEnteredAt: new Date(),
+          securityEnteredBy: req.user.id,
+          // Security may correct the driver actually present.
+          ...(driverName != null ? { driverName } : {}),
+          ...(driverPhone != null ? { driverPhone } : {}),
+        },
+        tx
+      );
+    } else {
+      // Pickup: the customer's own truck is captured HERE, first time it is seen.
+      if (!truckNumber || quantity == null) {
+        throw httpErr(400, "A pickup gate-in needs the truck's plate (truckNumber) and quantity");
+      }
+      const index = (await orderTruckRepo.countByOrder(orderId, tx)) + 1;
+      gated = await orderTruckRepo.create(
+        {
+          orderId,
+          truckIndex: index,
+          truckId: null,
+          truckNumber,
+          quantity: String(quantity),
+          compartments: compartments ?? null,
+          driverName: driverName ?? null,
+          driverPhone: driverPhone ?? null,
+          status: "gated_in",
+          securityEnteredAt: new Date(),
+          securityEnteredBy: req.user.id,
+        },
+        tx
+      );
+    }
+
+    // First truck through the gate opens loading. Under the order lock, only the
+    // first caller sees Released; a later truck sees Loading and skips this.
+    if (order.status === "Released") {
+      await orderStatus.transition(orderId, "Loading", {
+        tx,
+        actor,
+        set: { loadingStartedAt: new Date() },
+        metadata: { trigger: "gate-in", loadId: gated.id },
+        ...audit,
+      });
+    }
+
+    return gated;
+  });
+
+  res.json({ success: true, message: "Truck gated in", data: { truck: load } });
+});
+
+// ticketing: the truck has loaded; issue its ticket.
+const markTruckLoaded = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const loadId = Number(req.params.loadId);
+
+  const result = await db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) throw httpErr(404, "Order not found");
+
+    const load = await orderTruckRepo.findById(loadId, tx);
+    if (!load || load.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
+    if (load.status !== "gated_in") {
+      throw httpErr(409, `Truck is ${load.status}; only a gated-in truck can be marked loaded`);
+    }
+
+    const updated = await orderTruckRepo.update(
+      loadId,
+      { status: "loaded", loadedAt: new Date(), loadedBy: req.user.id },
+      tx
+    );
+    const ticket = await generateTicketForTruck(order, updated, tx);
+    return { truck: updated, ticket };
+  });
+
+  res.json({ success: true, message: "Truck loaded and ticket issued", data: result });
+});
+
+// security_exit: the loaded truck leaves the depot.
+const gateOutTruck = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const loadId = Number(req.params.loadId);
+  const actor = { type: "staff", staffId: req.user.id };
+  const audit = { ipAddress: req.ip, userAgent: req.headers["user-agent"] };
+
+  const result = await db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) throw httpErr(404, "Order not found");
+
+    const load = await orderTruckRepo.findById(loadId, tx);
+    if (!load || load.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
+    if (load.status !== "loaded") {
+      throw httpErr(409, `Truck is ${load.status}; only a loaded truck can be gated out`);
+    }
+
+    const updated = await orderTruckRepo.update(
+      loadId,
+      { status: "gated_out", securityExitedAt: new Date(), securityExitedBy: req.user.id },
+      tx
+    );
+
+    // Last truck out completes the order. "Last" = no load remains in a
+    // non-terminal state. Under the order lock this is race-free.
+    let completed = false;
+    const remaining = await orderTruckRepo.countByOrder(orderId, tx) -
+      (await orderTruckRepo.countByOrderAndStatus(orderId, "gated_out", tx));
+    if (remaining === 0 && order.status === "Loading") {
+      await orderStatus.transition(orderId, "Completed", {
+        tx,
+        actor,
+        set: { completedAt: new Date() },
+        metadata: { trigger: "gate-out", loadId: updated.id },
+        ...audit,
+      });
+      completed = true;
+    }
+
+    return { truck: updated, orderCompleted: completed };
+  });
+
+  res.json({
+    success: true,
+    message: result.orderCompleted ? "Truck gated out; order completed" : "Truck gated out",
+    data: result,
+  });
+});
+
 module.exports = {
   getOrders,
   getOrderById,
   createOrder,
   releaseOrder,
   cancelOrder,
+  gateInTruck,
+  markTruckLoaded,
+  gateOutTruck,
 };

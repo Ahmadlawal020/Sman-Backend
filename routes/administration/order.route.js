@@ -10,6 +10,9 @@ const {
   createOrder,
   releaseOrder,
   cancelOrder,
+  gateInTruck,
+  markTruckLoaded,
+  gateOutTruck,
 } = require("../../controllers/administration/order.controller");
 
 // Reads and creation stay behind the admin gate (verifyStaff).
@@ -35,6 +38,29 @@ router.post(
   requireRole("finance", "super_admin", { message: "Finance access required to cancel" }),
   validate({ params: orderSchemas.idParam, body: orderSchemas.cancelOrder }),
   cancelOrder
+);
+
+// The truck gate flow — each checkpoint gated to its security/ticketing post.
+router.post(
+  "/:id/gate-in",
+  authenticateStaff,
+  requireRole("security_entry", "super_admin", { message: "Entry-gate security access required" }),
+  validate({ params: orderSchemas.idParam, body: orderSchemas.gateIn }),
+  gateInTruck
+);
+router.post(
+  "/:id/trucks/:loadId/load",
+  authenticateStaff,
+  requireRole("ticketing", "super_admin", { message: "Ticketing access required" }),
+  validate({ params: orderSchemas.loadParam }),
+  markTruckLoaded
+);
+router.post(
+  "/:id/trucks/:loadId/gate-out",
+  authenticateStaff,
+  requireRole("security_exit", "super_admin", { message: "Exit-gate security access required" }),
+  validate({ params: orderSchemas.loadParam }),
+  gateOutTruck
 );
 
 module.exports = router;

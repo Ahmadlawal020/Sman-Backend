@@ -86,4 +86,36 @@ const releaseOrder = z.object({
   trucks: z.array(truckAllocation).max(20, "Too many trucks on one order").optional(),
 });
 
-module.exports = { createOrder, listOrders, idParam, cancelOrder, releaseOrder };
+// Gate-in body. A delivery order references the load allocated at release
+// (loadId); a pickup order has no load yet, so security captures the customer's
+// own truck here (truckNumber + quantity, plus optional driver/compartments).
+// Which fields are required is decided in the controller from the order type.
+const gateIn = z.object({
+  loadId: id("Load").optional(),
+  truckNumber: optionalString("Truck number", 100),
+  quantity: quantity("Truck quantity").optional(),
+  driverName: optionalString("Driver name", 255),
+  driverPhone: optionalString("Driver phone", 50),
+  compartments: z
+    .array(
+      z.object({
+        qty: numberLike("Compartment quantity"),
+        ullage: numberLike("Compartment ullage").optional(),
+      })
+    )
+    .max(10, "A tanker has at most 10 compartments")
+    .optional(),
+});
+
+// A load-scoped route: /orders/:id/trucks/:loadId/...
+const loadParam = z.object({ id: id("Order id"), loadId: id("Load id") });
+
+module.exports = {
+  createOrder,
+  listOrders,
+  idParam,
+  cancelOrder,
+  releaseOrder,
+  gateIn,
+  loadParam,
+};
