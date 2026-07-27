@@ -9,6 +9,7 @@ const app = require("../app");
 const { db } = require("../config/db");
 const { orders, depots, products } = require("../db/schema");
 const { orderRepo, customerRepo, auditLogRepo } = require("../repositories");
+const walletService = require("../services/wallet.service");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
 
 // depot/product are notNull FKs on orders — reuse an existing row or make one.
@@ -161,14 +162,24 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
 
   // ── cancel ───────────────────────────────────────────────────────────────
 
-  test("finance cancels a Paid order and the customer is refunded", async () => {
-    const before = await customerRepo.findById(customerId);
-    const startBalance = Number(before.balance || 0);
-
+  test("finance cancels a Paid order and the held funds are returned", async () => {
     const order = await makeOrder(customerId, depotId, productId, {
       status: "Paid",
       paymentStatus: "Paid",
     });
+    const amount = Number(order.totalAmount);
+
+    // A Paid order holds the customer's funds. makeOrder's raw insert doesn't
+    // place the hold, so do it here — that's what cancel releases. Fund the
+    // wallet first so the hold can be taken.
+    await customerRepo.creditBalance(customerId, amount);
+    const startBalance = Number((await customerRepo.findById(customerId)).balance);
+    await walletService.placeHold({ customerId, orderId: order.id, amount, description: "test" });
+    assert.equal(
+      Number((await customerRepo.findById(customerId)).balance),
+      startBalance - amount,
+      "funds are held while the order is Paid"
+    );
 
     const res = await request(app)
       .post(`/api/orders/${order.id}/cancel`)
@@ -183,12 +194,15 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
     assert.equal(after.cancelledBy, financeStaff.staff.id);
     assert.equal(after.cancellationReason, "customer changed their mind");
 
-    const customerAfter = await customerRepo.findById(customerId);
+    // releaseHold returns the held money — balance back to before the hold, and
+    // no debit/credit ledger churn (the hold is the record).
     assert.equal(
-      Number(customerAfter.balance),
-      startBalance + Number(order.totalAmount),
-      "the paid amount was credited back"
+      Number((await customerRepo.findById(customerId)).balance),
+      startBalance,
+      "the held funds were returned on cancel"
     );
+    const hold = await walletService.findHoldByOrder(order.id);
+    assert.equal(hold.status, "released", "the hold is marked released");
   });
 
   test("a role without the finance gate cannot cancel (403)", async () => {

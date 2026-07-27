@@ -5,9 +5,9 @@ const {
   customerRepo,
   depotRepo,
   pfiRepo,
-  depositRepo,
   orderTruckRepo,
 } = require("../repositories");
+const walletService = require("./wallet.service");
 const { createDedicatedAccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
 const { sendOrderSummarySMS } = require("./sms.service");
@@ -151,10 +151,10 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
   // --- Atomic order creation (AUDIT H2) --------------------------------------
-  // Stock reservation, the wallet debit, the order row, its ledger entry, the
-  // capacity change and the Pending→Paid transition are ONE unit: a failure
-  // anywhere rolls all of it back. A guarded write returning null (stock
-  // claimed, funds gone) is a lost race → a { status: 400 } that rolls back.
+  // Stock reservation, the order row, the wallet HOLD, the capacity change, the
+  // declared pickup loads and the Pending→Paid transition are ONE unit: a
+  // failure anywhere rolls all of it back. A guarded write returning null
+  // (stock claimed) is a lost race → a { status: 400 } that rolls back.
   const { order, isPaidWithWallet } = await db.transaction(async (tx) => {
     const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
     if (!updatedPfi) {
@@ -165,16 +165,8 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
     }
     await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
 
-    // Attempt the guarded debit FIRST, so the order is created with a payment
-    // status that is already true — no create-then-downgrade, no window where
-    // the row says Paid before the money is taken.
-    let paid = false;
-    let debited = null;
-    if (Number(customer.balance || 0) >= totalAmount) {
-      debited = await customerRepo.debitBalance(customerId, totalAmount, tx);
-      paid = Boolean(debited);
-    }
-
+    // The order is created first (the hold needs its id), Unpaid — its payment
+    // status becomes true only if the hold below actually funds it.
     const created = await orderRepo.create(
       {
         orderNumber,
@@ -188,7 +180,7 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
         totalAmount: String(totalAmount),
         deliveryType,
         status: "Pending",
-        paymentStatus: paid ? "Paid" : "Unpaid",
+        paymentStatus: "Unpaid",
         virtualAccountNumber,
         virtualAccountBank,
         virtualAccountName,
@@ -196,20 +188,22 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
       tx
     );
 
-    // Ledger row INSIDE the transaction (AUDIT H6) — a failed ledger write
-    // rolls the debit and the order back.
-    if (paid) {
-      await depositRepo.create(
-        {
-          customerId,
-          amount: String(totalAmount),
-          type: "debit",
-          description: `Payment for Order ${orderNumber} (Wallet Balance)`,
-          balanceAfter: String(debited.balance),
-        },
-        tx
-      );
-    }
+    // Commit the wallet funds as a HOLD, inside this same transaction (the tx is
+    // threaded through placeHold). The hold reserves the money without spending
+    // it: convertHold books the debit ledger row when the order completes;
+    // releaseHold returns it on cancel. placeHold's guarded debit is the
+    // sufficiency check — it fails cleanly if the balance can't cover it, and
+    // the order simply stays Unpaid to be funded later by Paystack.
+    const holdResult = await walletService.placeHold(
+      {
+        customerId,
+        orderId: created.id,
+        amount: totalAmount,
+        description: `Payment hold for Order ${orderNumber} (Wallet Balance)`,
+      },
+      tx
+    );
+    const paid = holdResult.success;
 
     await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
 
@@ -237,16 +231,17 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
       );
     }
 
-    // Wallet payment confirms the order NOW — drive Pending→Paid through the
-    // state machine (system actor) so it enters the stage release requires and
-    // an order.paid audit row is written.
+    // A funded hold confirms the order NOW — drive Pending→Paid through the
+    // state machine (system actor), stamping paymentStatus in the same update so
+    // there is no window where status and paymentStatus disagree. The spend is
+    // not booked yet; convertHold does that when the order completes.
     let orderRow = created;
     if (paid) {
       orderRow = await orderStatus.transition(created.id, "Paid", {
         tx,
         actor: { type: "system" },
         action: "order.paid",
-        set: { paymentConfirmedAt: new Date() },
+        set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
         metadata: { via: "wallet", amount: String(totalAmount) },
       });
     }

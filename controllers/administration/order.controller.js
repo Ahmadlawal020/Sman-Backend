@@ -1,15 +1,14 @@
 const asyncHandler = require("express-async-handler");
 const {
   orderRepo,
-  customerRepo,
   depotRepo,
   pfiRepo,
-  depositRepo,
   truckRepo,
   orderTruckRepo,
   auditLogRepo,
 } = require("../../repositories");
 const { db } = require("../../config/db");
+const walletService = require("../../services/wallet.service");
 const { generateTicketForTruck } = require("../../services/ticket.service");
 const orderStatus = require("../../services/orderStatus.service");
 const { placeOrder } = require("../../services/order.service");
@@ -206,23 +205,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
     }
     await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
 
-    if (order.paymentStatus === "Paid") {
-      const credited = await customerRepo.creditBalance(
-        order.customerId,
-        Number(order.totalAmount),
-        tx
-      );
-      await depositRepo.create(
-        {
-          customerId: order.customerId,
-          amount: String(order.totalAmount),
-          type: "credit",
-          description: `Refund for cancelled Order ${order.orderNumber}`,
-          balanceAfter: String(credited.balance),
-        },
-        tx
-      );
-    }
+    // Return any held funds. The hold — not a debit/credit pair — is the record,
+    // so a cancelled order leaves no ledger churn. On an Unpaid order there is no
+    // active hold and this is a no-op.
+    await walletService.releaseHold(order.id, tx);
   });
 
   const updatedOrder = await orderRepo.findByIdFull(Number(req.params.id));
@@ -435,6 +421,14 @@ const gateOutTruck = asyncHandler(async (req, res) => {
         metadata: { trigger: "gate-out", loadId: updated.id },
         ...audit,
       });
+      // The order is fulfilled — convert the wallet hold into a booked debit
+      // ledger row (the spend is recorded only now, not at order time). An order
+      // with no active hold (never wallet-funded) is a no-op.
+      await walletService.convertHold(
+        orderId,
+        `Payment for Order ${order.orderNumber} (Wallet Balance)`,
+        tx
+      );
       completed = true;
     }
 

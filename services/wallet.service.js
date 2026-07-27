@@ -179,31 +179,40 @@ const debit = async ({
  * instead of holding the same money twice: if the hold insert below violates
  * it, the whole transaction — including the balance decrement — rolls back.
  */
-const placeHold = async ({ customerId, orderId, amount, description = "" }) => {
+// An optional `tx` lets a caller (e.g. placeOrder) commit the hold atomically
+// with the order it belongs to. Without one, the hold gets its own transaction.
+const placeHold = async ({ customerId, orderId, amount, description = "" }, tx) => {
   const value = money(amount);
   if (value <= 0) {
     return { success: false, message: "Hold amount must be positive" };
   }
 
+  const run = async (trx) => {
+    const updated = await customerRepo.debitBalance(customerId, value, trx);
+    if (!updated) {
+      return { success: false, insufficient: true, message: "Insufficient wallet balance" };
+    }
+
+    const [hold] = await trx
+      .insert(walletHolds)
+      .values({
+        customerId,
+        orderId,
+        amount: asDecimal(value),
+        description,
+      })
+      .returning();
+
+    return { success: true, hold, customer: updated };
+  };
+
+  // Inside a caller's transaction a duplicate-hold violation must propagate —
+  // the caller's atomic unit can't be soft-recovered here (Postgres aborts it).
+  // The alreadyHeld soft path only applies to the standalone transaction, whose
+  // sole retry caller is the settlement sweep.
+  if (tx) return run(tx);
   try {
-    return await db.transaction(async (tx) => {
-      const updated = await customerRepo.debitBalance(customerId, value, tx);
-      if (!updated) {
-        return { success: false, insufficient: true, message: "Insufficient wallet balance" };
-      }
-
-      const [hold] = await tx
-        .insert(walletHolds)
-        .values({
-          customerId,
-          orderId,
-          amount: asDecimal(value),
-          description,
-        })
-        .returning();
-
-      return { success: true, hold, customer: updated };
-    });
+    return await db.transaction(run);
   } catch (err) {
     if (isUniqueViolation(err)) {
       return { success: false, alreadyHeld: true, message: "A hold already exists for this order" };
@@ -216,9 +225,9 @@ const placeHold = async ({ customerId, orderId, amount, description = "" }) => {
  * Return held funds to the balance (order cancelled before fulfilment).
  * No ledger rows: the money never actually moved.
  */
-const releaseHold = async (orderId) => {
-  return db.transaction(async (tx) => {
-    const [hold] = await tx
+const releaseHold = async (orderId, tx) => {
+  const run = async (trx) => {
+    const [hold] = await trx
       .select()
       .from(walletHolds)
       .where(eq(walletHolds.orderId, orderId))
@@ -229,7 +238,7 @@ const releaseHold = async (orderId) => {
       return { success: false, noActiveHold: true, hold: hold || null };
     }
 
-    const [updatedHold] = await tx
+    const [updatedHold] = await trx
       .update(walletHolds)
       .set({ status: "released", resolvedAt: new Date() })
       .where(eq(walletHolds.id, hold.id))
@@ -237,10 +246,11 @@ const releaseHold = async (orderId) => {
 
     // A release can never overdraw — it is only ever returning money this
     // same hold already took.
-    await customerRepo.creditBalance(hold.customerId, money(hold.amount), tx);
+    await customerRepo.creditBalance(hold.customerId, money(hold.amount), trx);
 
     return { success: true, hold: updatedHold };
-  });
+  };
+  return tx ? run(tx) : db.transaction(run);
 };
 
 /**
@@ -248,9 +258,9 @@ const releaseHold = async (orderId) => {
  * the balance was already reduced when the hold was placed, so it does not
  * change here.
  */
-const convertHold = async (orderId, description = "") => {
-  return db.transaction(async (tx) => {
-    const [hold] = await tx
+const convertHold = async (orderId, description = "", tx) => {
+  const run = async (trx) => {
+    const [hold] = await trx
       .select()
       .from(walletHolds)
       .where(eq(walletHolds.orderId, orderId))
@@ -263,7 +273,7 @@ const convertHold = async (orderId, description = "") => {
 
     const customer = await customerRepo.findById(hold.customerId);
 
-    const [deposit] = await tx
+    const [deposit] = await trx
       .insert(deposits)
       .values({
         customerId: hold.customerId,
@@ -274,14 +284,15 @@ const convertHold = async (orderId, description = "") => {
       })
       .returning();
 
-    const [updatedHold] = await tx
+    const [updatedHold] = await trx
       .update(walletHolds)
       .set({ status: "converted", depositId: deposit.id, resolvedAt: new Date() })
       .where(eq(walletHolds.id, hold.id))
       .returning();
 
     return { success: true, hold: updatedHold, deposit };
-  });
+  };
+  return tx ? run(tx) : db.transaction(run);
 };
 
 const findHoldByOrder = async (orderId) => {
