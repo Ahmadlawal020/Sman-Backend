@@ -118,85 +118,86 @@ const createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  // Atomic PFI stock reservation
-  const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity));
-  if (!updatedPfi) {
-    return res.status(400).json({
-      success: false,
-      message: "Insufficient stock in the selected PFI (may have been claimed by another order)",
-    });
-  }
-
-  // Check if PFI is now finished
-  await pfiRepo.markFinishedIfComplete(updatedPfi.id);
-
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
-  // Check wallet balance
-  let isPaidWithWallet = Number(customer.balance || 0) >= totalAmount;
+  // --- Atomic order creation (AUDIT H2) --------------------------------------
+  //
+  // Stock reservation, the wallet debit, the order row, its ledger entry and
+  // the capacity change are ONE unit: a failure anywhere rolls all of it back.
+  // Before this, a crash mid-way permanently burnt PFI stock or produced an
+  // order with no ledger row. External work (DVA creation, email, SMS) stays
+  // OUTSIDE the transaction — a DB transaction must never be held open across
+  // an HTTP call.
+  //
+  // A guarded write returning null (stock claimed, funds gone) means a lost
+  // race: throw a { status: 400 } error, which rolls the transaction back and
+  // the error handler renders as a clean 400 with this message.
+  const { order, isPaidWithWallet } = await db.transaction(async (tx) => {
+    const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
+    if (!updatedPfi) {
+      throw Object.assign(
+        new Error("Insufficient stock in the selected PFI (may have been claimed by another order)"),
+        { status: 400 }
+      );
+    }
+    await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
 
-  // Create order
-  const order = await orderRepo.create({
-    orderNumber,
-    customerId,
-    state,
-    depotId,
-    productId,
-    pfiId: updatedPfi.id,
-    quantity: Number(quantity),
-    price: String(serverPrice),
-    totalAmount: String(totalAmount),
-    deliveryType,
-    status: "Pending",
-    paymentStatus: isPaidWithWallet ? "Paid" : "Unpaid",
-    virtualAccountNumber,
-    virtualAccountBank,
-    virtualAccountName,
+    // Decide the wallet payment by attempting the guarded debit FIRST, so the
+    // order is created with a payment status that is already true — no
+    // create-then-downgrade dance, and no window where the row says Paid
+    // before the money is taken. debitBalance returns null if the funds are
+    // gone (a concurrent order spent them), in which case the order is Unpaid.
+    let paid = false;
+    let debited = null;
+    if (Number(customer.balance || 0) >= totalAmount) {
+      debited = await customerRepo.debitBalance(customerId, totalAmount, tx);
+      paid = Boolean(debited);
+    }
+
+    const created = await orderRepo.create(
+      {
+        orderNumber,
+        customerId,
+        state,
+        depotId,
+        productId,
+        pfiId: updatedPfi.id,
+        quantity: Number(quantity),
+        price: String(serverPrice),
+        totalAmount: String(totalAmount),
+        deliveryType,
+        status: "Pending",
+        paymentStatus: paid ? "Paid" : "Unpaid",
+        virtualAccountNumber,
+        virtualAccountBank,
+        virtualAccountName,
+      },
+      tx
+    );
+
+    // Ledger row — now INSIDE the transaction (AUDIT H6). Previously this was a
+    // try/catch that only console.error'd, so money could move with no audit
+    // row. Here a failed ledger write rolls the debit and the order back.
+    if (paid) {
+      await depositRepo.create(
+        {
+          customerId,
+          amount: String(totalAmount),
+          type: "debit",
+          description: `Payment for Order ${orderNumber} (Wallet Balance)`,
+          balanceAfter: String(debited.balance),
+        },
+        tx
+      );
+    }
+
+    await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
+
+    return { order: created, isPaidWithWallet: paid };
   });
 
-  // If paid with wallet, deduct balance.
-  //
-  // `isPaidWithWallet` was decided from a snapshot read many async steps and
-  // two HTTP calls ago, so it cannot be trusted here. debitBalance re-checks
-  // atomically in the WHERE and returns null if the funds are gone — which is
-  // what happens when a concurrent order spent them in the meantime.
-  let debited = null;
-  if (isPaidWithWallet) {
-    debited = await customerRepo.debitBalance(customerId, totalAmount);
-    if (!debited) {
-      // Lost the race. Leave the order Unpaid rather than marking it Paid
-      // against money that is no longer there; the customer can still settle
-      // it by transfer, and the webhook path will pick it up.
-      await orderRepo.update(order.id, { paymentStatus: "Unpaid" });
-      isPaidWithWallet = false;
-    }
-  }
-
-  if (isPaidWithWallet) {
-    try {
-      await depositRepo.create({
-        customerId,
-        amount: String(totalAmount),
-        type: "debit",
-        description: `Payment for Order ${orderNumber} (Wallet Balance)`,
-        // From the guarded update, not the snapshot read before it — the
-        // snapshot may be stale by several concurrent debits.
-        balanceAfter: String(debited.balance),
-      });
-    } catch (depErr) {
-      console.error("Failed to record wallet payment debit deposit:", depErr.message);
-    }
-  }
-
-  // Decrement depot product capacity
-  await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity));
-
-  // Generate loading ticket if paid immediately.
-  //
-  // Reads isPaidWithWallet, NOT order.paymentStatus — `order` is the row as
-  // inserted, so its in-memory status is still "Paid" even when the debit
-  // subsequently lost the race. Trusting it would mint a redeemable loading
-  // ticket for an order nobody paid for.
+  // --- Post-commit side effects. The order is durable; these are best-effort.
+  // Generate the loading ticket if the wallet paid immediately.
   if (isPaidWithWallet) {
     try {
       await generateTicketForOrder(order.id);
@@ -315,37 +316,44 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: "Cannot cancel a completed order" });
   }
 
-  // Reverse PFI stock
-  if (order.pfiId) {
-    await pfiRepo.releaseStock(order.pfiId, order.quantity);
-  }
-
-  // Restore depot capacity
-  await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity);
-
-  // If order was paid, refund to balance
-  if (order.paymentStatus === "Paid") {
-    const credited = await customerRepo.creditBalance(
-      order.customerId,
-      Number(order.totalAmount)
-    );
-
-    try {
-      await depositRepo.create({
-        customerId: order.customerId,
-        amount: String(order.totalAmount),
-        type: "credit",
-        description: `Refund for cancelled Order ${order.orderNumber}`,
-        // From the update's return value rather than a separate read, which
-        // could be stale by the time the credit lands.
-        balanceAfter: String(credited.balance),
-      });
-    } catch (depErr) {
-      console.error("Failed to record cancellation refund:", depErr.message);
+  // --- Atomic cancel (AUDIT H2/H6) ------------------------------------------
+  //
+  // Stock release, capacity restore, the refund, its ledger row and the status
+  // change are one unit. Before this, status was set LAST and the refund
+  // ledger was a swallowed try/catch — a failure mid-way refunded stock and
+  // money while leaving the order un-cancelled, so it could be cancelled (and
+  // refunded) again. Now it all rolls back together.
+  //
+  // NOTE: the guarded, single-winner transition (two concurrent cancels of the
+  // same order) is added with the state machine in a later commit; this commit
+  // is the atomicity + ledger fix.
+  await db.transaction(async (tx) => {
+    if (order.pfiId) {
+      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
     }
-  }
+    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
 
-  await orderRepo.update(order.id, { status: "Cancelled" });
+    if (order.paymentStatus === "Paid") {
+      const credited = await customerRepo.creditBalance(
+        order.customerId,
+        Number(order.totalAmount),
+        tx
+      );
+      // Inside the transaction now — a failed ledger write rolls the refund back.
+      await depositRepo.create(
+        {
+          customerId: order.customerId,
+          amount: String(order.totalAmount),
+          type: "credit",
+          description: `Refund for cancelled Order ${order.orderNumber}`,
+          balanceAfter: String(credited.balance),
+        },
+        tx
+      );
+    }
+
+    await orderRepo.update(order.id, { status: "Cancelled" }, tx);
+  });
 
   const updatedOrder = await orderRepo.findByIdFull(order.id);
 
