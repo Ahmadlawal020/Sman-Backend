@@ -43,6 +43,19 @@ const listOrders = pagination.extend({
 
 const idParam = z.object({ id: id("Order id") });
 
+// The customer portal's self-order body — createOrder WITHOUT `customer`. A
+// signed-in customer can only order for themselves, so the id is taken from the
+// token, never accepted from the request.
+const createMyOrder = z.object({
+  depot: id("Depot"),
+  product: id("Product"),
+  state: requiredString("State", 100),
+  quantity: quantity("Quantity"),
+  deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
+});
+
+const listMyOrders = pagination;
+
 // Cancel captures an optional human reason; it lands in cancellationReason and
 // the audit row's metadata.
 const cancelOrder = z.object({
@@ -112,6 +125,8 @@ const loadParam = z.object({ id: id("Order id"), loadId: id("Load id") });
 
 module.exports = {
   createOrder,
+  createMyOrder,
+  listMyOrders,
   listOrders,
   idParam,
   cancelOrder,

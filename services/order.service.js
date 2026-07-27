@@ -1,0 +1,266 @@
+const { v4: uuidv4 } = require("uuid");
+const { db } = require("../config/db");
+const {
+  orderRepo,
+  customerRepo,
+  depotRepo,
+  pfiRepo,
+  depositRepo,
+} = require("../repositories");
+const { createDedicatedAccount } = require("./payment.service");
+const { sendOrderInvoiceEmail } = require("./email.service");
+const { sendOrderSummarySMS } = require("./sms.service");
+const { findPfiForOrder } = require("./pfi.service");
+const { generateTicketForOrder } = require("./ticket.service");
+const orderStatus = require("./orderStatus.service");
+const { getCustomerInitials } = require("../utils/helpers");
+
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
+
+/**
+ * Place an order — the ONE creation path, shared by the desk
+ * (POST /api/orders) and the customer portal (POST /api/customer/orders).
+ *
+ * The only thing that differs between the two callers is WHO the customer is:
+ * the desk passes a body customer id, the portal passes the authenticated
+ * customer's own id. Everything else — server-side pricing, the dedicated
+ * virtual account, the single atomic reserve→debit→create→ledger→capacity
+ * transaction, the wallet-pays Pending→Paid transition, and the best-effort
+ * invoice email/SMS — is identical, so it lives here once.
+ *
+ * Throws httpError(4xx) for a bad request (unknown depot, no price, no stock,
+ * no payment account); the caller's asyncHandler renders it. External work
+ * (DVA creation, email, SMS) stays OUTSIDE the DB transaction — a transaction
+ * must never be held open across an HTTP call to Paystack/Termii.
+ *
+ * @param {object} input
+ * @param {number} input.customerId
+ * @param {string} input.state
+ * @param {number} input.depotId
+ * @param {number} input.productId
+ * @param {number} input.quantity
+ * @param {"delivery"|"pickup"} input.deliveryType
+ * @returns {{ order: object, payment: object, isPaidWithWallet: boolean }}
+ */
+async function placeOrder({ customerId, state, depotId, productId, quantity, deliveryType }) {
+  const customer = await customerRepo.findById(customerId);
+  if (!customer) {
+    throw httpError(404, "Customer not found");
+  }
+
+  // Ensure the customer has a dedicated virtual account to be paid into.
+  let virtualAccountNumber = customer.virtualAccountNumber || "";
+  let virtualAccountBank = customer.virtualAccountBank || "";
+  let virtualAccountName = customer.virtualAccountName || "";
+
+  if (!virtualAccountNumber) {
+    const accountResult = await createDedicatedAccount(customer);
+    if (accountResult.success) {
+      virtualAccountNumber = accountResult.data.accountNumber;
+      virtualAccountBank = accountResult.data.bankName;
+      virtualAccountName =
+        accountResult.data.accountName || `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+      const updateData = { virtualAccountNumber, virtualAccountBank, virtualAccountName };
+      if (accountResult.data.paystackCustomerId) {
+        updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
+      }
+      await customerRepo.update(customerId, updateData);
+    } else {
+      throw httpError(
+        400,
+        "Customer has no dedicated payment account and one could not be generated. Please try again or contact support."
+      );
+    }
+  } else if (!virtualAccountName) {
+    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    await customerRepo.update(customerId, { virtualAccountName });
+  }
+
+  const depot = await depotRepo.findById(depotId);
+  if (!depot) {
+    throw httpError(404, "Depot not found");
+  }
+
+  // Server-side pricing — the client never supplies price/total.
+  const priceEntry = await depotRepo.getProductPrice(depotId, productId);
+  if (!priceEntry || Number(priceEntry.currentPrice) <= 0) {
+    throw httpError(400, "No price configured for this product at this depot");
+  }
+  const serverPrice = Number(priceEntry.currentPrice);
+  const totalAmount = serverPrice * Number(quantity);
+
+  const { selectedPfi: pfiDoc, totalAvailableStock } = await findPfiForOrder(
+    depotId,
+    productId,
+    quantity
+  );
+  if (!pfiDoc) {
+    if (totalAvailableStock < Number(quantity)) {
+      throw httpError(
+        400,
+        `Insufficient stock in depot. Total active PFI stock: ${totalAvailableStock.toLocaleString()} Litres`
+      );
+    }
+    throw httpError(
+      400,
+      `Insufficient stock in any single active PFI. Maximum available in a single PFI is less than the requested ${Number(
+        quantity
+      ).toLocaleString()} Litres`
+    );
+  }
+
+  const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
+
+  // --- Atomic order creation (AUDIT H2) --------------------------------------
+  // Stock reservation, the wallet debit, the order row, its ledger entry, the
+  // capacity change and the Pending→Paid transition are ONE unit: a failure
+  // anywhere rolls all of it back. A guarded write returning null (stock
+  // claimed, funds gone) is a lost race → a { status: 400 } that rolls back.
+  const { order, isPaidWithWallet } = await db.transaction(async (tx) => {
+    const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
+    if (!updatedPfi) {
+      throw httpError(
+        400,
+        "Insufficient stock in the selected PFI (may have been claimed by another order)"
+      );
+    }
+    await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
+
+    // Attempt the guarded debit FIRST, so the order is created with a payment
+    // status that is already true — no create-then-downgrade, no window where
+    // the row says Paid before the money is taken.
+    let paid = false;
+    let debited = null;
+    if (Number(customer.balance || 0) >= totalAmount) {
+      debited = await customerRepo.debitBalance(customerId, totalAmount, tx);
+      paid = Boolean(debited);
+    }
+
+    const created = await orderRepo.create(
+      {
+        orderNumber,
+        customerId,
+        state,
+        depotId,
+        productId,
+        pfiId: updatedPfi.id,
+        quantity: Number(quantity),
+        price: String(serverPrice),
+        totalAmount: String(totalAmount),
+        deliveryType,
+        status: "Pending",
+        paymentStatus: paid ? "Paid" : "Unpaid",
+        virtualAccountNumber,
+        virtualAccountBank,
+        virtualAccountName,
+      },
+      tx
+    );
+
+    // Ledger row INSIDE the transaction (AUDIT H6) — a failed ledger write
+    // rolls the debit and the order back.
+    if (paid) {
+      await depositRepo.create(
+        {
+          customerId,
+          amount: String(totalAmount),
+          type: "debit",
+          description: `Payment for Order ${orderNumber} (Wallet Balance)`,
+          balanceAfter: String(debited.balance),
+        },
+        tx
+      );
+    }
+
+    await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
+
+    // Wallet payment confirms the order NOW — drive Pending→Paid through the
+    // state machine (system actor) so it enters the stage release requires and
+    // an order.paid audit row is written.
+    let orderRow = created;
+    if (paid) {
+      orderRow = await orderStatus.transition(created.id, "Paid", {
+        tx,
+        actor: { type: "system" },
+        action: "order.paid",
+        set: { paymentConfirmedAt: new Date() },
+        metadata: { via: "wallet", amount: String(totalAmount) },
+      });
+    }
+
+    return { order: orderRow, isPaidWithWallet: paid };
+  });
+
+  // --- Post-commit side effects. The order is durable; these are best-effort.
+  if (isPaidWithWallet) {
+    try {
+      await generateTicketForOrder(order.id);
+    } catch (ticketErr) {
+      console.error("Failed to generate ticket on instant wallet payment:", ticketErr.message);
+    }
+  }
+
+  const fullOrder = await orderRepo.findByIdFull(order.id);
+
+  if (customer.email) {
+    try {
+      await sendOrderInvoiceEmail(customer.email, {
+        orderNumber,
+        orderDate: order.createdAt,
+        customerName: customer.name,
+        companyName: customer.companyName,
+        customerPhone: customer.phone,
+        product: fullOrder.productName || "N/A",
+        sku: fullOrder.productSku || "",
+        quantity: order.quantity,
+        unit: fullOrder.productUnit || "Liters",
+        price: order.price,
+        totalAmount: order.totalAmount,
+        deliveryType: order.deliveryType,
+        depotName: depot.name,
+        depotCode: depot.code,
+        state: order.state,
+        accountNumber: virtualAccountNumber,
+        bankName: virtualAccountBank,
+        accountName: virtualAccountName,
+      });
+    } catch (emailErr) {
+      console.error("Failed to send invoice email:", emailErr.message);
+    }
+  }
+
+  let smsSent = false;
+  try {
+    const smsResult = await sendOrderSummarySMS(customer.phone, {
+      orderNumber,
+      customerName: customer.name,
+      product: fullOrder.productName || "N/A",
+      quantity: order.quantity,
+      unit: fullOrder.productUnit || "Liters",
+      totalAmount: order.totalAmount,
+      accountNumber: virtualAccountNumber,
+      bankName: virtualAccountBank,
+      accountName: virtualAccountName,
+    });
+    smsSent = smsResult.success;
+    if (!smsSent) console.error("Failed to send order SMS:", smsResult.message);
+  } catch (smsErr) {
+    console.error("Failed to send order SMS:", smsErr.message);
+  }
+
+  return {
+    order: fullOrder,
+    isPaidWithWallet,
+    payment: {
+      accountNumber: virtualAccountNumber,
+      bankName: virtualAccountBank,
+      accountName: virtualAccountName,
+      emailSent: !!customer.email,
+      smsSent,
+    },
+  };
+}
+
+module.exports = { placeOrder, httpError };

@@ -54,6 +54,7 @@ app.use("/api/settlements", require("./routes/administration/settlement.route"))
 // /api/customers above — a readability hazard, not a routing bug: Express
 // matches mounts at segment boundaries, order-independently.
 app.use("/api/customer/auth", require("./routes/portal/auth.route"));
+app.use("/api/customer/orders", require("./routes/portal/order.route"));
 
 // Health check
 app.get("/api/health", (req, res) => {
