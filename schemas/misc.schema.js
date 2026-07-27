@@ -1,8 +1,11 @@
 const z = require("zod");
 const {
-  id, money, quantity, requiredString, optionalString, optionalEmail,
+  id, money, quantity, numberLike, requiredString, optionalString, optionalEmail,
   enumOf, searchTerm, pagination,
 } = require("./fields");
+const { ROLE_MAP } = require("../config/roleMapping");
+
+const ROLE_COUNT = Object.keys(ROLE_MAP).length;
 
 /**
  * Schemas for the remaining CRUD resources. Grouped in one file because each
@@ -146,7 +149,19 @@ const staffBase = {
   other_names: optionalString("Other names", 200),
   email: optionalEmail(),
   phone_number: optionalString("Phone number", 30),
-  roles: z.array(z.string().trim().min(1, "A role cannot be empty").max(50, "Role name is too long"), { error: "Roles must be a list" }).max(19, "Too many roles").optional(),
+  roles: z
+    .array(
+      numberLike("Role").pipe(
+        z
+          .number()
+          .int("A role id must be a whole number")
+          .refine((n) => n in ROLE_MAP, "Unknown role id")
+      ),
+      { error: (iss) => (iss.input === undefined ? "Roles are required" : "Roles must be a list") }
+    )
+    .min(1, "At least one role is required")
+    .max(ROLE_COUNT, `A user cannot have more than ${ROLE_COUNT} roles`)
+    .optional(),
   suspended: z.boolean({ error: "Suspended must be true or false" }).optional(),
 };
 const createStaff = z.object({
