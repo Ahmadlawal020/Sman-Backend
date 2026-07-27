@@ -44,6 +44,8 @@ const offlineSaleQuerySchema = z.object({
     .optional(),
   dateFrom: z.string().date().optional(),
   dateTo: z.string().date().optional(),
+  sort: z.enum(["createdAt", "totalAmount", "saleNumber", "status"]).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
 });
 
 module.exports = {

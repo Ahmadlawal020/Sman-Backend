@@ -1,6 +1,15 @@
-const { eq, and, ilike, desc, count, gte, lte } = require("drizzle-orm");
+const { eq, and, ilike, asc, desc, count, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { dailyReports } = require("../db/schema");
+
+// Whitelist, not passthrough: sort input never reaches SQL unvalidated.
+const SORTABLE = {
+  reportDate: dailyReports.reportDate,
+  location: dailyReports.location,
+  createdAt: dailyReports.createdAt,
+  totalSalesAmount: dailyReports.totalSalesAmount,
+  litresSold: dailyReports.litresSold,
+};
 
 const findById = async (id) => {
   const [row] = await db.select().from(dailyReports).where(eq(dailyReports.id, id)).limit(1);
@@ -14,6 +23,8 @@ const findAll = async ({
   submittedBy,
   dateFrom,
   dateTo,
+  sort,
+  order,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -36,7 +47,10 @@ const findAll = async ({
       .select()
       .from(dailyReports)
       .where(whereClause)
-      .orderBy(desc(dailyReports.reportDate), desc(dailyReports.id))
+      .orderBy(
+        (order === "asc" ? asc : desc)(SORTABLE[sort] || dailyReports.reportDate),
+        desc(dailyReports.id)
+      )
       .limit(limitNum)
       .offset(offset),
     db.select({ total: count() }).from(dailyReports).where(whereClause),

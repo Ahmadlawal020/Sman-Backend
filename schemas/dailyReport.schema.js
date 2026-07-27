@@ -45,6 +45,10 @@ const dailyReportQuerySchema = z.object({
   pfiNumber: z.string().max(50).optional(),
   dateFrom: z.string().date().optional(),
   dateTo: z.string().date().optional(),
+  sort: z
+    .enum(["reportDate", "location", "createdAt", "totalSalesAmount", "litresSold"])
+    .optional(),
+  order: z.enum(["asc", "desc"]).optional(),
 });
 
 module.exports = {

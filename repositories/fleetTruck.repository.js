@@ -16,7 +16,15 @@ const findByPlate = async (plateNumber) => {
   return row || null;
 };
 
-const findAll = async ({ search, isActive, page = 1, limit = 50 } = {}) => {
+// Whitelist, not passthrough: sort input never reaches SQL unvalidated.
+const SORTABLE = {
+  plateNumber: fleetTrucks.plateNumber,
+  createdAt: fleetTrucks.createdAt,
+  mileage: fleetTrucks.mileage,
+  nextServiceDate: fleetTrucks.nextServiceDate,
+};
+
+const findAll = async ({ search, isActive, sort, order, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -35,13 +43,15 @@ const findAll = async ({ search, isActive, page = 1, limit = 50 } = {}) => {
   if (isActive !== undefined) conditions.push(eq(fleetTrucks.isActive, isActive));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  const sortColumn = SORTABLE[sort] || fleetTrucks.plateNumber;
+  const sortDir = order === "desc" ? desc : asc;
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
       .from(fleetTrucks)
       .where(whereClause)
-      .orderBy(asc(fleetTrucks.plateNumber))
+      .orderBy(sortDir(sortColumn), asc(fleetTrucks.id))
       .limit(limitNum)
       .offset(offset),
     db.select({ total: count() }).from(fleetTrucks).where(whereClause),

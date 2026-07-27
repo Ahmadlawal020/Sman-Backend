@@ -48,6 +48,8 @@ const fleetQuerySchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .optional(),
+  sort: z.enum(["plateNumber", "createdAt", "mileage", "nextServiceDate"]).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
 });
 
 const fleetLedgerEntrySchema = z.object({

@@ -1,6 +1,14 @@
-const { eq, and, or, ilike, desc, count, gte, lte } = require("drizzle-orm");
+const { eq, and, or, ilike, asc, desc, count, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { offlineSales, offlineSaleItems, products } = require("../db/schema");
+
+// Whitelist, not passthrough: sort input never reaches SQL unvalidated.
+const SORTABLE = {
+  createdAt: offlineSales.createdAt,
+  totalAmount: offlineSales.totalAmount,
+  saleNumber: offlineSales.saleNumber,
+  status: offlineSales.status,
+};
 
 const findById = async (id) => {
   const [row] = await db.select().from(offlineSales).where(eq(offlineSales.id, id)).limit(1);
@@ -26,7 +34,7 @@ const findByIdWithItems = async (id) => {
   return { ...sale, items };
 };
 
-const findAll = async ({ status, search, reconciled, dateFrom, dateTo, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, order, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -54,7 +62,10 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, page = 1,
       .select()
       .from(offlineSales)
       .where(whereClause)
-      .orderBy(desc(offlineSales.createdAt))
+      .orderBy(
+        (order === "asc" ? asc : desc)(SORTABLE[sort] || offlineSales.createdAt),
+        desc(offlineSales.id)
+      )
       .limit(limitNum)
       .offset(offset),
     db.select({ total: count() }).from(offlineSales).where(whereClause),

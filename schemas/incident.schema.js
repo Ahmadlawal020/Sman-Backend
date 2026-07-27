@@ -36,6 +36,8 @@ const incidentQuerySchema = z.object({
   search: z.string().max(100).optional(),
   dateFrom: z.string().date().optional(),
   dateTo: z.string().date().optional(),
+  sort: z.enum(["createdAt", "status", "incidentType", "amount"]).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
 });
 
 module.exports = {
