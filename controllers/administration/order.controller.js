@@ -63,6 +63,7 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const { order, payment } = await placeOrder({
     customerId, state, depotId, productId, quantity, deliveryType, trucks,
+    actor: { type: "staff", staffId: req.user.id },
   });
 
   res.status(201).json({
@@ -144,7 +145,7 @@ const releaseOrder = asyncHandler(async (req, res) => {
           truckNumber = truckNumber || fleet.plateNumber;
         }
 
-        await orderTruckRepo.create(
+        const load = await orderTruckRepo.create(
           {
             orderId,
             truckIndex: index++,
@@ -157,6 +158,18 @@ const releaseOrder = asyncHandler(async (req, res) => {
             loaderName: t.loaderName ?? null,
             loaderPhone: t.loaderPhone ?? null,
             status: "pending",
+          },
+          tx
+        );
+        await auditLogRepo.record(
+          {
+            entityType: "order_truck",
+            entityId: load.id,
+            action: "order_truck.allocated",
+            actor: { type: "staff", staffId: req.user.id },
+            metadata: { orderId, truckIndex: load.truckIndex, truckNumber, truckId: t.truckId ?? null, quantity: String(t.quantity), via: "release" },
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"],
           },
           tx
         );
@@ -310,6 +323,18 @@ const gateInTruck = asyncHandler(async (req, res) => {
       throw httpErr(400, "loadId is required for a delivery order");
     }
 
+    await auditLogRepo.record(
+      {
+        entityType: "order_truck",
+        entityId: gated.id,
+        action: "order_truck.gated_in",
+        actor,
+        metadata: { orderId, truckNumber: gated.truckNumber },
+        ...audit,
+      },
+      tx
+    );
+
     // First truck through the gate opens loading. Under the order lock, only the
     // first caller sees Released; a later truck sees Loading and skips this.
     if (order.status === "Released") {
@@ -378,6 +403,17 @@ const markTruckLoaded = asyncHandler(async (req, res) => {
         tx
       );
     }
+    await auditLogRepo.record(
+      {
+        entityType: "order_truck",
+        entityId: loadId,
+        action: "order_truck.loaded",
+        actor,
+        metadata: { orderId, truckNumber: updated.truckNumber },
+        ...audit,
+      },
+      tx
+    );
     const ticket = await generateTicketForTruck(order, updated, tx);
     return { truck: updated, ticket };
   });
@@ -405,6 +441,18 @@ const gateOutTruck = asyncHandler(async (req, res) => {
     const updated = await orderTruckRepo.update(
       loadId,
       { status: "gated_out", securityExitedAt: new Date(), securityExitedBy: req.user.id },
+      tx
+    );
+
+    await auditLogRepo.record(
+      {
+        entityType: "order_truck",
+        entityId: loadId,
+        action: "order_truck.gated_out",
+        actor,
+        metadata: { orderId, truckNumber: updated.truckNumber },
+        ...audit,
+      },
       tx
     );
 

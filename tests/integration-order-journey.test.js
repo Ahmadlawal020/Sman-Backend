@@ -234,6 +234,20 @@ describe("integration — customer register → order → release → gates → 
     const releasedEvent = timeline.find((e) => e.newState === "Released");
     assert.equal(releasedEvent.actorType, "staff");
     assert.equal(releasedEvent.actorStaffId, release.staff.id);
+
+    // The audit trail records every business event, not only state changes:
+    // creation is there before any transition, and each truck's physical
+    // movements are logged per load.
+    const orderEvents = (await auditLogRepo.findByEntity("order", orderId)).map((e) => e.action);
+    assert.ok(orderEvents.includes("order.created"), "order.created is recorded");
+    assert.equal(orderEvents[0], "order.created", "creation is the first event on the order");
+
+    for (const t of finalLoads) {
+      const truckActions = (await auditLogRepo.findByEntity("order_truck", t.id)).map((e) => e.action);
+      for (const a of ["order_truck.allocated", "order_truck.gated_in", "order_truck.loaded", "order_truck.gated_out"]) {
+        assert.ok(truckActions.includes(a), `${a} logged for load ${t.id}`);
+      }
+    }
   });
 
   test("the same journey, but the CUSTOMER places their own order", async () => {

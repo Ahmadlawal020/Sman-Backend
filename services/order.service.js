@@ -6,6 +6,7 @@ const {
   depotRepo,
   pfiRepo,
   orderTruckRepo,
+  auditLogRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
 const { createDedicatedAccount } = require("./payment.service");
@@ -46,9 +47,20 @@ function httpError(status, message) {
  * @param {Array<{truckNumber?: string, quantity: number, driverName?: string, driverPhone?: string}>} [input.trucks]
  *        Pickup only: the customer's declared trucks and the quantity on each.
  *        Their quantities must sum to the order quantity; each ≤ 60,000 L.
+ * @param {{type: "staff"|"customer"|"system", staffId?: number, customerId?: number}} [input.actor]
+ *        Who is placing the order — recorded on the order.created audit row.
  * @returns {{ order: object, payment: object, isPaidWithWallet: boolean }}
  */
-async function placeOrder({ customerId, state, depotId, productId, quantity, deliveryType, trucks }) {
+async function placeOrder({
+  customerId,
+  state,
+  depotId,
+  productId,
+  quantity,
+  deliveryType,
+  trucks,
+  actor = { type: "system" },
+}) {
   const customer = await customerRepo.findById(customerId);
   if (!customer) {
     throw httpError(404, "Customer not found");
@@ -188,6 +200,25 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
       tx
     );
 
+    // Every order gets a creation entry in the audit trail — not only its later
+    // state transitions. A Pending, never-funded order still has a record of who
+    // placed it, when, and for how much.
+    await auditLogRepo.record(
+      {
+        entityType: "order",
+        entityId: created.id,
+        action: "order.created",
+        actor,
+        metadata: {
+          orderNumber,
+          deliveryType,
+          quantity: Number(quantity),
+          totalAmount: String(totalAmount),
+        },
+      },
+      tx
+    );
+
     // Commit the wallet funds as a HOLD, inside this same transaction (the tx is
     // threaded through placeHold). The hold reserves the money without spending
     // it: convertHold books the debit ledger row when the order completes;
@@ -214,7 +245,7 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
     // trucks here (allocated at release).
     for (let i = 0; i < declaredTrucks.length; i += 1) {
       const t = declaredTrucks[i];
-      await orderTruckRepo.create(
+      const load = await orderTruckRepo.create(
         {
           orderId: created.id,
           truckIndex: i + 1,
@@ -226,6 +257,16 @@ async function placeOrder({ customerId, state, depotId, productId, quantity, del
           driverName: t.driverName || null,
           driverPhone: t.driverPhone || null,
           status: "pending",
+        },
+        tx
+      );
+      await auditLogRepo.record(
+        {
+          entityType: "order_truck",
+          entityId: load.id,
+          action: "order_truck.allocated",
+          actor,
+          metadata: { orderId: created.id, truckIndex: i + 1, truckNumber: load.truckNumber, quantity: String(t.quantity), via: "pickup-declaration" },
         },
         tx
       );

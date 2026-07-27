@@ -23,6 +23,7 @@ const createMyOrder = asyncHandler(async (req, res) => {
     quantity,
     deliveryType,
     trucks,
+    actor: { type: "customer", customerId: req.customer.id },
   });
 
   res.status(201).json({
