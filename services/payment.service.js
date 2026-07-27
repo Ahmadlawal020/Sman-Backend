@@ -4,7 +4,6 @@ const { getCustomerInitials } = require("../utils/helpers");
 
 const {
   customerRepo,
-  deliveryCustomerRepo,
   deliverySaleRepo,
   depositRepo,
   orderRepo,
@@ -121,6 +120,9 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
 
   // Idempotency check
   const existingDeposit = await depositRepo.findByReference(reference);
+  // Delivery sales are no longer auto-settled from DVA payments, but rows
+  // recorded before that path was removed still carry Paystack references —
+  // this keeps a replayed old webhook from crediting a wallet instead.
   const existingDeliverySale = await deliverySaleRepo.findByPaystackReference(reference);
   if (existingDeposit || existingDeliverySale) {
     return {
@@ -206,21 +208,21 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
     rawEvent: rawEventName,
   };
 
+  // Wallet customers only. The delivery sales ledger is keyed in manually —
+  // payments arriving on a delivery customer's account are deliberately NOT
+  // auto-recorded; they stay in webhook_events as unmatched for staff to
+  // enter by hand, exactly like the paper process.
   let customer = null;
-  let deliveryCustomer = null;
 
   if (accountNumber) {
     customer = await customerRepo.findByVirtualAccount(accountNumber);
-    if (!customer) {
-      deliveryCustomer = await deliveryCustomerRepo.findByVirtualAccount(accountNumber);
-    }
   }
 
-  if (!customer && !deliveryCustomer && customerCode) {
+  if (!customer && customerCode) {
     customer = await customerRepo.findByPaystackCustomerId(customerCode);
   }
 
-  if (!customer && !deliveryCustomer && customerEmail) {
+  if (!customer && customerEmail) {
     customer = await customerRepo.findByEmail(customerEmail);
   }
 
@@ -256,65 +258,10 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
       reference: reference,
       autoPaidOrdersCount: autoPaidOrders.length,
     };
-  } else if (deliveryCustomer) {
-    let deliverySale = null;
-    const pendingSale = await deliverySaleRepo.findPendingByCustomer(deliveryCustomer.id);
-
-    if (pendingSale) {
-      const previousPayment = Number(pendingSale.paymentAmount || 0);
-      const newPaymentAmount = previousPayment + amount;
-      const newBalance = Number(pendingSale.salesValue || 0) - newPaymentAmount;
-
-      deliverySale = await deliverySaleRepo.update(pendingSale.id, {
-        paymentAmount: String(newPaymentAmount),
-        balance: String(newBalance),
-        payerName: paystackDetails.senderName || pendingSale.payerName,
-        bank: `Paystack DVA (${paystackDetails.receiverBankName || "Paystack"})`,
-        dateOfPayment: paystackDetails.paidAt
-          ? new Date(paystackDetails.paidAt).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0],
-        depositStatus: newBalance <= 0 ? "paid" : "partial",
-        paymentMethod: "paystack_dva",
-        paystackReference: reference,
-        paystackDetails: paystackDetails,
-      });
-    } else {
-      deliverySale = await deliverySaleRepo.create({
-        customerId: deliveryCustomer.id,
-        customerName: deliveryCustomer.name,
-        paymentAmount: String(amount),
-        salesValue: "0",
-        balance: "0",
-        payerName: paystackDetails.senderName || "",
-        bank: `Paystack DVA (${paystackDetails.receiverBankName || "Paystack"})`,
-        dateOfPayment: paystackDetails.paidAt
-          ? new Date(paystackDetails.paidAt).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0],
-        depositStatus: "paid",
-        paymentMethod: "paystack_dva",
-        paystackReference: reference,
-        paystackDetails: paystackDetails,
-        enteredBy: "Paystack Webhook",
-        remarks: `Auto-recorded from DVA payment. Sender: ${paystackDetails.senderName || "Unknown"}`,
-      });
-    }
-
-    await deliveryCustomerRepo.update(deliveryCustomer.id, {
-      lastTransactionDate: new Date(),
-    });
-
-    return {
-      success: true,
-      customerType: "deliveryCustomer",
-      deliveryCustomer: deliveryCustomer,
-      deliverySale: deliverySale,
-      amount: amount,
-      reference: reference,
-    };
   } else {
     return {
       success: false,
-      message: `No customer or delivery customer found matching virtual account '${accountNumber}', customer code '${customerCode}', or email '${customerEmail}'.`,
+      message: `No wallet customer found matching virtual account '${accountNumber}', customer code '${customerCode}', or email '${customerEmail}'. If this is a delivery customer payment, enter it in the delivery sales ledger manually.`,
     };
   }
 };
