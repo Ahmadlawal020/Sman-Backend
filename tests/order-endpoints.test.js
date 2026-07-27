@@ -1,0 +1,236 @@
+// Must precede any require that reaches config/db.
+require("dotenv").config();
+
+const { test, describe, before, after } = require("node:test");
+const assert = require("node:assert/strict");
+const request = require("supertest");
+
+const app = require("../app");
+const { db } = require("../config/db");
+const { orders, depots, products } = require("../db/schema");
+const { orderRepo, customerRepo, auditLogRepo } = require("../repositories");
+const { staffTokenWithRoles, closeDb } = require("./helpers");
+
+// depot/product are notNull FKs on orders — reuse an existing row or make one.
+async function depotFixture() {
+  const [existing] = await db.select().from(depots).limit(1);
+  if (existing) return existing.id;
+  const [row] = await db
+    .insert(depots)
+    .values({
+      name: "Endpoint Depot",
+      code: "ENDP",
+      address: "1 Test Rd",
+      city: "Lagos",
+      state: "Lagos",
+      country: "NG",
+      postcode: "100001",
+      maxCapacity: 1000000,
+      establishedYear: "2020",
+    })
+    .returning();
+  return row.id;
+}
+
+async function productFixture() {
+  const [existing] = await db.select().from(products).limit(1);
+  if (existing) return existing.id;
+  const [row] = await db
+    .insert(products)
+    .values({ name: "Endpoint Product", sku: "ENDP-PRD", category: "PMS" })
+    .returning();
+  return row.id;
+}
+
+let seq = 0;
+const RUN = Date.now();
+async function makeOrder(customerId, depotId, productId, { status, paymentStatus } = {}) {
+  const [row] = await db
+    .insert(orders)
+    .values({
+      orderNumber: `ORD-ENDP-${RUN}-${seq++}`,
+      customerId,
+      state: "Lagos",
+      depotId,
+      productId,
+      quantity: 1000,
+      price: "100.00",
+      totalAmount: "100000.00",
+      deliveryType: "pickup",
+      status: status || "Pending",
+      paymentStatus: paymentStatus || "Unpaid",
+    })
+    .returning();
+  return row;
+}
+
+describe("order lifecycle endpoints — role gates + state machine", () => {
+  let depotId;
+  let productId;
+  let customerId;
+  let releaseStaff; // role: release
+  let financeStaff; // role: finance
+  let adminStaff; // role: admin — holds neither gate
+  let superStaff; // role: super_admin — passes both gates
+
+  before(async () => {
+    depotId = await depotFixture();
+    productId = await productFixture();
+    const customer = await customerRepo.create({
+      name: "Endpoint Customer",
+      phone: `+23481${String(RUN).slice(-8)}`,
+      status: "Active",
+    });
+    customerId = customer.id;
+
+    releaseStaff = await staffTokenWithRoles(["release"], "test-ep-release@soroman.test");
+    financeStaff = await staffTokenWithRoles(["finance"], "test-ep-finance@soroman.test");
+    adminStaff = await staffTokenWithRoles(["admin"], "test-ep-admin@soroman.test");
+    superStaff = await staffTokenWithRoles(["super_admin"], "test-ep-super@soroman.test");
+  });
+
+  after(async () => {
+    await closeDb();
+  });
+
+  // ── release ────────────────────────────────────────────────────────────────
+
+  test("the release desk moves a Paid order to Released, stamping who + when", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Paid",
+      paymentStatus: "Paid",
+    });
+
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/release`)
+      .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
+      .send({});
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.order.status, "Released");
+
+    const after = await orderRepo.findById(order.id);
+    assert.equal(after.status, "Released");
+    assert.ok(after.releasedAt, "releasedAt stamped");
+    assert.equal(after.releasedBy, releaseStaff.staff.id);
+
+    const events = await auditLogRepo.findByEntity("order", order.id);
+    const released = events.find((e) => e.newState === "Released");
+    assert.ok(released, "audit row written");
+    assert.equal(released.actorStaffId, releaseStaff.staff.id);
+  });
+
+  test("super_admin may also release", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Paid",
+      paymentStatus: "Paid",
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/release`)
+      .set("Authorization", `Bearer ${superStaff.accessToken}`)
+      .send({});
+    assert.equal(res.status, 200);
+  });
+
+  test("a role without the release gate is refused 403", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Paid",
+      paymentStatus: "Paid",
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/release`)
+      .set("Authorization", `Bearer ${adminStaff.accessToken}`)
+      .send({});
+    assert.equal(res.status, 403);
+
+    const after = await orderRepo.findById(order.id);
+    assert.equal(after.status, "Paid", "status unchanged by a refused caller");
+  });
+
+  test("releasing an order that is not Paid is refused by the state machine (409)", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Pending",
+      paymentStatus: "Unpaid",
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/release`)
+      .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
+      .send({});
+    assert.equal(res.status, 409);
+  });
+
+  // ── cancel ───────────────────────────────────────────────────────────────
+
+  test("finance cancels a Paid order and the customer is refunded", async () => {
+    const before = await customerRepo.findById(customerId);
+    const startBalance = Number(before.balance || 0);
+
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Paid",
+      paymentStatus: "Paid",
+    });
+
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/cancel`)
+      .set("Authorization", `Bearer ${financeStaff.accessToken}`)
+      .send({ reason: "customer changed their mind" });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.order.status, "Cancelled");
+
+    const after = await orderRepo.findById(order.id);
+    assert.equal(after.status, "Cancelled");
+    assert.equal(after.cancelledBy, financeStaff.staff.id);
+    assert.equal(after.cancellationReason, "customer changed their mind");
+
+    const customerAfter = await customerRepo.findById(customerId);
+    assert.equal(
+      Number(customerAfter.balance),
+      startBalance + Number(order.totalAmount),
+      "the paid amount was credited back"
+    );
+  });
+
+  test("a role without the finance gate cannot cancel (403)", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Paid",
+      paymentStatus: "Paid",
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/cancel`)
+      .set("Authorization", `Bearer ${adminStaff.accessToken}`)
+      .send({});
+    assert.equal(res.status, 403);
+
+    const after = await orderRepo.findById(order.id);
+    assert.equal(after.status, "Paid", "status unchanged by a refused caller");
+  });
+
+  test("cancelling an already-cancelled order is refused 409, so no double refund", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Cancelled",
+      paymentStatus: "Paid",
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order.id}/cancel`)
+      .set("Authorization", `Bearer ${financeStaff.accessToken}`)
+      .send({});
+    assert.equal(res.status, 409);
+  });
+
+  // ── H1: the raw status setter is gone ──────────────────────────────────────
+
+  test("the removed raw PUT status setter is not routable", async () => {
+    const order = await makeOrder(customerId, depotId, productId, {
+      status: "Pending",
+    });
+    const res = await request(app)
+      .put(`/api/orders/${order.id}`)
+      .set("Authorization", `Bearer ${superStaff.accessToken}`)
+      .send({ status: "Completed" });
+    assert.equal(res.status, 404, "PUT /orders/:id no longer exists");
+
+    const after = await orderRepo.findById(order.id);
+    assert.equal(after.status, "Pending", "status could not be force-set");
+  });
+});

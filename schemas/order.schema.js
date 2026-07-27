@@ -18,7 +18,15 @@ const createOrder = z.object({
 
 const listOrders = pagination.extend({
   search: searchTerm,
-  status: enumOf("Status", ["Pending", "Completed", "Cancelled"]).optional(),
+  // The full lifecycle pipeline — see services/orderStatus.service.js.
+  status: enumOf("Status", [
+    "Pending",
+    "Paid",
+    "Released",
+    "Loading",
+    "Completed",
+    "Cancelled",
+  ]).optional(),
   customer: id("Customer").optional(),
   dateFrom: z.string().trim().max(40, "Start date is too long").optional(),
   dateTo: z.string().trim().max(40, "End date is too long").optional(),
@@ -26,4 +34,10 @@ const listOrders = pagination.extend({
 
 const idParam = z.object({ id: id("Order id") });
 
-module.exports = { createOrder, listOrders, idParam };
+// Cancel captures an optional human reason; it lands in cancellationReason and
+// the audit row's metadata.
+const cancelOrder = z.object({
+  reason: z.string().trim().max(500, "Reason is too long").optional(),
+});
+
+module.exports = { createOrder, listOrders, idParam, cancelOrder };

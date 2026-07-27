@@ -8,6 +8,7 @@ const { sendOrderSummarySMS } = require("../../services/sms.service");
 const { findPfiForOrder } = require("../../services/pfi.service");
 const { generateTicketForOrder } = require("../../services/ticket.service");
 const { getCustomerInitials } = require("../../utils/helpers");
+const orderStatus = require("../../services/orderStatus.service");
 
 const getOrders = asyncHandler(async (req, res) => {
   const { page = 1, limit = 50, search, status, customer, dateFrom, dateTo } = req.query;
@@ -273,61 +274,54 @@ const createOrder = asyncHandler(async (req, res) => {
   });
 });
 
-const updateOrder = asyncHandler(async (req, res) => {
-  const { status, paymentStatus } = req.body;
-  const order = await orderRepo.findById(req.params.id);
-
-  if (!order) {
-    return res.status(404).json({ success: false, message: "Order not found" });
-  }
-
-  const updateData = {};
-  if (status !== undefined) updateData.status = status;
-  if (paymentStatus !== undefined) updateData.paymentStatus = paymentStatus;
-
-  await orderRepo.update(order.id, updateData);
-
-  if (order.status === "Completed" || order.paymentStatus === "Paid" || status === "Completed" || paymentStatus === "Paid") {
-    try {
-      await generateTicketForOrder(order.id);
-    } catch (ticketErr) {
-      console.error("Failed to generate ticket on manual order update:", ticketErr.message);
-    }
-  }
-
-  const updatedOrder = await orderRepo.findByIdFull(order.id);
-
-  res.json({
-    success: true,
-    message: "Order updated successfully",
-    data: { order: updatedOrder },
+// --- Release: Paid → Released ------------------------------------------------
+//
+// The raw `PUT /orders/:id` status setter (updateOrder) and the manual
+// `POST /:id/complete` setter are GONE (AUDIT H1). They let any caller stamp
+// any status, skipping the pipeline and leaving no audit row. Every status
+// change now flows through orderStatus.transition — the single writer that
+// locks the row, enforces the legal move and writes the audit trail atomically.
+//
+// Release is a staff action ("release" role): it clears a paid order for
+// loading. Fleet-truck capture at release is layered on in the next commit;
+// here it is the pure status transition.
+const releaseOrder = asyncHandler(async (req, res) => {
+  const order = await orderStatus.transition(Number(req.params.id), "Released", {
+    actor: { type: "staff", staffId: req.user.id },
+    set: { releasedAt: new Date(), releasedBy: req.user.id },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
   });
+
+  const fullOrder = await orderRepo.findByIdFull(order.id);
+  res.json({ success: true, message: "Order released for loading", data: { order: fullOrder } });
 });
 
+// --- Cancel: any live status through Released → Cancelled --------------------
+//
+// The status change now goes through the state machine FIRST (inside the same
+// transaction): it locks the row, rejects an illegal move (Loading/Completed →
+// 409) or a concurrent double-cancel (the loser gets 409 before any refund),
+// and writes the audit row. Only then do stock release, capacity restore and
+// the refund + its ledger row run — all one unit, so a failure anywhere rolls
+// the whole cancel back (AUDIT H2/H6), and no order is ever refunded twice.
 const cancelOrder = asyncHandler(async (req, res) => {
-  const order = await orderRepo.findById(req.params.id);
-  if (!order) {
-    return res.status(404).json({ success: false, message: "Order not found" });
-  }
-  if (order.status === "Cancelled") {
-    return res.status(400).json({ success: false, message: "Order is already cancelled" });
-  }
-  if (order.status === "Completed") {
-    return res.status(400).json({ success: false, message: "Cannot cancel a completed order" });
-  }
+  const { reason } = req.body;
 
-  // --- Atomic cancel (AUDIT H2/H6) ------------------------------------------
-  //
-  // Stock release, capacity restore, the refund, its ledger row and the status
-  // change are one unit. Before this, status was set LAST and the refund
-  // ledger was a swallowed try/catch — a failure mid-way refunded stock and
-  // money while leaving the order un-cancelled, so it could be cancelled (and
-  // refunded) again. Now it all rolls back together.
-  //
-  // NOTE: the guarded, single-winner transition (two concurrent cancels of the
-  // same order) is added with the state machine in a later commit; this commit
-  // is the atomicity + ledger fix.
   await db.transaction(async (tx) => {
+    const order = await orderStatus.transition(Number(req.params.id), "Cancelled", {
+      tx,
+      actor: { type: "staff", staffId: req.user.id },
+      set: {
+        cancelledAt: new Date(),
+        cancelledBy: req.user.id,
+        cancellationReason: reason ?? null,
+      },
+      metadata: { reason: reason ?? null, refunded: false },
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
     if (order.pfiId) {
       await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
     }
@@ -339,7 +333,6 @@ const cancelOrder = asyncHandler(async (req, res) => {
         Number(order.totalAmount),
         tx
       );
-      // Inside the transaction now — a failed ledger write rolls the refund back.
       await depositRepo.create(
         {
           customerId: order.customerId,
@@ -351,48 +344,16 @@ const cancelOrder = asyncHandler(async (req, res) => {
         tx
       );
     }
-
-    await orderRepo.update(order.id, { status: "Cancelled" }, tx);
   });
 
-  const updatedOrder = await orderRepo.findByIdFull(order.id);
-
+  const updatedOrder = await orderRepo.findByIdFull(Number(req.params.id));
   res.json({ success: true, message: "Order cancelled successfully", data: { order: updatedOrder } });
-});
-
-const completeOrder = asyncHandler(async (req, res) => {
-  const order = await orderRepo.findById(req.params.id);
-  if (!order) {
-    return res.status(404).json({ success: false, message: "Order not found" });
-  }
-  if (order.status === "Cancelled") {
-    return res.status(400).json({ success: false, message: "Cannot complete a cancelled order" });
-  }
-  if (order.paymentStatus !== "Paid") {
-    return res.status(400).json({ success: false, message: "Cannot complete an unpaid order" });
-  }
-  if (order.status === "Completed") {
-    return res.status(400).json({ success: false, message: "Order is already completed" });
-  }
-
-  await orderRepo.update(order.id, { status: "Completed" });
-
-  try {
-    await generateTicketForOrder(order.id);
-  } catch (ticketErr) {
-    console.error("Failed to generate ticket on completion:", ticketErr.message);
-  }
-
-  const updatedOrder = await orderRepo.findByIdFull(order.id);
-
-  res.json({ success: true, message: "Order completed successfully", data: { order: updatedOrder } });
 });
 
 module.exports = {
   getOrders,
   getOrderById,
   createOrder,
-  updateOrder,
+  releaseOrder,
   cancelOrder,
-  completeOrder,
 };
