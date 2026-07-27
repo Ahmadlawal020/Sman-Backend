@@ -18,4 +18,10 @@ module.exports = {
   customerOtpRepo: require("./customerOtp.repository"),
   auditLogRepo: require("./auditLog.repository"),
   orderTruckRepo: require("./orderTruck.repository"),
+  customerIdentityRepo: require("./customerIdentity.repository"),
+  auditEventRepo: require("./auditEvent.repository"),
+  fleetTruckRepo: require("./fleetTruck.repository"),
+  dailyReportRepo: require("./dailyReport.repository"),
+  incidentRecordRepo: require("./incidentRecord.repository"),
+  offlineSaleRepo: require("./offlineSale.repository"),
 };

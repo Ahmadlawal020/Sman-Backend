@@ -1,4 +1,3 @@
-CREATE TYPE "public"."audit_actor_type" AS ENUM('staff', 'customer', 'system');--> statement-breakpoint
 CREATE TYPE "public"."order_truck_status" AS ENUM('pending', 'gated_in', 'loaded', 'gated_out');--> statement-breakpoint
 ALTER TYPE "public"."order_status" ADD VALUE 'Paid' BEFORE 'Completed';--> statement-breakpoint
 ALTER TYPE "public"."order_status" ADD VALUE 'Released' BEFORE 'Completed';--> statement-breakpoint

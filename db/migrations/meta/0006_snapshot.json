@@ -1,6 +1,6 @@
 {
-  "id": "f8241f81-86e8-4885-9971-8c8ae1b0dbcf",
-  "prevId": "5c8d13eb-9cc4-4636-9b48-391fe6665330",
+  "id": "1e809513-88b4-49ae-bf31-5250ec809625",
+  "prevId": "f8241f81-86e8-4885-9971-8c8ae1b0dbcf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -127,6 +127,181 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.audit_logs": {
+      "name": "audit_logs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prev_state": {
+          "name": "prev_state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_state": {
+          "name": "new_state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "audit_actor_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_staff_id": {
+          "name": "actor_staff_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_customer_id": {
+          "name": "actor_customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_logs_entity_idx": {
+          "name": "audit_logs_entity_idx",
+          "columns": [
+            {
+              "expression": "entity_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_logs_actor_staff_idx": {
+          "name": "audit_logs_actor_staff_idx",
+          "columns": [
+            {
+              "expression": "actor_staff_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"audit_logs\".\"actor_staff_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_logs_actor_staff_id_staff_id_fk": {
+          "name": "audit_logs_actor_staff_id_staff_id_fk",
+          "tableFrom": "audit_logs",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "actor_staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "audit_logs_actor_customer_id_customers_id_fk": {
+          "name": "audit_logs_actor_customer_id_customers_id_fk",
+          "tableFrom": "audit_logs",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "actor_customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "audit_logs_actor_arc_check": {
+          "name": "audit_logs_actor_arc_check",
+          "value": "(\"audit_logs\".\"actor_type\" = 'staff'    AND \"audit_logs\".\"actor_staff_id\"    IS NOT NULL AND \"audit_logs\".\"actor_customer_id\" IS NULL)\n       OR (\"audit_logs\".\"actor_type\" = 'customer' AND \"audit_logs\".\"actor_customer_id\" IS NOT NULL AND \"audit_logs\".\"actor_staff_id\"    IS NULL)\n       OR (\"audit_logs\".\"actor_type\" = 'system'   AND \"audit_logs\".\"actor_staff_id\"    IS NULL     AND \"audit_logs\".\"actor_customer_id\" IS NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.customers": {
@@ -4943,6 +5118,54 @@
           "notNull": true,
           "default": "'Pending'"
         },
+        "payment_confirmed_at": {
+          "name": "payment_confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "released_by": {
+          "name": "released_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loading_started_at": {
+          "name": "loading_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_by": {
+          "name": "cancelled_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancellation_reason": {
+          "name": "cancellation_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -5090,6 +5313,32 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "orders_released_by_staff_id_fk": {
+          "name": "orders_released_by_staff_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "released_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "orders_cancelled_by_staff_id_fk": {
+          "name": "orders_cancelled_by_staff_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "cancelled_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5132,6 +5381,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "order_truck_id": {
+          "name": "order_truck_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",
@@ -5205,6 +5460,22 @@
           "method": "btree",
           "with": {}
         },
+        "tickets_order_truck_idx": {
+          "name": "tickets_order_truck_idx",
+          "columns": [
+            {
+              "expression": "order_truck_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"tickets\".\"order_truck_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "tickets_status_idx": {
           "name": "tickets_status_idx",
           "columns": [
@@ -5233,6 +5504,19 @@
             "id"
           ],
           "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "tickets_order_truck_id_order_trucks_id_fk": {
+          "name": "tickets_order_truck_id_order_trucks_id_fk",
+          "tableFrom": "tickets",
+          "tableTo": "order_trucks",
+          "columnsFrom": [
+            "order_truck_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "tickets_redeemed_by_staff_id_fk": {
@@ -5725,6 +6009,267 @@
       },
       "isRLSEnabled": false
     },
+    "public.order_trucks": {
+      "name": "order_trucks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "truck_index": {
+          "name": "truck_index",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "truck_id": {
+          "name": "truck_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "truck_number": {
+          "name": "truck_number",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(15, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "compartments": {
+          "name": "compartments",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "driver_name": {
+          "name": "driver_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "driver_phone": {
+          "name": "driver_phone",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loader_name": {
+          "name": "loader_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loader_phone": {
+          "name": "loader_phone",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "order_truck_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "security_entered_at": {
+          "name": "security_entered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "security_entered_by": {
+          "name": "security_entered_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loaded_at": {
+          "name": "loaded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loaded_by": {
+          "name": "loaded_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "security_exited_at": {
+          "name": "security_exited_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "security_exited_by": {
+          "name": "security_exited_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "order_trucks_order_idx": {
+          "name": "order_trucks_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "truck_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_trucks_truck_idx": {
+          "name": "order_trucks_truck_idx",
+          "columns": [
+            {
+              "expression": "truck_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"order_trucks\".\"truck_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_trucks_status_idx": {
+          "name": "order_trucks_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "order_trucks_order_id_orders_id_fk": {
+          "name": "order_trucks_order_id_orders_id_fk",
+          "tableFrom": "order_trucks",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "order_trucks_truck_id_trucks_id_fk": {
+          "name": "order_trucks_truck_id_trucks_id_fk",
+          "tableFrom": "order_trucks",
+          "tableTo": "trucks",
+          "columnsFrom": [
+            "truck_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "order_trucks_security_entered_by_staff_id_fk": {
+          "name": "order_trucks_security_entered_by_staff_id_fk",
+          "tableFrom": "order_trucks",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "security_entered_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "order_trucks_loaded_by_staff_id_fk": {
+          "name": "order_trucks_loaded_by_staff_id_fk",
+          "tableFrom": "order_trucks",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "loaded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "order_trucks_security_exited_by_staff_id_fk": {
+          "name": "order_trucks_security_exited_by_staff_id_fk",
+          "tableFrom": "order_trucks",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "security_exited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "order_trucks_quantity_check": {
+          "name": "order_trucks_quantity_check",
+          "value": "\"order_trucks\".\"quantity\" > 0 AND \"order_trucks\".\"quantity\" <= 60000"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.offline_sales": {
       "name": "offline_sales",
       "schema": "",
@@ -6111,6 +6656,25 @@
         "customer"
       ]
     },
+    "public.audit_actor_type": {
+      "name": "audit_actor_type",
+      "schema": "public",
+      "values": [
+        "staff",
+        "customer",
+        "system"
+      ]
+    },
+    "public.order_truck_status": {
+      "name": "order_truck_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "gated_in",
+        "loaded",
+        "gated_out"
+      ]
+    },
     "public.driver_status": {
       "name": "driver_status",
       "schema": "public",
@@ -6159,6 +6723,9 @@
       "schema": "public",
       "values": [
         "Pending",
+        "Paid",
+        "Released",
+        "Loading",
         "Completed",
         "Cancelled"
       ]
@@ -6263,15 +6830,6 @@
         "pending",
         "processed",
         "failed"
-      ]
-    },
-    "public.audit_actor_type": {
-      "name": "audit_actor_type",
-      "schema": "public",
-      "values": [
-        "staff",
-        "customer",
-        "system"
       ]
     },
     "public.fleet_entry_type": {

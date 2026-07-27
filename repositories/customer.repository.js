@@ -118,6 +118,16 @@ const update = async (id, data, tx = db) => {
   return row || null;
 };
 
+// These two are the only functions in this repository that touch
+// customers.balance. Nothing else in the codebase should call them directly
+// for a business transaction — services/wallet.service.js is the intended
+// caller, because every business debit/credit must also write a ledger
+// (deposits) row, and it pairs both writes in one db.transaction() by passing
+// its own `tx` through. Calling these bare, without a paired ledger entry, is
+// how balances and the ledger drift apart — that is the whole reason a
+// dedicated wallet service exists instead of ad hoc balance writes at call
+// sites across the codebase.
+
 /**
  * Add to a customer's balance. Credits only — the amount must be positive.
  *
@@ -193,20 +203,6 @@ const findWithPositiveBalance = async () => {
     .orderBy(customers.id);
 };
 
-const updateDeposit = async (id, amount, previousDeposit) => {
-  const [row] = await db
-    .update(customers)
-    .set({
-      balance: sql`${customers.balance} + ${amount}`,
-      deposit: sql`${customers.deposit} + ${amount}`,
-      previousDeposit: previousDeposit,
-      updatedAt: new Date(),
-    })
-    .where(eq(customers.id, id))
-    .returning();
-  return row || null;
-};
-
 const deleteById = async (id) => {
   const [row] = await db.delete(customers).where(eq(customers.id, id)).returning();
   return row || null;
@@ -250,7 +246,6 @@ module.exports = {
   creditBalance,
   debitBalance,
   findWithPositiveBalance,
-  updateDeposit,
   deleteById,
   existsByPhone,
   existsByEmail,

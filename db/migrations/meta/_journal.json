@@ -40,8 +40,15 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1785157107008,
-      "tag": "0005_order_lifecycle",
+      "when": 1785167686301,
+      "tag": "0005_erp_wallet_and_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785180552236,
+      "tag": "0006_order_lifecycle",
       "breakpoints": true
     }
   ]

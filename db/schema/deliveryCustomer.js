@@ -39,6 +39,11 @@ const deliveryCustomers = pgTable(
     pumpCount: integer("pump_count").default(1),
     // Bank details (JSONB)
     bankDetails: jsonb("bank_details").default(sql`'{}'::jsonb`),
+    // Structured plural forms: a customer can have several of each.
+    // contacts:  [{ name, role, phone, email }]
+    // addresses: [{ label, address, city, state }]
+    contacts: jsonb("contacts").default(sql`'[]'::jsonb`),
+    addresses: jsonb("addresses").default(sql`'[]'::jsonb`),
     // Paystack DVA
     paystackCustomerId: varchar("paystack_customer_id", { length: 100 }).default(""),
     virtualAccountNumber: varchar("virtual_account_number", { length: 30 }).default(""),

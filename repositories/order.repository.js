@@ -187,13 +187,16 @@ const update = async (id, data, tx = db) => {
 };
 
 const findUnpaidByCustomer = async (customerId) => {
+  // Pending only: a cancelled order must never be auto-paid, and a completed
+  // one can't legally be unpaid.
   return db
     .select()
     .from(orders)
     .where(
       and(
         eq(orders.customerId, customerId),
-        eq(orders.paymentStatus, "Unpaid")
+        eq(orders.paymentStatus, "Unpaid"),
+        eq(orders.status, "Pending")
       )
     )
     .orderBy(asc(orders.createdAt));

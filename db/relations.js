@@ -15,6 +15,9 @@ const {
   orders,
   tickets,
   deposits,
+  walletHolds,
+  fleetTrucks,
+  fleetLedgerEntries,
   deliveryCustomers,
   deliveryNotes,
   deliveryInventory,
@@ -235,6 +238,40 @@ const depositsRelations = relations(deposits, ({ one }) => ({
   }),
 }));
 
+// ─── Wallet Hold Relations ───────────────────────────────────────────────────
+
+const walletHoldsRelations = relations(walletHolds, ({ one }) => ({
+  customer: one(customers, {
+    fields: [walletHolds.customerId],
+    references: [customers.id],
+  }),
+  order: one(orders, {
+    fields: [walletHolds.orderId],
+    references: [orders.id],
+  }),
+  deposit: one(deposits, {
+    fields: [walletHolds.depositId],
+    references: [deposits.id],
+  }),
+}));
+
+// ─── Fleet Relations ─────────────────────────────────────────────────────────
+
+const fleetTrucksRelations = relations(fleetTrucks, ({ many }) => ({
+  ledgerEntries: many(fleetLedgerEntries),
+}));
+
+const fleetLedgerEntriesRelations = relations(fleetLedgerEntries, ({ one }) => ({
+  truck: one(fleetTrucks, {
+    fields: [fleetLedgerEntries.truckId],
+    references: [fleetTrucks.id],
+  }),
+  recorder: one(staff, {
+    fields: [fleetLedgerEntries.recordedBy],
+    references: [staff.id],
+  }),
+}));
+
 // ─── Delivery Customer Relations ─────────────────────────────────────────────
 
 const deliveryCustomersRelations = relations(deliveryCustomers, ({ one, many }) => ({
@@ -310,6 +347,9 @@ module.exports = {
   ordersRelations,
   ticketsRelations,
   depositsRelations,
+  walletHoldsRelations,
+  fleetTrucksRelations,
+  fleetLedgerEntriesRelations,
   deliveryCustomersRelations,
   deliveryNotesRelations,
   deliveryInventoryRelations,

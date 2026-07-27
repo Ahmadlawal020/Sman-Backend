@@ -6,6 +6,7 @@ const sessionService = require("../../services/session.service");
 const cookieService = require("../../services/cookie.service");
 const { toE164, checkSmsEligibility } = require("../../utils/phone");
 const { constantTimeFloor } = require("../../utils/timing");
+const { publicCustomer } = require("../../utils/publicCustomer");
 
 const REALM = "customer";
 
@@ -25,16 +26,6 @@ const GENERIC_OTP_RESPONSE = {
  * discloses whether a number is known.
  */
 const TIMING_FLOOR_MS = 700;
-
-const publicCustomer = (customer) => ({
-  id: customer.id,
-  name: customer.name,
-  phone: customer.phone,
-  email: customer.email || null,
-  companyName: customer.companyName || null,
-  status: customer.status,
-  phoneVerifiedAt: customer.phoneVerifiedAt,
-});
 
 /**
  * POST /register — { phone, name, companyName?, turnstileToken? }
