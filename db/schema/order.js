@@ -4,6 +4,7 @@ const {
   varchar,
   integer,
   decimal,
+  text,
   timestamp,
   index,
   uniqueIndex,
@@ -18,6 +19,7 @@ const {
 const { customers } = require("./customer");
 const { depots } = require("./depot");
 const { products } = require("./product");
+const { staff } = require("./staff");
 const { pfis } = require("./pfi");
 
 const orders = pgTable(
@@ -45,6 +47,23 @@ const orders = pgTable(
     virtualAccountName: varchar("virtual_account_name", { length: 255 }).default(""),
     paymentStatus: orderPaymentStatusEnum("payment_status").default("Unpaid").notNull(),
     status: orderStatusEnum("status").default("Pending").notNull(),
+
+    // Accountability per stage. These columns — not audit_logs — are the source
+    // for customer tracking; the audit log is the system-wide trail. A stage
+    // reached at most once, so one timestamp per stage is lossless.
+    // payment_confirmed_by is normally null: the webhook (actor_type=system)
+    // confirms payment, not a person.
+    paymentConfirmedAt: timestamp("payment_confirmed_at", { withTimezone: true }),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releasedBy: integer("released_by").references(() => staff.id, { onDelete: "set null" }),
+    // Stamped when the FIRST truck gates in — the order enters Loading.
+    loadingStartedAt: timestamp("loading_started_at", { withTimezone: true }),
+    // Stamped when the LAST truck exits — the fuel has physically left.
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledBy: integer("cancelled_by").references(() => staff.id, { onDelete: "set null" }),
+    cancellationReason: text("cancellation_reason"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

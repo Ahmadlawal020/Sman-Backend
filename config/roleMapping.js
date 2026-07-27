@@ -4,7 +4,9 @@ const ROLE_MAP = {
   2: "finance",
   3: "truck_sales",
   4: "ticketing",
-  5: "security",
+  // The gate has two posts: one confirms a truck ENTERED the facility to load,
+  // one confirms it EXITED with its load. Replaces the single "security" role.
+  5: "security_entry",
   6: "transport",
   7: "release",
   8: "audit",
@@ -18,6 +20,7 @@ const ROLE_MAP = {
   16: "commission_officer",
   17: "dispatch",
   18: "it_compliance",
+  19: "security_exit",
 };
 
 const mapRolesToBackend = (numericRoles) => {

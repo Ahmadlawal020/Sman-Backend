@@ -21,6 +21,8 @@ const deliverySaleSchema = require("./deliverySale");
 const webhookEventSchema = require("./webhookEvent");
 const sessionSchema = require("./session");
 const customerOtpSchema = require("./customerOtp");
+const auditLogSchema = require("./auditLog");
+const orderTruckSchema = require("./orderTruck");
 
 module.exports = {
   ...enums,
@@ -46,4 +48,6 @@ module.exports = {
   ...webhookEventSchema,
   ...sessionSchema,
   ...customerOtpSchema,
+  ...auditLogSchema,
+  ...orderTruckSchema,
 };

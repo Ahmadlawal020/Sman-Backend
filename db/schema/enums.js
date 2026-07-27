@@ -40,10 +40,33 @@ const orderPaymentStatusEnum = pgEnum("order_payment_status", [
   "Paid",
 ]);
 
+// Pipeline: Pending → Paid → Released → Loading → Completed, with Cancelled as
+// an exit. Processing was deliberately not added — the depot confirmed there is
+// no distinct action between payment landing and release, so it would be a
+// stage with no writer.
 const orderStatusEnum = pgEnum("order_status", [
   "Pending",
+  "Paid",
+  "Released",
+  "Loading",
   "Completed",
   "Cancelled",
+]);
+
+// Who performed an audited action. `system` is the webhook / automatic path;
+// the exclusive arc on audit_logs mirrors the sessions table.
+const auditActorTypeEnum = pgEnum("audit_actor_type", [
+  "staff",
+  "customer",
+  "system",
+]);
+
+// Per-truck movement. Enforced in order: pending → gated_in → loaded → gated_out.
+const orderTruckStatusEnum = pgEnum("order_truck_status", [
+  "pending",
+  "gated_in",
+  "loaded",
+  "gated_out",
 ]);
 
 const pfiStatusEnum = pgEnum("pfi_status", ["active", "finished"]);
@@ -96,6 +119,8 @@ const webhookStatusEnum = pgEnum("webhook_status", [
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
+  auditActorTypeEnum,
+  orderTruckStatusEnum,
   driverStatusEnum,
   truckStatusEnum,
   depotStatusEnum,
