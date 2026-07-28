@@ -36,6 +36,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "libphonenumber-js": "^1.13.9",
+    "pg-boss": "^12.26.3",
     "postgres": "^3.4.9",
     "qrcode": "^1.5.4",
     "resend": "^6.17.2",
