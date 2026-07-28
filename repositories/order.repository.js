@@ -82,6 +82,7 @@ const findAll = async ({
   search,
   status,
   customer,
+  depot,
   dateFrom,
   dateTo,
   page = 1,
@@ -103,6 +104,10 @@ const findAll = async ({
 
   if (customer) {
     conditions.push(eq(orders.customerId, customer));
+  }
+
+  if (depot) {
+    conditions.push(eq(orders.depotId, Number(depot)));
   }
 
   if (dateFrom) {

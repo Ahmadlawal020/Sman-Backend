@@ -19,12 +19,13 @@ function httpErr(status, message) {
 }
 
 const getOrders = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 50, search, status, customer, dateFrom, dateTo } = req.query;
+  const { page = 1, limit = 50, search, status, customer, depot, dateFrom, dateTo } = req.query;
 
   const result = await orderRepo.findAll({
     search,
     status,
     customer,
+    depot,
     dateFrom,
     dateTo,
     page,

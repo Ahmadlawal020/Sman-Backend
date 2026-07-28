@@ -101,7 +101,7 @@ const createPfi = asyncHandler(async (req, res) => {
     pfiNumber: String(pfi_number).trim(),
     description: description || "",
     pfiDate: parseDate(pfi_date),
-    locationId: location_id ? (parseInt(location_id, 10) || location_id) : null,
+    locationId: (location_id && location_id !== "none") ? (parseInt(location_id, 10) || location_id) : null,
     locationName: location_name,
     productId: product_id ? (parseInt(product_id, 10) || product_id) : null,
     productName: product_name,
@@ -134,7 +134,7 @@ const updatePfi = asyncHandler(async (req, res) => {
 
   const allowedFields = [
     "pfi_number", "description", "pfi_date", "status", "starting_qty_litres",
-    "qty_volume_mt", "sold_qty_litres", "total_amount", "unit_price",
+    "qty_volume_mt", "sold_qty_litres", "total_amount", "unit_price", "product_unit",
     "vessel_broker", "vessel_name", "surveyor_name", "surveyor_phone",
     "closure_date", "total_inflow", "closure_bank", "purchase_cost",
     "aggregate_expenses", "closure_handler", "closure_remarks",
@@ -155,20 +155,36 @@ const updatePfi = asyncHandler(async (req, res) => {
     }
   }
 
-  if (req.body.location_id || req.body.locationId) {
-    const locId = req.body.location_id || req.body.locationId;
-    updateData.locationId = locId;
-    const depot = await depotRepo.findById(locId);
-    if (depot) updateData.locationName = depot.name;
+  const customUnit = req.body.product_unit || req.body.productUnit;
+  if (customUnit) {
+    updateData.productUnit = customUnit;
   }
 
-  if (req.body.product_id || req.body.productId) {
-    const prodId = req.body.product_id || req.body.productId;
-    updateData.productId = prodId;
-    const prod = await productRepo.findById(prodId);
-    if (prod) {
-      updateData.productName = prod.name;
-      updateData.productUnit = prod.unit || "Litres";
+  if (req.body.location_id !== undefined || req.body.locationId !== undefined) {
+    const locId = req.body.location_id !== undefined ? req.body.location_id : req.body.locationId;
+    if (locId && locId !== "none") {
+      const parsedLoc = parseInt(locId, 10) || locId;
+      updateData.locationId = parsedLoc;
+      const depot = await depotRepo.findById(parsedLoc);
+      updateData.locationName = depot ? depot.name : "";
+    } else {
+      updateData.locationId = null;
+      updateData.locationName = "";
+    }
+  }
+
+  if (req.body.product_id !== undefined || req.body.productId !== undefined) {
+    const prodId = req.body.product_id !== undefined ? req.body.product_id : req.body.productId;
+    if (prodId) {
+      const parsedProd = parseInt(prodId, 10) || prodId;
+      updateData.productId = parsedProd;
+      const prod = await productRepo.findById(parsedProd);
+      if (prod) {
+        updateData.productName = prod.name;
+        if (!customUnit) {
+          updateData.productUnit = prod.unit || "Litres";
+        }
+      }
     }
   }
 
