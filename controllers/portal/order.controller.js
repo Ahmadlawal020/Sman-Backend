@@ -13,7 +13,15 @@ const { placeOrder } = require("../../services/order.service");
  * virtual account to pay into; the Paystack webhook then advances it to Paid.
  */
 const createMyOrder = asyncHandler(async (req, res) => {
-  const { state, depot: depotId, product: productId, quantity, deliveryType, trucks } = req.body;
+  const {
+    state,
+    depot: depotId,
+    product: productId,
+    quantity,
+    deliveryType,
+    deliveryAddress,
+    trucks,
+  } = req.body;
 
   const { order, payment } = await placeOrder({
     customerId: req.customer.id,
@@ -22,6 +30,7 @@ const createMyOrder = asyncHandler(async (req, res) => {
     productId,
     quantity,
     deliveryType,
+    deliveryAddress,
     trucks,
     actor: { type: "customer", customerId: req.customer.id },
   });
