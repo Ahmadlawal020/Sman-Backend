@@ -21,10 +21,15 @@ const { REPLY } = require("./constants");
 // not a deploy.
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v25.0";
 
+// Env values arrive from dashboard paste-boxes: strip whitespace and any
+// literal wrapping quotes, or a stray newline becomes "%0A" in the Graph URL
+// and every send dies with "Unknown path components".
+const cleanEnv = (value) => String(value || "").trim().replace(/^["']|["']$/g, "");
+
 const config = () => ({
-  enabled: process.env.WHATSAPP_ENABLED === "true",
-  token: process.env.WHATSAPP_ACCESS_TOKEN,
-  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+  enabled: cleanEnv(process.env.WHATSAPP_ENABLED) === "true",
+  token: cleanEnv(process.env.WHATSAPP_ACCESS_TOKEN),
+  phoneNumberId: cleanEnv(process.env.WHATSAPP_PHONE_NUMBER_ID),
 });
 
 // The API addresses recipients as wa_ids: E.164 digits without the "+".
