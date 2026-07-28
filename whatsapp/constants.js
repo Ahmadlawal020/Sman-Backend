@@ -71,6 +71,8 @@ const REPLY = Object.freeze({
 const EFFECTS = Object.freeze({
   CREATE_ORDER: "CREATE_ORDER",
   CREATE_CUSTOMER: "CREATE_CUSTOMER",
+  // Test environments only: the "I've paid" button simulates the transfer.
+  DEV_SIMULATE_PAYMENT: "DEV_SIMULATE_PAYMENT",
 });
 
 // Approved-template names (submitted to Meta in Phase C). Outside the 24-hour

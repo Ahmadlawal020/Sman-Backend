@@ -528,6 +528,10 @@ const reduceInner = (session, inbound, ctx, expired) => {
       if (order.deliveryType === "pickup" && ctx.portalUrl) {
         replies.push(text(copy.portalManageHint(ctx.portalUrl)));
       }
+      if (!paidFromWallet && ctx.devSimulatePayment) {
+        // Test environments only: let the tester "pay" with a tap.
+        replies.push(buttons(copy.devPaidPrompt(), { devpaid: copy.devPaidButton() }));
+      }
       return done(next, replies);
     }
     case INBOUND.ORDER_FAILED: {
@@ -652,10 +656,23 @@ const reduceInner = (session, inbound, ctx, expired) => {
     case STATES.CONFIRM:
       return handleConfirm(session, ctx, value);
     case STATES.AWAIT_PAYMENT:
-      return done(session, promptFor(STATES.AWAIT_PAYMENT, session, ctx));
+      return handleAwaitPayment(session, ctx, value);
     default:
       return goTo(session, STATES.MENU, ctx);
   }
+};
+
+const handleAwaitPayment = (session, ctx, value) => {
+  // Dev-only: the "I've paid" button simulates the transfer landing. The
+  // confirmation itself arrives through the REAL settlement → push path.
+  if (value === "devpaid" && ctx.devSimulatePayment && session.lastOrderId) {
+    return done(
+      session,
+      [text(copy.devSimulating())],
+      [{ type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } }]
+    );
+  }
+  return done(session, promptFor(STATES.AWAIT_PAYMENT, session, ctx));
 };
 
 // ------------------------------------------------------------ state handlers

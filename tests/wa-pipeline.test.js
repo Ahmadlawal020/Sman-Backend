@@ -9,7 +9,7 @@ const { depots, products, depotProductPrices, pfis, waSessions } = require("../d
 const { eq } = require("drizzle-orm");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { normalizeInbound } = require("../whatsapp/normalize");
-const { processInbound, processSend, processEvent } = require("../whatsapp/pipeline");
+const { processInbound, processSend, processEvent, performEffect } = require("../whatsapp/pipeline");
 const { runMaintenance } = require("../whatsapp/worker");
 const { stopQueue } = require("../config/queue");
 const { closeDb } = require("./helpers");
@@ -231,6 +231,22 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
       lastOrderId: stored.lastOrderId,
       failureCount: 0,
     });
+  });
+
+  test("the dev 'I've paid' effect settles the order through the real path", async () => {
+    const session = await waSessionRepo.findByPhone(PHONE);
+    assert.ok(session.lastOrderId, "an order exists from the confirm test");
+    const before = await orderRepo.findById(session.lastOrderId);
+    assert.equal(before.paymentStatus, "Unpaid");
+
+    await performEffect(
+      { type: "DEV_SIMULATE_PAYMENT", payload: { orderId: session.lastOrderId } },
+      { wamid: `wamid.PIPE-${RUN}-DEVPAY`, waPhone: PHONE }
+    );
+
+    const after = await orderRepo.findById(session.lastOrderId);
+    assert.equal(after.paymentStatus, "Paid", "wallet credit + real settlement paid it");
+    assert.equal(after.status, "Paid");
   });
 
   test("a stale inbound recovered by the janitor is skipped, never replayed", async () => {

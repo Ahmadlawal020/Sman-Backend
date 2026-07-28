@@ -5,6 +5,8 @@ const { EFFECTS, INBOUND } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
 const { placeOrder } = require("../services/order.service");
+const walletService = require("../services/wallet.service");
+const { processUnpaidOrdersForCustomer } = require("../services/payment.service");
 const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
 
@@ -63,6 +65,33 @@ const performEffect = async (effect, { wamid, waPhone }) => {
         }
         return { type: INBOUND.ORDER_FAILED, reason: "generic" };
       }
+    }
+
+    case EFFECTS.DEV_SIMULATE_PAYMENT: {
+      // Belt AND braces: the engine only offers the button when context says
+      // test mode, and the effect refuses independently — a stale button in a
+      // chat history must never move real money states in production.
+      const isTest =
+        process.env.NODE_ENV !== "production" &&
+        (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test");
+      if (!isTest) {
+        console.error("[wa-pipeline] DEV_SIMULATE_PAYMENT refused outside test mode");
+        return null;
+      }
+      const order = await orderRepo.findById(effect.payload.orderId);
+      if (!order || order.paymentStatus === "Paid") return null;
+      // Same as scripts/dev-simulate-payment.js: credit the wallet ledger
+      // (idempotent by reference), then run the REAL settlement — which
+      // drives Pending→Paid and enqueues the payment push. The confirmation
+      // the tester sees travels the exact production path.
+      await walletService.credit({
+        customerId: order.customerId,
+        amount: Number(order.totalAmount),
+        description: "Simulated bank transfer (dev button)",
+        reference: `DEV-SIM-${wamid}`,
+      });
+      await processUnpaidOrdersForCustomer(order.customerId);
+      return null; // the wa-events push delivers "payment received"
     }
 
     default:

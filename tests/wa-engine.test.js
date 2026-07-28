@@ -759,6 +759,27 @@ describe("order outcomes", () => {
     assert.deepEqual(effectTypes(retried), [EFFECTS.CREATE_ORDER]);
   });
 
+  it("test mode offers the 'I've paid' button; production never does", () => {
+    const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
+    const dev = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx({ devSimulatePayment: true }));
+    const devButtons = dev.replies.find((r) => r.kind === REPLY.BUTTONS);
+    assert.ok(devButtons, "dev context gets the simulate button");
+    assert.deepEqual(buttonIds(devButtons), ["devpaid"]);
+
+    const prod = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
+    assert.ok(!prod.replies.some((r) => r.kind === REPLY.BUTTONS), "no flag, no button");
+  });
+
+  it("tapping 'I've paid' emits the simulate effect in test mode only", () => {
+    const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-1" } }, { lastOrderId: 501 });
+    const dev = reduce(s, btn("devpaid"), baseCtx({ devSimulatePayment: true }));
+    assert.deepEqual(effectTypes(dev), [EFFECTS.DEV_SIMULATE_PAYMENT]);
+    assert.equal(dev.effects[0].payload.orderId, 501);
+
+    const prod = reduce(s, btn("devpaid"), baseCtx());
+    assert.deepEqual(prod.effects, [], "a stale dev button does nothing in production");
+  });
+
   it("AWAIT_PAYMENT nudges with the account details on random text", () => {
     const s = mkSession(STATES.AWAIT_PAYMENT, {
       awaiting: { orderNumber: "SOR-501", totalAmount: 25500000, virtualAccountBank: "Wema Bank", virtualAccountNumber: "9930001111" },

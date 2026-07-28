@@ -135,6 +135,9 @@ test("every copy string, pinned", (t) => {
     orderFailedStockSome: copy.orderFailedStock(true, "Warri"),
     orderFailedStockNone: copy.orderFailedStock(false, "Warri"),
     orderFailedGeneric: copy.orderFailedGeneric(SUPPORT),
+    devPaidPrompt: copy.devPaidPrompt(),
+    devPaidButton: copy.devPaidButton(),
+    devSimulating: copy.devSimulating(),
     awaitPaymentNudge: copy.awaitPaymentNudge(ORDER),
     paymentConfirmed: copy.paymentConfirmed(ORDER),
 

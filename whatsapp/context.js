@@ -118,6 +118,11 @@ const loadContext = async ({ waPhone, customer, session }) => {
     withinServiceWindow,
     supportPhone: process.env.SUPPORT_PHONE || "our support line",
     portalUrl: process.env.CLIENT_URL || "",
+    // Test environments get an "I've paid" button that simulates the
+    // transfer — never in production, never on a live Paystack key.
+    devSimulatePayment:
+      process.env.NODE_ENV !== "production" &&
+      (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test"),
   };
 };
 

@@ -252,6 +252,15 @@ const orderFailedStock = (hasSome, depotName) =>
 const orderFailedGeneric = (supportPhone) =>
   `Something went wrong creating your order — your money has NOT been taken. 🙏 Please try again in a moment, or call us on ${supportPhone}.`;
 
+// ------------------------------------------------- dev-only payment simulation
+
+const devPaidPrompt = () =>
+  "🧪 *Test mode* — no real transfer needed. Tap below to simulate your payment landing.";
+
+const devPaidButton = () => "I've paid ✅ (test)";
+
+const devSimulating = () => "🧪 Simulating your transfer — confirmation coming up…";
+
 const awaitPaymentNudge = (order) =>
   `We're waiting on your transfer for order *${order.orderNumber}* — ${naira(order.totalAmount)} to ${order.virtualAccountBank} *${order.virtualAccountNumber}*.\n\nType *track* any time for status.`;
 
@@ -341,6 +350,9 @@ module.exports = {
   invoiceCaption,
   orderFailedStock,
   orderFailedGeneric,
+  devPaidPrompt,
+  devPaidButton,
+  devSimulating,
   awaitPaymentNudge,
   paymentConfirmed,
   cancelled,
