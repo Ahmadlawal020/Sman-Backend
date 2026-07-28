@@ -31,6 +31,9 @@ const fleetLedgerSchema = require("./fleetLedgerEntry");
 const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
+const waSessionSchema = require("./waSession");
+const waMessageSchema = require("./waMessage");
+const waTemplateSchema = require("./waTemplate");
 
 module.exports = {
   ...enums,
@@ -66,4 +69,7 @@ module.exports = {
   ...dailyReportSchema,
   ...incidentRecordSchema,
   ...offlineSaleSchema,
+  ...waSessionSchema,
+  ...waMessageSchema,
+  ...waTemplateSchema,
 };
