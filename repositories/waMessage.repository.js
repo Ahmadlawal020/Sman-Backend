@@ -28,11 +28,17 @@ const recordInbound = async ({ wamid, waPhone, sessionId = null, customerId = nu
   return row || null;
 };
 
-const markProcessed = async (id) => {
-  await db
-    .update(waMessages)
-    .set({ status: "processed", updatedAt: new Date() })
-    .where(eq(waMessages.id, id));
+/**
+ * Close out an inbound turn. Also backfills sessionId/customerId — an inbound
+ * row is recorded before its session (or customer) necessarily exists, and
+ * without the backfill the session transcript would hold only OUR half of
+ * every conversation.
+ */
+const markProcessed = async (id, { sessionId, customerId } = {}) => {
+  const set = { status: "processed", updatedAt: new Date() };
+  if (sessionId != null) set.sessionId = sessionId;
+  if (customerId != null) set.customerId = customerId;
+  await db.update(waMessages).set(set).where(eq(waMessages.id, id));
 };
 
 /** An outbound reply, recorded BEFORE any send attempt. wamid arrives on success. */

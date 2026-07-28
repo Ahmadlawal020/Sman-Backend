@@ -785,8 +785,9 @@ const handleConfirm = (session, ctx, value) => {
     };
     if (cart.deliveryType === "pickup") {
       const split = truckSplit(cart.quantity);
+      // truckNumber, not plateNumber: this payload feeds placeOrder verbatim.
       payload.trucks = (cart.plates || []).map((plate, i) => ({
-        plateNumber: plate,
+        truckNumber: plate,
         quantity: split[i],
       }));
     } else {

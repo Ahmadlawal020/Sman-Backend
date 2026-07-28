@@ -4,7 +4,7 @@ require("dotenv").config();
 const { test, describe, after } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { QUEUES, startQueue, enqueue, registerWorker, stopQueue } = require("../config/queue");
+const { startQueue, stopQueue } = require("../config/queue");
 
 /**
  * Proves the queue actually works against the real database — including on
@@ -18,13 +18,17 @@ describe("pg-boss queue — durable jobs in Postgres", () => {
   });
 
   test("starts, enqueues, and a worker receives the job", async () => {
-    await startQueue();
+    // A throwaway queue: the shared wa-* queues accumulate real jobs across
+    // test runs, and this test must see ITS job, not the backlog.
+    const boss = await startQueue();
+    const probeQueue = `probe-${Date.now()}`;
+    await boss.createQueue(probeQueue);
 
     const received = new Promise((resolve) => {
-      registerWorker(QUEUES.WA_INBOUND, async (data) => resolve(data));
+      boss.work(probeQueue, { batchSize: 1 }, async (jobs) => resolve(jobs[0].data));
     });
 
-    const jobId = await enqueue(QUEUES.WA_INBOUND, { probe: "hello", n: 42 });
+    const jobId = await boss.send(probeQueue, { probe: "hello", n: 42 });
     assert.ok(jobId, "send returned a job id");
 
     const data = await Promise.race([

@@ -7,6 +7,7 @@ const {
   timestamp,
   index,
   uniqueIndex,
+  smallint,
 } = require("drizzle-orm/pg-core");
 const { waSessionStateEnum } = require("./enums");
 const { customers } = require("./customer");
@@ -33,6 +34,8 @@ const waSessions = pgTable(
     state: waSessionStateEnum("state").default("MENU").notNull(),
     cart: jsonb("cart").default({}).notNull(),
     lastOrderId: integer("last_order_id").references(() => orders.id, { onDelete: "set null" }),
+    // The engine's 3-strikes counter; part of session state, so persisted.
+    failureCount: smallint("failure_count").default(0).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -64,6 +64,13 @@
       "when": 1785217823421,
       "tag": "0008_wa_outbound_wamid",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785218328851,
+      "tag": "0009_wa_session_failures",
+      "breakpoints": true
     }
   ]
 }

@@ -492,7 +492,7 @@ describe("CONFIRM", () => {
     assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
     const payload = r.effects[0].payload;
     assert.equal(payload.state, "Delta"); // from the depot, not the customer
-    assert.deepEqual(payload.trucks, [{ plateNumber: "ABC-123-XY", quantity: 30000 }]);
+    assert.deepEqual(payload.trucks, [{ truckNumber: "ABC-123-XY", quantity: 30000 }]);
     assert.equal(r.session.cart.pendingOrder, true);
   });
 

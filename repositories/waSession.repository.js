@@ -26,13 +26,14 @@ const findByPhone = async (waPhone) => {
  * expiry. Upsert on wa_phone: the engine neither knows nor cares whether a
  * row existed.
  */
-const save = async (waPhone, { customerId, state, cart, lastOrderId }) => {
+const save = async (waPhone, { customerId, state, cart, lastOrderId, failureCount }) => {
   const values = {
     waPhone,
     customerId: customerId ?? null,
     state,
     cart: cart ?? {},
     lastOrderId: lastOrderId ?? null,
+    failureCount: Number(failureCount) || 0,
     expiresAt: freshExpiry(),
     updatedAt: new Date(),
   };
