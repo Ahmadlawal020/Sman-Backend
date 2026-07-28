@@ -24,11 +24,21 @@ const getDeliveryInventoryById = asyncHandler(async (req, res) => {
 });
 
 const createDeliveryInventory = asyncHandler(async (req, res) => {
-  const {
-    pfi, allocation_code, truck, truck_number, depot,
-    customer, customer_name, quantity_allocated, rate,
-    date_allocated, loading_status = "loaded", location, notes,
-  } = req.body;
+  const pfi = req.body.pfi || req.body.pfiId;
+  const allocation_code = req.body.allocation_code || req.body.allocationCode;
+  const truck = req.body.truck || req.body.truckId;
+  const truck_number = req.body.truck_number || req.body.truckNumber;
+  const depot = req.body.depot;
+  const customer = req.body.customer || req.body.customerId;
+  const customer_name = req.body.customer_name || req.body.customerName;
+  const quantity_allocated = req.body.quantity_allocated !== undefined
+    ? req.body.quantity_allocated
+    : (req.body.quantityAllocated !== undefined ? req.body.quantityAllocated : req.body.quantity);
+  const rate = req.body.rate;
+  const date_allocated = req.body.date_allocated || req.body.dateAllocated;
+  const loading_status = req.body.loading_status || req.body.loadingStatus || "loaded";
+  const location = req.body.location;
+  const notes = req.body.notes;
 
   let pfiObj = null;
   if (pfi) {
@@ -41,18 +51,18 @@ const createDeliveryInventory = asyncHandler(async (req, res) => {
   }
 
   const inventoryRecord = await deliveryInventoryRepo.create({
-    pfiId: pfi || null,
-    pfiNumber: pfiObj ? pfiObj.pfiNumber : req.body.pfi_number || "",
-    pfiProduct: pfiObj ? pfiObj.productName || pfiObj.productId : req.body.pfi_product || "",
-    pfiLocation: pfiObj ? pfiObj.locationName || "" : "",
+    pfiId: pfi ? (Number(pfi) || pfi) : null,
+    pfiNumber: pfiObj ? pfiObj.pfiNumber : (req.body.pfi_number || req.body.pfiNumber || ""),
+    pfiProduct: pfiObj ? (pfiObj.productName || pfiObj.productId) : (req.body.pfi_product || req.body.pfiProduct || ""),
+    pfiLocation: pfiObj ? (pfiObj.locationName || "") : "",
     allocationCode: allocation_code || null,
-    truckId: truck || null,
+    truckId: truck ? (Number(truck) || truck) : null,
     truckNumber: truck_number || (truckObj ? truckObj.plateNumber : ""),
     depot: depot || (pfiObj ? pfiObj.locationName : ""),
-    customerId: customer || null,
+    customerId: customer ? (Number(customer) || customer) : null,
     customerName: customer_name || "",
     quantityAllocated: Number(quantity_allocated) || 0,
-    rate: String(Number(rate) || 0),
+    rate: rate !== undefined && rate !== null && rate !== "" ? String(Number(rate) || 0) : "0",
     dateAllocated: date_allocated || new Date().toISOString().split("T")[0],
     loadingStatus: loading_status,
     location: location || "",

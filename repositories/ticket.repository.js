@@ -1,6 +1,92 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { tickets, orders, customers, depots, products, staff } = require("../db/schema");
+const { tickets, orders, customers, depots, products, staff, pfis } = require("../db/schema");
+
+const formatTicket = (row) => {
+  if (!row) return null;
+  const {
+    orderNumber,
+    orderStatus,
+    orderQuantity,
+    orderPrice,
+    orderTotalAmount,
+    orderDeliveryType,
+    orderState,
+    orderVirtualAccountNumber,
+    orderVirtualAccountBank,
+    orderVirtualAccountName,
+    orderCreatedAt,
+    customerName,
+    customerEmail,
+    customerPhone,
+    customerCompanyName,
+    depotName,
+    depotCode,
+    depotAddress,
+    productName,
+    productSku,
+    productUnit,
+    pfiNumber,
+    redeemerFirstName,
+    redeemerSurname,
+    redeemerEmail,
+    ...ticket
+  } = row;
+
+  const priceNum = orderPrice ? parseFloat(orderPrice) : 0;
+  const totalAmountNum = orderTotalAmount ? parseFloat(orderTotalAmount) : 0;
+
+  return {
+    ...ticket,
+    order: orderNumber
+      ? {
+          _id: ticket.orderId,
+          id: ticket.orderId,
+          orderNumber,
+          status: orderStatus,
+          quantity: orderQuantity ? parseInt(orderQuantity, 10) : 0,
+          price: priceNum,
+          totalAmount: totalAmountNum,
+          deliveryType: orderDeliveryType,
+          state: orderState,
+          virtualAccountNumber: orderVirtualAccountNumber || "",
+          virtualAccountBank: orderVirtualAccountBank || "",
+          virtualAccountName: orderVirtualAccountName || "",
+          pfiNumber: pfiNumber || "",
+          createdAt: orderCreatedAt,
+          product: productName
+            ? {
+                name: productName,
+                sku: productSku || "",
+                unit: productUnit || "Liters",
+              }
+            : null,
+          customer: customerName
+            ? {
+                name: customerName,
+                email: customerEmail || "",
+                phone: customerPhone || "",
+                companyName: customerCompanyName || "",
+              }
+            : null,
+          depot: depotName
+            ? {
+                name: depotName,
+                code: depotCode || "",
+                address: depotAddress || "",
+              }
+            : null,
+        }
+      : null,
+    redeemedBy: redeemerFirstName
+      ? {
+          firstName: redeemerFirstName,
+          surname: redeemerSurname,
+          email: redeemerEmail || "",
+        }
+      : null,
+  };
+};
 
 const findById = async (id) => {
   const [row] = await db.select().from(tickets).where(eq(tickets.id, id)).limit(1);
@@ -17,13 +103,26 @@ const findByNumber = async (ticketNumber) => {
 };
 
 const findByIdOrCode = async (idOrCode) => {
-  // Try as UUID first, then as ticket number
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrCode);
+  if (!idOrCode) return null;
+  const str = String(idOrCode);
 
+  // If integer ID
+  if (/^\d+$/.test(str)) {
+    const t = await findById(parseInt(str, 10));
+    if (t) return t;
+  }
+
+  // Try as ticket number
+  const tNum = await findByNumber(str);
+  if (tNum) return tNum;
+
+  // Try as UUID
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   if (isUuid) {
     return findById(idOrCode);
   }
-  return findByNumber(idOrCode);
+
+  return null;
 };
 
 const findByIdFull = async (id) => {
@@ -39,12 +138,15 @@ const findByIdFull = async (id) => {
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
       orderNumber: orders.orderNumber,
-      orderStatus: orders.orderStatus,
+      orderStatus: orders.status,
       orderQuantity: orders.quantity,
       orderPrice: orders.price,
       orderTotalAmount: orders.totalAmount,
       orderDeliveryType: orders.deliveryType,
       orderState: orders.state,
+      orderVirtualAccountNumber: orders.virtualAccountNumber,
+      orderVirtualAccountBank: orders.virtualAccountBank,
+      orderVirtualAccountName: orders.virtualAccountName,
       orderCreatedAt: orders.createdAt,
       customerName: customers.name,
       customerEmail: customers.email,
@@ -56,6 +158,7 @@ const findByIdFull = async (id) => {
       productName: products.name,
       productSku: products.sku,
       productUnit: products.unit,
+      pfiNumber: pfis.pfiNumber,
       redeemerFirstName: staff.firstName,
       redeemerSurname: staff.surname,
       redeemerEmail: staff.email,
@@ -65,23 +168,36 @@ const findByIdFull = async (id) => {
     .leftJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
+    .leftJoin(pfis, eq(orders.pfiId, pfis.id))
     .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
     .where(eq(tickets.id, id))
     .limit(1);
-  return row || null;
+  return formatTicket(row);
 };
 
 const findByIdOrCodeFull = async (idOrCode) => {
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrCode);
+  if (!idOrCode) return null;
+  const str = String(idOrCode);
 
+  // If integer ID
+  if (/^\d+$/.test(str)) {
+    const full = await findByIdFull(parseInt(str, 10));
+    if (full) return full;
+  }
+
+  // Try as ticket number
+  const tNum = await findByNumber(str);
+  if (tNum) {
+    return findByIdFull(tNum.id);
+  }
+
+  // Try as UUID
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   if (isUuid) {
     return findByIdFull(idOrCode);
   }
 
-  // Find by ticket number then get full details
-  const ticket = await findByNumber(idOrCode);
-  if (!ticket) return null;
-  return findByIdFull(ticket.id);
+  return null;
 };
 
 const findByOrder = async (orderId, tx = db) => {
@@ -115,7 +231,14 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   }
 
   if (search) {
-    conditions.push(ilike(tickets.ticketNumber, `%${search}%`));
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(tickets.ticketNumber, pattern),
+        ilike(orders.orderNumber, pattern),
+        ilike(customers.name, pattern)
+      )
+    );
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -133,17 +256,37 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
         createdAt: tickets.createdAt,
         updatedAt: tickets.updatedAt,
         orderNumber: orders.orderNumber,
+        orderStatus: orders.status,
+        orderQuantity: orders.quantity,
+        orderPrice: orders.price,
+        orderTotalAmount: orders.totalAmount,
+        orderDeliveryType: orders.deliveryType,
+        orderState: orders.state,
+        orderVirtualAccountNumber: orders.virtualAccountNumber,
+        orderVirtualAccountBank: orders.virtualAccountBank,
+        orderVirtualAccountName: orders.virtualAccountName,
+        orderCreatedAt: orders.createdAt,
         customerName: customers.name,
-        productName: products.name,
+        customerEmail: customers.email,
+        customerPhone: customers.phone,
+        customerCompanyName: customers.companyName,
         depotName: depots.name,
+        depotCode: depots.code,
+        depotAddress: depots.address,
+        productName: products.name,
+        productSku: products.sku,
+        productUnit: products.unit,
+        pfiNumber: pfis.pfiNumber,
         redeemerFirstName: staff.firstName,
         redeemerSurname: staff.surname,
+        redeemerEmail: staff.email,
       })
       .from(tickets)
       .leftJoin(orders, eq(tickets.orderId, orders.id))
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .leftJoin(depots, eq(orders.depotId, depots.id))
       .leftJoin(products, eq(orders.productId, products.id))
+      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
       .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
       .where(whereClause)
       .orderBy(desc(tickets.createdAt))
@@ -152,11 +295,13 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
     db
       .select({ total: count() })
       .from(tickets)
+      .leftJoin(orders, eq(tickets.orderId, orders.id))
+      .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(whereClause),
   ]);
 
   return {
-    tickets: rows,
+    tickets: rows.map(formatTicket),
     pagination: {
       total,
       page: pageNum,
@@ -191,3 +336,4 @@ module.exports = {
   create,
   update,
 };
+

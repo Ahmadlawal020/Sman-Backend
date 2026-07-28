@@ -158,7 +158,7 @@ const pagination = z.object({
         .number()
         .int("Limit must be a whole number")
         .positive("Limit must be 1 or greater")
-        .max(100, "Limit cannot exceed 100")
+        .max(5000, "Limit cannot exceed 5000")
     )
     .optional()
     .default(50),

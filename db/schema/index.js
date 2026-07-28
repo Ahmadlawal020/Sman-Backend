@@ -34,6 +34,7 @@ const offlineSaleSchema = require("./offlineSale");
 const waSessionSchema = require("./waSession");
 const waMessageSchema = require("./waMessage");
 const waTemplateSchema = require("./waTemplate");
+const bankAccountSchema = require("./bankAccount");
 
 module.exports = {
   ...enums,
@@ -72,4 +73,5 @@ module.exports = {
   ...waSessionSchema,
   ...waMessageSchema,
   ...waTemplateSchema,
+  ...bankAccountSchema,
 };

@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql, ne } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, sql, ne, inArray } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { deliveryCustomers, deliverySales, staff } = require("../db/schema");
 
@@ -162,9 +162,7 @@ const findAllWithSalesAggregation = async ({
         lastTransactionDate: sql`MAX(${deliverySales.dateOfPayment})`,
       })
       .from(deliverySales)
-      .where(
-        sql`${deliverySales.customerId} = ANY(${customerIds.map((id) => id)})`
-      )
+      .where(inArray(deliverySales.customerId, customerIds))
       .groupBy(deliverySales.customerId);
 
     const salesMap = new Map();

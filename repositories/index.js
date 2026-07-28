@@ -26,4 +26,5 @@ module.exports = {
   offlineSaleRepo: require("./offlineSale.repository"),
   waSessionRepo: require("./waSession.repository"),
   waMessageRepo: require("./waMessage.repository"),
+  bankAccountRepo: require("./bankAccount.repository"),
 };

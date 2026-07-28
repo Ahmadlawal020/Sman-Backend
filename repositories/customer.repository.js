@@ -49,7 +49,7 @@ const findByPaystackCustomerId = async (customerCode) => {
 
 const findAll = async ({ search, searchType, status, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+  const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
@@ -80,7 +80,7 @@ const findAll = async ({ search, searchType, status, page = 1, limit = 50 } = {}
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, [{ total }]] = await Promise.all([
+  const [rows, [statsRow]] = await Promise.all([
     db
       .select()
       .from(customers)
@@ -89,17 +89,30 @@ const findAll = async ({ search, searchType, status, page = 1, limit = 50 } = {}
       .limit(limitNum)
       .offset(offset),
     db
-      .select({ total: count() })
+      .select({
+        total: count(),
+        active: sql`SUM(CASE WHEN ${customers.status} = 'Active' THEN 1 ELSE 0 END)::int`,
+        inactive: sql`SUM(CASE WHEN ${customers.status} = 'Inactive' THEN 1 ELSE 0 END)::int`,
+        totalBalance: sql`COALESCE(SUM(${customers.balance}::numeric), 0)::float`,
+      })
       .from(customers)
       .where(whereClause),
   ]);
+
+  const total = Number(statsRow?.total || 0);
 
   return {
     customers: rows,
     pagination: {
       total,
       page: pageNum,
-      pages: Math.ceil(total / limitNum),
+      pages: Math.ceil(total / limitNum) || 1,
+    },
+    summary: {
+      total,
+      active: Number(statsRow?.active || 0),
+      inactive: Number(statsRow?.inactive || 0),
+      totalBalance: Number(statsRow?.totalBalance || 0),
     },
   };
 };
