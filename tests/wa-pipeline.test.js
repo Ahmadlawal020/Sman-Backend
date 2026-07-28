@@ -233,6 +233,27 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     });
   });
 
+  test("a stale inbound recovered by the janitor is skipped, never replayed", async () => {
+    const wamid = `wamid.PIPE-${RUN}-STALE`;
+    const row = await waMessageRepo.recordInbound({
+      wamid,
+      waPhone: PHONE,
+      payload: { id: wamid, from: PHONE.slice(1), type: "text", text: { body: "hi" } },
+    });
+    // Backdate it past the staleness threshold, as if it sat unprocessed.
+    const { waMessages: wm } = require("../db/schema");
+    await db.update(wm).set({ createdAt: new Date(Date.now() - 11 * 60 * 1000) }).where(eq(wm.id, row.id));
+
+    const before = await waSessionRepo.findByPhone(PHONE);
+    await processInbound({ waMessageId: row.id });
+
+    const after = await waMessageRepo.findById(row.id);
+    assert.equal(after.status, "skipped");
+    assert.match(after.error, /stale/);
+    const session = await waSessionRepo.findByPhone(PHONE);
+    assert.equal(session.state, before.state, "the old 'hi' must not reset the session");
+  });
+
   test("the maintenance sweep deletes sessions past their resume grace, keeps the rest", async () => {
     const oldPhone = `+234818${String(RUN).slice(-6)}1`;
     await waSessionRepo.save(oldPhone, { state: "MENU", cart: {}, failureCount: 0 });

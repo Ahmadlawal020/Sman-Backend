@@ -78,7 +78,18 @@ const performEffect = async (effect, { wamid, waPhone }) => {
 const processInbound = async ({ waMessageId }) => {
   const message = await waMessageRepo.findById(waMessageId);
   if (!message || message.direction !== "inbound") return;
-  if (message.status === "processed") return; // a retry of a finished turn
+  if (message.status !== "received") return; // finished, or already skipped
+
+  // A message that sat unprocessed past this is answered by SILENCE, not a
+  // late reply. The janitor resurrects rows stranded by crashes or dead
+  // workers — but replaying an old "hi" against the CURRENT session yanks a
+  // mid-order customer back to the menu (observed in UAT). Stale inputs are
+  // marked skipped: visible in the ledger, never applied to the conversation.
+  const STALE_INBOUND_MS = 10 * 60 * 1000;
+  if (Date.now() - new Date(message.createdAt).getTime() > STALE_INBOUND_MS) {
+    await waMessageRepo.markSkipped(message.id, "stale — recovered too late to answer");
+    return;
+  }
 
   // Blue-tick + "typing…" immediately, in parallel with the real work — the
   // customer sees "we've heard you" while context loads and the engine runs.
