@@ -25,7 +25,7 @@ exports[`every copy string, pinned 1`] = `
   "trackCancelled": "Order *SOR-1042* — 30,000 L PMS, Warri.\\n\\nStatus: *Cancelled*\\nThis order was cancelled.",
   "trackNoOrder": "You don't have any orders with us yet. Tap *Place an order* from the menu to get started.",
   "pricesExample": "Today's prices 📋\\n\\n*Warri*: PMS ₦850/L, AGO ₦1,020/L\\n\\nTap *Place an order* from the menu when you're ready.",
-  "stateListPrompt": "Which state are you ordering from?",
+  "stateListPrompt": "Which state would you like to order from?",
   "stateListButton": "Choose a state",
   "stateRowDescriptionOne": "1 depot",
   "stateRowDescriptionMany": "4 depots",

@@ -90,7 +90,7 @@ const pricesFooter = () => "\n\nTap *Place an order* from the menu when you're r
 
 // -------------------------------------------------------------------- depot
 
-const stateListPrompt = () => "Which state are you ordering from?";
+const stateListPrompt = () => "Which state would you like to order from?";
 
 const stateListButton = () => "Choose a state";
 
