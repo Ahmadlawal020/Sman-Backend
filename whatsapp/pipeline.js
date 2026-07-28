@@ -5,7 +5,7 @@ const { EFFECTS, INBOUND } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
 const { placeOrder } = require("../services/order.service");
-const { sendReply } = require("./client");
+const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
 
 /**
@@ -79,6 +79,10 @@ const processInbound = async ({ waMessageId }) => {
   const message = await waMessageRepo.findById(waMessageId);
   if (!message || message.direction !== "inbound") return;
   if (message.status === "processed") return; // a retry of a finished turn
+
+  // Blue-tick + "typing…" immediately, in parallel with the real work — the
+  // customer sees "we've heard you" while context loads and the engine runs.
+  sendTypingIndicator(message.wamid);
 
   const waPhone = message.waPhone;
   const stored = await waSessionRepo.findByPhone(waPhone);

@@ -138,4 +138,34 @@ const sendReply = async (to, reply) => {
   }
 };
 
-module.exports = { sendReply, toApiPayload, toWaId, GRAPH_VERSION };
+/**
+ * Mark an inbound message read (blue ticks) and show "typing…" while the
+ * engine works — the two together read as "we've seen you, answer coming".
+ * WhatsApp dismisses the indicator when our reply arrives, or after ~25 s.
+ *
+ * Strictly best-effort: returns { ok:false } instead of throwing, because a
+ * cosmetic nicety must never delay or fail the actual reply.
+ */
+const sendTypingIndicator = async (inboundWamid) => {
+  const { enabled, token, phoneNumberId } = config();
+  if (!enabled || !inboundWamid || !token || !phoneNumberId) {
+    return { skipped: true };
+  }
+  try {
+    await axios.post(
+      `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`,
+      {
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: inboundWamid,
+        typing_indicator: { type: "text" },
+      },
+      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+    );
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.response?.data?.error?.message || err.message };
+  }
+};
+
+module.exports = { sendReply, sendTypingIndicator, toApiPayload, toWaId, GRAPH_VERSION };

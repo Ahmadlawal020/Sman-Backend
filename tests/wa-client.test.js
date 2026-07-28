@@ -5,7 +5,7 @@ const { test, describe, beforeEach, after } = require("node:test");
 const assert = require("node:assert/strict");
 const nock = require("nock");
 
-const { sendReply, toApiPayload, toWaId, GRAPH_VERSION } = require("../whatsapp/client");
+const { sendReply, sendTypingIndicator, toApiPayload, toWaId, GRAPH_VERSION } = require("../whatsapp/client");
 
 const PHONE_ID = "111222333";
 const GRAPH = "https://graph.facebook.com";
@@ -150,5 +150,31 @@ describe("whatsapp/client — engine replies onto the Cloud API, faithfully", ()
   test("missing credentials with the switch ON is an error, not a silent skip", async () => {
     env({ WHATSAPP_ACCESS_TOKEN: "" });
     await assert.rejects(sendReply(TO, { kind: "text", body: "hi" }), /not configured/);
+  });
+
+  test("typing indicator marks the inbound read and shows typing", async () => {
+    let body;
+    nock(GRAPH)
+      .post(PATH, (b) => ((body = b), true))
+      .reply(200, { success: true });
+
+    const res = await sendTypingIndicator("wamid.INBOUND1");
+    assert.equal(res.ok, true);
+    assert.equal(body.status, "read");
+    assert.equal(body.message_id, "wamid.INBOUND1");
+    assert.deepEqual(body.typing_indicator, { type: "text" });
+  });
+
+  test("typing indicator failures are absorbed, never thrown", async () => {
+    nock(GRAPH).post(PATH).reply(400, { error: { code: 100, message: "nope" } });
+    const res = await sendTypingIndicator("wamid.INBOUND2");
+    assert.equal(res.ok, false);
+    assert.match(res.error, /nope/);
+  });
+
+  test("typing indicator respects the kill switch", async () => {
+    env({ WHATSAPP_ENABLED: "false" });
+    const res = await sendTypingIndicator("wamid.INBOUND3"); // no interceptor: a call would throw
+    assert.equal(res.skipped, true);
   });
 });
