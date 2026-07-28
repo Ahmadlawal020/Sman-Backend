@@ -19,6 +19,20 @@ const lockById = async (id, tx = db) => {
   return row || null;
 };
 
+/**
+ * The idempotent-replay lookup: a caller retrying with the same key (e.g. a
+ * redelivered WhatsApp webhook re-running CONFIRM) finds the order the first
+ * attempt created.
+ */
+const findByIdempotencyKey = async (idempotencyKey, tx = db) => {
+  const [row] = await tx
+    .select()
+    .from(orders)
+    .where(eq(orders.idempotencyKey, idempotencyKey))
+    .limit(1);
+  return row || null;
+};
+
 const findByNumber = async (orderNumber) => {
   const [row] = await db
     .select()
@@ -214,6 +228,7 @@ module.exports = {
   findById,
   lockById,
   findByNumber,
+  findByIdempotencyKey,
   findByIdFull,
   findAll,
   create,
