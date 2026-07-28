@@ -53,7 +53,7 @@ const getOrderById = asyncHandler(async (req, res) => {
 const createOrder = asyncHandler(async (req, res) => {
   const {
     customer: customerId, state, depot: depotId,
-    product: productId, quantity, deliveryType, trucks,
+    product: productId, quantity, deliveryType, deliveryAddress, trucks,
   } = req.body;
 
   if (!customerId || !state || !depotId || !productId || !quantity || !deliveryType) {
@@ -64,7 +64,7 @@ const createOrder = asyncHandler(async (req, res) => {
   }
 
   const { order, payment } = await placeOrder({
-    customerId, state, depotId, productId, quantity, deliveryType, trucks,
+    customerId, state, depotId, productId, quantity, deliveryType, deliveryAddress, trucks,
     actor: { type: "staff", staffId: req.user.id },
   });
 

@@ -41,6 +41,10 @@ const orders = pgTable(
     price: decimal("price", { precision: 15, scale: 2 }).notNull(),
     totalAmount: decimal("total_amount", { precision: 15, scale: 2 }).notNull(),
     deliveryType: orderDeliveryTypeEnum("delivery_type").notNull(),
+    // Where the truck goes on a delivery order — free text, the customer's
+    // words. Empty for pickup (the depot is the address) and for orders
+    // predating the column. `state` above stays the routing/pricing field.
+    deliveryAddress: text("delivery_address").default("").notNull(),
     pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "set null" }),
     virtualAccountNumber: varchar("virtual_account_number", { length: 30 }).default(""),
     virtualAccountBank: varchar("virtual_account_bank", { length: 100 }).default(""),

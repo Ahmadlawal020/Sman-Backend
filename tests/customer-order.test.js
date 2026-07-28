@@ -135,6 +135,30 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(res.body.data.order.deliveryType, "delivery");
   });
 
+  test("a delivery order carries the customer's address; dispatch needs a street, not a state", async () => {
+    const { accessToken } = await registerActiveCustomer("8");
+    const res = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ deliveryType: "delivery", deliveryAddress: "  Plot 18 Oshodi–Apapa Expy  " }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(
+      res.body.data.order.deliveryAddress,
+      "Plot 18 Oshodi–Apapa Expy",
+      "stored trimmed, in the customer's words"
+    );
+  });
+
+  test("a pickup order ignores any delivery address — the depot is the address", async () => {
+    const { accessToken } = await registerActiveCustomer("9");
+    const res = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ deliveryType: "pickup", deliveryAddress: "somewhere irrelevant" }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.data.order.deliveryAddress, "");
+  });
+
   test("the body cannot smuggle a different customer — the order is always the caller's", async () => {
     const { customer, accessToken } = await registerActiveCustomer("4");
     const victim = await registerActiveCustomer("5");
