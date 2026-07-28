@@ -45,6 +45,14 @@ const splitName = (name) => {
   };
 };
 
+// Paystack provisions no real bank accounts on a test key: dedicated
+// accounts in test mode must ask for "test-bank" or the call is refused —
+// which made DVA creation impossible in development for any customer who
+// didn't already have one (the WhatsApp flow's fresh customers being the
+// first real path to hit it).
+const preferredBank = () =>
+  (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test") ? "test-bank" : "wema-bank";
+
 const createDedicatedAccount = async (customer) => {
   try {
     let paystackCustomerId = customer.paystackCustomerId || "";
@@ -79,7 +87,7 @@ const createDedicatedAccount = async (customer) => {
         last_name,
         email: customer.email || `customer-${customer._id || customer.id}@soroman.com`,
         phone: customer.phone,
-        preferred_bank: "wema-bank",
+        preferred_bank: preferredBank(),
       },
       { headers: getPaystackHeaders() }
     );
