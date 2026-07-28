@@ -9,9 +9,16 @@ const { id, money, requiredString, optionalString, enumOf, searchTerm, paginatio
 const createDeposit = z.object({
   customer: id("Customer"),
   amount: money("Amount", { min: 0.01 }),
-  type: enumOf("Type", ["credit", "debit"]),
+  type: enumOf("Type", ["credit", "debit"]).optional().default("credit"),
   description: optionalString("Description", 500),
   reference: optionalString("Reference", 100),
+  bankAccountId: z.union([id("Bank Account"), z.string()]).optional().nullable(),
+  bankName: optionalString("Bank Name", 100),
+  accountName: optionalString("Account Name", 100),
+  accountNumber: optionalString("Account Number", 50),
+  depositorName: optionalString("Depositor Name", 100),
+  paymentDate: optionalString("Payment Date", 100),
+  paystackDetails: z.record(z.unknown()).optional().nullable(),
 });
 
 const syncPaystack = z.object({

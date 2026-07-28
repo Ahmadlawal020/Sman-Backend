@@ -4,9 +4,9 @@ const walletService = require("../../services/wallet.service");
 const { processPaystackPayment, processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 
 const getDeposits = asyncHandler(async (req, res) => {
-  const { customer, page = 1, limit = 50 } = req.query;
+  const { customer, page = 1, limit = 50, type = "credit" } = req.query;
 
-  const result = await depositRepo.findAll({ customer, page, limit });
+  const result = await depositRepo.findAll({ customer, page, limit, type });
 
   res.json({ success: true, data: result });
 });
@@ -22,12 +22,25 @@ const getDepositById = asyncHandler(async (req, res) => {
 });
 
 const createDeposit = asyncHandler(async (req, res) => {
-  const { customer: customerId, amount, type, description, reference } = req.body;
+  const {
+    customer: customerId,
+    amount,
+    type = "credit",
+    description,
+    reference,
+    bankAccountId,
+    bankName,
+    accountName,
+    accountNumber,
+    depositorName,
+    paymentDate,
+    paystackDetails,
+  } = req.body;
 
-  if (!customerId || !amount || !type) {
+  if (!customerId || !amount) {
     return res.status(400).json({
       success: false,
-      message: "Customer, amount, and type are required",
+      message: "Customer and amount are required",
     });
   }
 
@@ -43,13 +56,36 @@ const createDeposit = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Customer not found" });
   }
 
+  const metadata = paystackDetails || {
+    paymentMethod: "manual_bank_transfer",
+    bankAccountId: bankAccountId || null,
+    bankName: bankName || null,
+    accountName: accountName || null,
+    accountNumber: accountNumber || null,
+    senderName: depositorName || null,
+    paidAt: paymentDate || new Date().toISOString(),
+    channel: "manual_bank_transfer",
+  };
+
+  const depositDescription =
+    description ||
+    (bankName && accountNumber
+      ? `Manual deposit into ${bankName} (${accountNumber})`
+      : "Manual bank deposit");
+
+  const depositRef =
+    reference && reference.trim()
+      ? reference.trim()
+      : `DEP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
   // Ledger row and balance move together or not at all; a duplicate
   // reference is reported instead of crediting the balance twice.
   const result = await walletService.credit({
     customerId,
     amount: Number(amount),
-    description: description || "",
-    reference: reference || "",
+    description: depositDescription,
+    reference: depositRef,
+    paystackDetails: metadata,
     recordedBy: req.user?.id || null,
   });
 

@@ -31,6 +31,7 @@ const fleetLedgerSchema = require("./fleetLedgerEntry");
 const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
+const bankAccountSchema = require("./bankAccount");
 
 module.exports = {
   ...enums,
@@ -66,4 +67,5 @@ module.exports = {
   ...dailyReportSchema,
   ...incidentRecordSchema,
   ...offlineSaleSchema,
+  ...bankAccountSchema,
 };

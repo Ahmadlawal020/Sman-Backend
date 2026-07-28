@@ -45,12 +45,16 @@ const findByReference = async (reference) => {
   return row || null;
 };
 
-const findAll = async ({ customer, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ customer, page = 1, limit = 50, type = "credit" } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+  const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
-  const whereClause = customer ? eq(deposits.customerId, customer) : undefined;
+  const conditions = [];
+  if (customer) conditions.push(eq(deposits.customerId, customer));
+  if (type) conditions.push(eq(deposits.type, type));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db

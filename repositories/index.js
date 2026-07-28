@@ -24,4 +24,5 @@ module.exports = {
   dailyReportRepo: require("./dailyReport.repository"),
   incidentRecordRepo: require("./incidentRecord.repository"),
   offlineSaleRepo: require("./offlineSale.repository"),
+  bankAccountRepo: require("./bankAccount.repository"),
 };
