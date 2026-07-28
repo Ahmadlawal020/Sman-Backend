@@ -206,7 +206,12 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
     updated,
     sessionService.requestContext(req)
   );
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    refreshToken
+  );
 
   return res.json({
     success: true,
@@ -215,6 +220,7 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
       customer: publicCustomer(updated),
       accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
     },
   });
 });
@@ -238,7 +244,12 @@ const handleRefresh = asyncHandler(async (req, res) => {
   }
 
   const customer = await customerRepo.findById(result.session.customerId);
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, result.refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    result.refreshToken
+  );
 
   return res.json({
     success: true,
@@ -247,6 +258,7 @@ const handleRefresh = asyncHandler(async (req, res) => {
       customer: publicCustomer(customer),
       accessToken: result.accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
     },
   });
 });

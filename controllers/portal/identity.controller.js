@@ -21,7 +21,12 @@ const issueSessionResponse = async (req, res, customer, { message = "Signed in" 
     customer,
     sessionService.requestContext(req)
   );
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    refreshToken
+  );
 
   return res.json({
     success: true,
@@ -30,6 +35,7 @@ const issueSessionResponse = async (req, res, customer, { message = "Signed in" 
       customer: publicCustomer(customer),
       accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
     },
   });
 };
@@ -153,7 +159,12 @@ const handlePasswordStepUpVerify = asyncHandler(async (req, res) => {
     customer,
     sessionService.requestContext(req)
   );
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    refreshToken
+  );
 
   res.json({
     success: true,
@@ -162,6 +173,7 @@ const handlePasswordStepUpVerify = asyncHandler(async (req, res) => {
       customer: publicCustomer(customer),
       accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
       ...(deviceToken ? { deviceToken } : {}),
     },
   });

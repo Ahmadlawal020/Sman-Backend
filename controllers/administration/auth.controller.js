@@ -51,7 +51,12 @@ const handleLogin = asyncHandler(async (req, res) => {
   );
   await staffRepo.update(foundAdmin.id, { lastLoginAt: new Date() });
 
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    refreshToken
+  );
 
   res.json({
     success: true,
@@ -61,6 +66,7 @@ const handleLogin = asyncHandler(async (req, res) => {
       accessToken,
       // Omitted when the client declared X-Auth-Transport: cookie.
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
     },
   });
 });
@@ -89,7 +95,12 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
   }
 
   const admin = await staffRepo.findById(result.session.staffId);
-  const bodyToken = cookieService.applyIssuedToken(req, res, REALM, result.refreshToken);
+  const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
+    req,
+    res,
+    REALM,
+    result.refreshToken
+  );
 
   res.json({
     success: true,
@@ -98,6 +109,7 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
       user: getAdminPayload(admin),
       accessToken: result.accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
+      ...(csrfToken !== undefined ? { csrfToken } : {}),
     },
   });
 });
