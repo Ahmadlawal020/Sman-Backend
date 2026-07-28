@@ -59,8 +59,13 @@ router.post(
         } catch (err) {
           // The message row (if written) is the janitor's re-entry point; the
           // error is logged, and Meta gets its 200 — retrying the whole batch
-          // would only duplicate the parts that DID succeed.
-          console.error("[wa-webhook] inbound handling failed:", err.message);
+          // would only duplicate the parts that DID succeed. Drizzle buries
+          // the Postgres reason in err.cause — print it, or the log shows a
+          // query with no verdict.
+          console.error(
+            "[wa-webhook] inbound handling failed:",
+            err.cause?.message || err.message
+          );
         }
       }
 
@@ -69,7 +74,10 @@ router.post(
           const detail = status.errors?.[0]?.message || status.errors?.[0]?.title || "";
           await waMessageRepo.applyStatusUpdate(status.id, status.status, detail);
         } catch (err) {
-          console.error("[wa-webhook] status handling failed:", err.message);
+          console.error(
+            "[wa-webhook] status handling failed:",
+            err.cause?.message || err.message
+          );
         }
       }
     }
