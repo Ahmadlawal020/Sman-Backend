@@ -83,7 +83,8 @@ const TEMPLATES = Object.freeze({
 // Business bounds — named so changing them is a one-line, reviewable edit.
 const MIN_ORDER_LITRES = 1_000;
 const MAX_ORDER_LITRES = 1_000_000; // above this is a typo, not an order
-const TRUCK_CAPACITY_LITRES = 60_000; // pickup orders above this split across trucks
+const TRUCK_CAPACITY_LITRES = 60_000; // max litres one truck may carry
+const MAX_TRUCKS = 10; // sanity ceiling on trucks per chat order
 
 // Third unparseable input in one state offers the menu instead of repeating.
 const MAX_FAILURES = 3;
@@ -100,5 +101,6 @@ module.exports = {
   MIN_ORDER_LITRES,
   MAX_ORDER_LITRES,
   TRUCK_CAPACITY_LITRES,
+  MAX_TRUCKS,
   MAX_FAILURES,
 };

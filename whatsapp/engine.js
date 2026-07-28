@@ -29,6 +29,7 @@ const {
   MIN_ORDER_LITRES,
   MAX_ORDER_LITRES,
   TRUCK_CAPACITY_LITRES,
+  MAX_TRUCKS,
   MAX_FAILURES,
 } = require("./constants");
 const copy = require("./copy");
@@ -137,16 +138,25 @@ const productsOf = (depot) => (depot && Array.isArray(depot.products) ? depot.pr
 const findProduct = (depot, id) => productsOf(depot).find((p) => String(p.id) === String(id));
 
 /**
- * Even truck split for pickup above one truck's capacity: N = ceil(q/cap),
- * litres spread as evenly as integers allow (first trucks carry the remainder).
+ * Trucks are DECLARED by the customer, not derived: they say how many trucks
+ * and how many litres each carries (portal parity). One truck is implicit
+ * when the whole order fits in it; the last truck always takes the exact
+ * remainder, so the sum can never disagree with the order.
  */
-const truckSplit = (quantity) => {
-  const q = Number(quantity) || 0;
-  const count = Math.max(1, Math.ceil(q / TRUCK_CAPACITY_LITRES));
-  const base = Math.floor(q / count);
-  const extra = q - base * count;
-  return Array.from({ length: count }, (_, i) => base + (i < extra ? 1 : 0));
+const trucksNeeded = (cart) =>
+  Number(cart.quantity) <= TRUCK_CAPACITY_LITRES ? 1 : Number(cart.truckCount) || null;
+
+const litresAssigned = (cart) => (cart.trucks || []).reduce((s, t) => s + Number(t.quantity), 0);
+
+const trucksComplete = (cart) => {
+  const needed = trucksNeeded(cart);
+  return Boolean(needed && (cart.trucks || []).length >= needed);
 };
+
+const minTrucksFor = (quantity) => Math.max(1, Math.ceil(Number(quantity) / TRUCK_CAPACITY_LITRES));
+
+// Can't exceed MAX_TRUCKS, and every truck must carry at least a litre.
+const maxTrucksFor = (quantity) => Math.max(1, Math.min(MAX_TRUCKS, Math.floor(Number(quantity))));
 
 // --------------------------------------------------------------- cart & steps
 
@@ -163,8 +173,7 @@ const nextStep = (cart) => {
   if (!cart.quantity) return STATES.QUANTITY;
   if (!cart.deliveryType) return STATES.COLLECT;
   if (cart.deliveryType === "delivery" && !cart.address) return STATES.LOGISTICS;
-  if (cart.deliveryType === "pickup" && (cart.plates || []).length < truckSplit(cart.quantity).length)
-    return STATES.LOGISTICS;
+  if (cart.deliveryType === "pickup" && !trucksComplete(cart)) return STATES.LOGISTICS;
   return STATES.CONFIRM;
 };
 
@@ -185,27 +194,28 @@ const revalidateCart = (cart, ctx) => {
   if (cart.quantity && product && Number(cart.quantity) > Number(product.stock)) {
     return {
       cart: clearQuantity(cart),
-      lead: [text(copy.quantityOverStock(product.stock, depot.name))],
+      lead: [text(copy.quantityOverStock(depot.name))],
     };
   }
   return { cart, lead: [] };
 };
 
-// Clearing a field invalidates everything priced/sized off it.
+// Clearing a field invalidates everything priced/sized off it. (Truck
+// declarations hang off both the quantity and the collection choice.)
 const clearDepot = (cart) => {
-  const { depotId, productId, quantity, plates, stockOffer, ...rest } = cart;
+  const { depotId, productId, quantity, trucks, truckCount, currentLitres, ...rest } = cart;
   return rest;
 };
 const clearProduct = (cart) => {
-  const { productId, quantity, plates, stockOffer, ...rest } = cart;
+  const { productId, quantity, trucks, truckCount, currentLitres, ...rest } = cart;
   return rest;
 };
 const clearQuantity = (cart) => {
-  const { quantity, plates, stockOffer, ...rest } = cart;
+  const { quantity, trucks, truckCount, currentLitres, ...rest } = cart;
   return rest;
 };
 const clearCollect = (cart) => {
-  const { deliveryType, plates, address, ...rest } = cart;
+  const { deliveryType, trucks, truckCount, currentLitres, address, ...rest } = cart;
   return rest;
 };
 
@@ -223,7 +233,7 @@ const cartToken = (cart) => {
     cart.productId,
     cart.quantity,
     cart.deliveryType,
-    cart.plates || [],
+    cart.trucks || [],
     cart.address || "",
   ]);
   let h = 0x811c9dc5;
@@ -245,10 +255,10 @@ const promptFor = (state, session, context) => {
     case STATES.MENU:
       return [menuReply(session, context)];
     case STATES.DEPOT:
-      return [depotList(cart.page, context)];
+      return [depotList(cart, context)];
     case STATES.PRODUCT: {
       const depot = findDepot(context, cart.depotId);
-      if (!depot || productsOf(depot).length === 0) return [depotList(0, context)];
+      if (!depot || productsOf(depot).length === 0) return [depotList({}, context)];
       return [
         list(
           copy.productPrompt(depot.name),
@@ -256,7 +266,7 @@ const promptFor = (state, session, context) => {
           productsOf(depot).map((p) => ({
             id: `product:${p.id}`,
             title: p.name,
-            description: copy.productRowDescription(p.price, p.stock),
+            description: copy.productRowDescription(p.price),
           }))
         ),
       ];
@@ -264,16 +274,26 @@ const promptFor = (state, session, context) => {
     case STATES.QUANTITY: {
       const depot = findDepot(context, cart.depotId);
       const product = findProduct(depot, cart.productId);
-      if (!depot || !product) return [depotList(0, context)];
-      return [text(copy.quantityPrompt(product.name, depot.name, product.stock))];
+      if (!depot || !product) return [depotList({}, context)];
+      return [text(copy.quantityPrompt(product.name, depot.name))];
     }
     case STATES.COLLECT:
       return [buttons(copy.collectPrompt(), copy.collectButtons())];
     case STATES.LOGISTICS: {
       if (cart.deliveryType === "delivery") return [text(copy.addressPrompt())];
-      const split = truckSplit(cart.quantity);
-      const index = (cart.plates || []).length + 1;
-      return [text(copy.platePrompt(index, split.length, split[index - 1] || split[0]))];
+      const q = Number(cart.quantity) || 0;
+      // Single truck is implicit when the whole order fits in one.
+      if (q <= TRUCK_CAPACITY_LITRES) return [text(copy.platePrompt(1, 1, q))];
+      if (!cart.truckCount)
+        return [text(copy.truckCountPrompt(q, minTrucksFor(q), maxTrucksFor(q)))];
+      const trucks = cart.trucks || [];
+      const index = trucks.length + 1;
+      const remaining = q - litresAssigned(cart);
+      if (cart.currentLitres)
+        return [text(copy.platePrompt(index, cart.truckCount, cart.currentLitres))];
+      if (index === cart.truckCount)
+        return [text(copy.lastTruckPrompt(cart.truckCount, remaining))];
+      return [text(copy.truckLitresPrompt(index, cart.truckCount, remaining))];
     }
     case STATES.CONFIRM:
       return [confirmReply(session, context)];
@@ -302,25 +322,58 @@ const menuReply = (session, context) => {
   return buttons(copy.menuGreeting(name), b);
 };
 
-/** Depot list with paging: 9 rows + "More ▸" when there are more than 10. */
-const depotList = (page, context) => {
-  const depots = depotsOf(context).filter((d) => productsOf(d).length > 0);
+const orderableDepots = (context) => depotsOf(context).filter((d) => productsOf(d).length > 0);
+
+const statesOf = (context) => [
+  ...new Set(orderableDepots(context).map((d) => String(d.state || "Other"))),
+];
+
+/** Page a row set: whole list when it fits, else a slice + "More ▸" (wraps). */
+const pageRows = (rows, page, extraRows = []) => {
+  if (rows.length + extraRows.length <= LIMITS.MAX_LIST_ROWS) {
+    return [...rows, ...extraRows];
+  }
+  const perPage = LIMITS.MAX_LIST_ROWS - extraRows.length - 1; // room for More ▸
+  const pages = Math.ceil(rows.length / perPage);
+  const current = ((Number(page) || 0) % pages + pages) % pages; // wraps, never strands
+  const slice = rows.slice(current * perPage, current * perPage + perPage);
+  const more = copy.moreRow();
+  return [...slice, { id: "more", title: more.title, description: more.description }, ...extraRows];
+};
+
+/**
+ * Depot browsing, grouped by state: more than one state → pick the state
+ * first, then a depot within it (with "⬅ Change state" to hop back). A single
+ * state skips the grouping entirely. cart.region holds the choice; cart.page
+ * pages whichever list is showing.
+ */
+const depotList = (cart, context) => {
+  const depots = orderableDepots(context);
   if (depots.length === 0) {
     // Nothing orderable anywhere — say so rather than render an empty list.
     return buttons(copy.noStockAnywhere(), { track: copy.menuButtons().track, help: "Help" });
   }
-  const rows = depots.map((d) => ({ id: `depot:${d.id}`, title: d.name, description: d.state }));
-  if (rows.length <= LIMITS.MAX_LIST_ROWS) {
-    return list(copy.depotPrompt(), copy.depotListButton(), rows);
+  const states = statesOf(context);
+  const region = states.length === 1 ? states[0] : cart.region;
+
+  if (!region || !states.includes(region)) {
+    const rows = states.map((s) => ({
+      id: `state:${s}`,
+      title: s,
+      description: copy.stateRowDescription(depots.filter((d) => String(d.state || "Other") === s).length),
+    }));
+    return list(copy.stateListPrompt(), copy.stateListButton(), pageRows(rows, cart.page));
   }
-  const pages = Math.ceil(rows.length / PAGE_SIZE);
-  const current = ((Number(page) || 0) % pages + pages) % pages; // wraps, never strands
-  const slice = rows.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE);
-  const more = copy.moreRow();
-  return list(copy.depotPrompt(), copy.depotListButton(), [
-    ...slice,
-    { id: "more", title: more.title, description: more.description },
-  ]);
+
+  const rows = depots
+    .filter((d) => String(d.state || "Other") === region)
+    .map((d) => ({ id: `depot:${d.id}`, title: d.name }));
+  const back = states.length > 1 ? [{ id: "states", ...copy.changeStateRow() }] : [];
+  return list(
+    copy.depotPrompt(states.length > 1 ? region : null),
+    copy.depotListButton(),
+    pageRows(rows, cart.page, back)
+  );
 };
 
 const confirmReply = (session, context) => {
@@ -329,7 +382,7 @@ const confirmReply = (session, context) => {
   const product = findProduct(depot, cart.productId);
   if (!depot || !product) {
     // Context shifted under the cart (price pulled, stock gone) — re-pick.
-    return depotList(0, context);
+    return depotList({}, context);
   }
   const total = (Number(product.price) || 0) * (Number(cart.quantity) || 0);
   let body = copy.confirmSummary({
@@ -339,7 +392,7 @@ const confirmReply = (session, context) => {
     deliveryType: cart.deliveryType,
     unitPrice: product.price,
     total,
-    plates: cart.plates || [],
+    trucks: cart.trucks || [],
     address: cart.address,
   });
   // A wallet that covers the order pays it instantly inside placeOrder — say
@@ -483,15 +536,15 @@ const reduceInner = (session, inbound, ctx, expired) => {
       const next = { ...session, cart };
       if (inbound.reason === "stock") {
         const stock = Number(inbound.stock) || 0;
+        const depot = findDepot(ctx, cart.depotId);
+        const depotName = depot ? depot.name : "that depot";
         if (stock > 0) {
-          const depot = findDepot(ctx, cart.depotId);
           return goTo({ ...next, cart: clearQuantity(cart) }, STATES.QUANTITY, ctx, [
-            text(copy.orderFailedStock(stock, depot ? depot.name : "that depot")),
+            text(copy.orderFailedStock(true, depotName)),
           ]);
         }
-        const depot = findDepot(ctx, cart.depotId);
         return goTo({ ...next, cart: clearDepot(cart) }, STATES.DEPOT, ctx, [
-          text(copy.orderFailedStock(0, depot ? depot.name : "that depot")),
+          text(copy.orderFailedStock(false, depotName)),
         ]);
       }
       return done({ ...next, state: STATES.CONFIRM }, [
@@ -668,7 +721,21 @@ const pricesReply = (ctx) => {
 const handleDepot = (session, ctx, value) => {
   if (value === "more") {
     const cart = { ...session.cart, page: (Number(session.cart.page) || 0) + 1 };
-    return done({ ...session, cart, failureCount: 0 }, [depotList(cart.page, ctx)]);
+    return done({ ...session, cart, failureCount: 0 }, [depotList(cart, ctx)]);
+  }
+  if (value === "states") {
+    const { region, page, ...rest } = session.cart;
+    return done({ ...session, cart: rest, failureCount: 0 }, [depotList(rest, ctx)]);
+  }
+  const states = statesOf(ctx);
+  const pickedState = value.startsWith("state:")
+    ? value.slice("state:".length)
+    : states.find((s) => s.toLowerCase() === value);
+  // Meta echoes list-row ids verbatim (case preserved); typed names match too.
+  const region = states.find((s) => s.toLowerCase() === String(pickedState).toLowerCase());
+  if (region) {
+    const cart = { ...session.cart, region, page: 0 };
+    return done({ ...session, cart, failureCount: 0 }, [depotList(cart, ctx)]);
   }
   const id = value.startsWith("depot:") ? value.slice("depot:".length) : null;
   const depot = id
@@ -678,7 +745,7 @@ const handleDepot = (session, ctx, value) => {
     const cart = { ...clearDepot(session.cart), depotId: depot.id };
     return goTo({ ...session, cart }, nextStep(cart), ctx);
   }
-  return fumble(session, ctx, [depotList(session.cart.page, ctx)]);
+  return fumble(session, ctx, [depotList(session.cart, ctx)]);
 };
 
 const handleProduct = (session, ctx, value) => {
@@ -712,16 +779,9 @@ const handleQuantity = (session, inbound, ctx, value) => {
     ]);
   }
 
-  // Standing over-stock offer: "we have 45,000 L — want that instead?"
-  if (session.cart.stockOffer) {
-    if (value === "takestock") {
-      const cart = { ...clearQuantity(session.cart), quantity: session.cart.stockOffer };
-      return goTo({ ...session, cart }, nextStep(cart), ctx);
-    }
-    if (value === "changedepot") {
-      return goTo({ ...session, cart: clearDepot(session.cart) }, STATES.DEPOT, ctx);
-    }
-    // Anything else falls through — maybe they typed a new quantity.
+  // The over-stock reply offers this button; typing a smaller number works too.
+  if (value === "changedepot") {
+    return goTo({ ...session, cart: clearDepot(session.cart) }, STATES.DEPOT, ctx);
   }
 
   const qty = parseLitres(inbound.value);
@@ -736,9 +796,10 @@ const handleQuantity = (session, inbound, ctx, value) => {
   }
   const stock = Number(product.stock) || 0;
   if (qty > stock) {
-    const cart = { ...session.cart, stockOffer: stock };
-    return done({ ...session, cart, failureCount: 0 }, [
-      buttons(copy.quantityOverStock(stock, depot.name), copy.overStockButtons(stock)),
+    // Refused without revealing how much we hold — stock levels are
+    // commercial information. They can type a smaller figure or move depot.
+    return done({ ...session, failureCount: 0 }, [
+      buttons(copy.quantityOverStock(depot.name), copy.overStockButtons()),
     ]);
   }
   const cart = { ...clearQuantity(session.cart), quantity: qty };
@@ -763,14 +824,70 @@ const handleLogistics = (session, inbound, ctx) => {
     }
     return fumble(session, ctx, [text(copy.addressInvalid())]);
   }
-  // Pickup: collect plates one truck at a time.
-  const plate = typeof inbound.value === "string" ? inbound.value.trim().toUpperCase() : "";
-  if (inbound.type === INBOUND.TEXT && isPlausiblePlate(plate)) {
-    const plates = [...(cart.plates || []), plate];
-    const next = { ...cart, plates };
-    return goTo({ ...session, cart: next }, nextStep(next), ctx);
+  // Pickup: the customer declares their trucks — how many, the litres on
+  // each, and each plate. The last truck always takes the exact remainder.
+  const q = Number(cart.quantity) || 0;
+  const raw = typeof inbound.value === "string" ? inbound.value.trim() : "";
+  const plate = raw.toUpperCase();
+  const trucks = cart.trucks || [];
+
+  // Single truck implicit: the whole order fits in one.
+  if (q <= TRUCK_CAPACITY_LITRES) {
+    if (inbound.type === INBOUND.TEXT && isPlausiblePlate(plate)) {
+      const next = { ...cart, trucks: [{ quantity: q, plate }] };
+      return goTo({ ...session, cart: next }, nextStep(next), ctx);
+    }
+    return fumble(session, ctx, [text(copy.plateInvalid())]);
   }
-  return fumble(session, ctx, [text(copy.plateInvalid())]);
+
+  // Multi-truck: first, how many trucks?
+  if (!cart.truckCount) {
+    const n = parseLitres(raw); // reuses the forgiving number parser
+    const min = minTrucksFor(q);
+    const max = maxTrucksFor(q);
+    if (!Number.isNaN(n) && n >= min && n <= max) {
+      const next = { ...cart, truckCount: n, trucks: [] };
+      return goTo({ ...session, cart: next }, nextStep(next), ctx);
+    }
+    return fumble(session, ctx, [text(copy.truckCountInvalid(min, max))]);
+  }
+
+  const remaining = q - litresAssigned(cart);
+  const index = trucks.length + 1;
+
+  // A truck's litres are pending — this message should be its plate.
+  if (cart.currentLitres) {
+    if (inbound.type === INBOUND.TEXT && isPlausiblePlate(plate)) {
+      const { currentLitres, ...restCart } = cart;
+      const next = { ...restCart, trucks: [...trucks, { quantity: currentLitres, plate }] };
+      return goTo({ ...session, cart: next }, nextStep(next), ctx);
+    }
+    return fumble(session, ctx, [text(copy.plateInvalid())]);
+  }
+
+  // The last truck takes the remainder — only its plate is asked.
+  if (index === cart.truckCount) {
+    if (inbound.type === INBOUND.TEXT && isPlausiblePlate(plate)) {
+      const next = { ...cart, trucks: [...trucks, { quantity: remaining, plate }] };
+      return goTo({ ...session, cart: next }, nextStep(next), ctx);
+    }
+    return fumble(session, ctx, [text(copy.plateInvalid())]);
+  }
+
+  // Otherwise: this truck's litres. Must fit the truck, and leave the
+  // remaining trucks a workable share (≥1 L each, ≤ capacity each).
+  const v = parseLitres(raw);
+  const trucksAfter = cart.truckCount - index;
+  const valid =
+    !Number.isNaN(v) &&
+    v >= 1 &&
+    v <= TRUCK_CAPACITY_LITRES &&
+    remaining - v >= trucksAfter &&
+    remaining - v <= trucksAfter * TRUCK_CAPACITY_LITRES;
+  if (valid) {
+    return goTo({ ...session, cart: { ...cart, currentLitres: v } }, STATES.LOGISTICS, ctx);
+  }
+  return fumble(session, ctx, [text(copy.truckLitresInvalid(remaining))]);
 };
 
 const handleConfirm = (session, ctx, value) => {
@@ -835,11 +952,10 @@ const handleConfirm = (session, ctx, value) => {
       deliveryType: cart.deliveryType,
     };
     if (cart.deliveryType === "pickup") {
-      const split = truckSplit(cart.quantity);
       // truckNumber, not plateNumber: this payload feeds placeOrder verbatim.
-      payload.trucks = (cart.plates || []).map((plate, i) => ({
-        truckNumber: plate,
-        quantity: split[i],
+      payload.trucks = (cart.trucks || []).map((t) => ({
+        truckNumber: t.plate,
+        quantity: t.quantity,
       }));
     } else {
       payload.address = cart.address;
@@ -855,8 +971,10 @@ module.exports = {
   reduce,
   // Pure helpers exported for direct unit- and property-testing.
   parseLitres,
-  truckSplit,
   nextStep,
+  trucksComplete,
+  minTrucksFor,
+  maxTrucksFor,
   isPlausiblePlate,
   isPlausibleName,
 };

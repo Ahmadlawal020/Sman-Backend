@@ -8,7 +8,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
-const { reduce, parseLitres, truckSplit, nextStep } = require("../whatsapp/engine");
+const { reduce, parseLitres, nextStep, trucksComplete, minTrucksFor, maxTrucksFor } = require("../whatsapp/engine");
 const { STATES, INBOUND, REPLY, EFFECTS, LIMITS, TEMPLATES } = require("../whatsapp/constants");
 
 // ------------------------------------------------------------------ fixtures
@@ -25,7 +25,8 @@ const WARRI = {
 const LAGOS = {
   id: 2,
   name: "Lagos",
-  state: "Lagos",
+  state: "Delta", // same state as Warri: the base context is single-state,
+  // so depot browsing goes straight to depots (state grouping has its own suite)
   products: [{ id: 10, name: "PMS", price: 870, stock: 50000 }],
 };
 
@@ -83,7 +84,7 @@ const fullPickupCart = () => ({
   productId: 10,
   quantity: 30000,
   deliveryType: "pickup",
-  plates: ["ABC-123-XY"],
+  trucks: [{ quantity: 30000, plate: "ABC-123-XY" }],
 });
 
 // ---------------------------------------------------------------- pure helpers
@@ -101,14 +102,16 @@ describe("pure helpers", () => {
     assert.ok(Number.isNaN(parseLitres("")));
   });
 
-  it("truckSplit spreads litres evenly and never loses a litre", () => {
-    assert.deepEqual(truckSplit(30000), [30000]);
-    assert.deepEqual(truckSplit(60000), [60000]);
-    assert.deepEqual(truckSplit(60001), [30001, 30000]);
-    assert.deepEqual(truckSplit(150000), [50000, 50000, 50000]);
-    const split = truckSplit(130000);
-    assert.equal(split.length, 3);
-    assert.equal(split.reduce((a, b) => a + b, 0), 130000);
+  it("truck arithmetic: implicit single, declared multi, sane bounds", () => {
+    assert.equal(trucksComplete({ quantity: 30000, trucks: [{ quantity: 30000, plate: "A1 X" }] }), true);
+    assert.equal(trucksComplete({ quantity: 30000 }), false);
+    assert.equal(trucksComplete({ quantity: 150000, truckCount: 3, trucks: [{}, {}] }), false);
+    assert.equal(trucksComplete({ quantity: 150000, truckCount: 3, trucks: [{}, {}, {}] }), true);
+    assert.equal(trucksComplete({ quantity: 150000 }), false); // count undeclared
+    assert.equal(minTrucksFor(60000), 1);
+    assert.equal(minTrucksFor(60001), 2);
+    assert.equal(minTrucksFor(150000), 3);
+    assert.equal(maxTrucksFor(150000), 10);
   });
 
   it("nextStep walks the first unanswered question", () => {
@@ -122,8 +125,8 @@ describe("pure helpers", () => {
     );
     assert.equal(nextStep(fullPickupCart()), STATES.CONFIRM);
     assert.equal(
-      nextStep({ depotId: 1, productId: 10, quantity: 150000, deliveryType: "pickup", plates: ["A1"] }),
-      STATES.LOGISTICS // 150k litres = 3 trucks; one plate is not enough
+      nextStep({ depotId: 1, productId: 10, quantity: 150000, deliveryType: "pickup", truckCount: 3, trucks: [{ quantity: 60000, plate: "A1 X" }] }),
+      STATES.LOGISTICS // three trucks declared; only one supplied so far
     );
   });
 });
@@ -340,17 +343,79 @@ describe("DEPOT", () => {
     assert.equal(r.session.cart.depotId, 2);
     assert.equal(r.session.cart.productId, undefined);
     assert.equal(r.session.cart.quantity, undefined);
+    assert.equal(r.session.cart.trucks, undefined);
     assert.equal(r.session.cart.deliveryType, "pickup"); // collection survives
+  });
+});
+
+// ------------------------------------------------------- state grouping
+
+describe("state-grouped depot browsing", () => {
+  const IKEJA = {
+    id: 3,
+    name: "Ikeja",
+    state: "Lagos",
+    products: [{ id: 10, name: "PMS", price: 870, stock: 50000 }],
+  };
+  const multiCtx = () => baseCtx({ depots: [WARRI, LAGOS, IKEJA] });
+
+  it("more than one state: pick the state first", () => {
+    const r = reduce(mkSession(STATES.MENU), btn("order"), multiCtx());
+    assert.equal(r.session.state, STATES.DEPOT);
+    const rows = r.replies[0].sections[0].rows;
+    assert.deepEqual(rows.map((x) => x.id), ["state:Delta", "state:Lagos"]);
+    assert.equal(rows[0].description, "2 depots");
+    assert.equal(rows[1].description, "1 depot");
+  });
+
+  it("picking a state shows only its depots, with a way back", () => {
+    const picked = reduce(mkSession(STATES.DEPOT), lst("state:Delta"), multiCtx());
+    assert.equal(picked.session.cart.region, "Delta");
+    const ids = rowIds(picked.replies[0]);
+    assert.deepEqual(ids, ["depot:1", "depot:2", "states"]);
+  });
+
+  it("⬅ Change state returns to the state list", () => {
+    const s = mkSession(STATES.DEPOT, { region: "Delta" });
+    const r = reduce(s, lst("states"), multiCtx());
+    assert.equal(r.session.cart.region, undefined);
+    assert.ok(rowIds(r.replies[0]).every((id) => id.startsWith("state:")));
+  });
+
+  it("typing the state name works too", () => {
+    const r = reduce(mkSession(STATES.DEPOT), txt("lagos"), multiCtx());
+    assert.equal(r.session.cart.region, "Lagos");
+    assert.deepEqual(rowIds(r.replies[0]), ["depot:3", "states"]);
+  });
+
+  it("a depot picked inside the region advances to PRODUCT", () => {
+    const s = mkSession(STATES.DEPOT, { region: "Lagos" });
+    const r = reduce(s, lst("depot:3"), multiCtx());
+    assert.equal(r.session.state, STATES.PRODUCT);
+    assert.equal(r.session.cart.depotId, 3);
+  });
+
+  it("a single state skips the grouping entirely", () => {
+    const r = reduce(mkSession(STATES.MENU), btn("order"), baseCtx());
+    assert.ok(rowIds(r.replies[0]).every((id) => id.startsWith("depot:")));
   });
 });
 
 // -------------------------------------------------------------------- product
 
 describe("PRODUCT", () => {
-  it("selection advances to QUANTITY with the stock shown", () => {
+  it("selection advances to QUANTITY — and never reveals our stock level", () => {
     const r = reduce(mkSession(STATES.PRODUCT, { depotId: 1 }), lst("product:10"), baseCtx());
     assert.equal(r.session.state, STATES.QUANTITY);
-    assert.ok(r.replies[0].body.includes("120,000"));
+    assert.ok(r.replies[0].body.includes("PMS"));
+    assert.ok(!r.replies[0].body.includes("120,000"), "stock figure is commercial information");
+  });
+
+  it("product rows show the price but not the stock", () => {
+    const r = reduce(mkSession(STATES.DEPOT), lst("depot:1"), baseCtx());
+    const desc = r.replies[0].sections[0].rows[0].description;
+    assert.ok(desc.includes("₦850"));
+    assert.ok(!desc.includes("120"), "no stock in the row description");
   });
 
   it("typing the product name works too", () => {
@@ -399,29 +464,21 @@ describe("QUANTITY", () => {
     assert.equal(r.session.state, STATES.QUANTITY);
   });
 
-  it("over stock: offer what's actually there", () => {
+  it("over stock: refused WITHOUT revealing how much we hold", () => {
     const r = reduce(mkSession(STATES.QUANTITY, cart), txt("150000"), baseCtx());
-    assert.equal(r.session.cart.stockOffer, 120000);
-    assert.deepEqual(buttonIds(r.replies[0]), ["takeStock", "changeDepot", "menu"]);
-  });
-
-  it("taking the offered stock proceeds with it", () => {
-    const s = mkSession(STATES.QUANTITY, { ...cart, stockOffer: 120000 });
-    const r = reduce(s, btn("takeStock"), baseCtx());
-    assert.equal(r.session.state, STATES.COLLECT);
-    assert.equal(r.session.cart.quantity, 120000);
-    assert.equal(r.session.cart.stockOffer, undefined);
+    assert.equal(r.session.state, STATES.QUANTITY);
+    assert.ok(!r.replies[0].body.includes("120,000"), "stock figure never leaves the building");
+    assert.deepEqual(buttonIds(r.replies[0]), ["changeDepot", "menu"]);
   });
 
   it("declining via Change depot restarts at DEPOT", () => {
-    const s = mkSession(STATES.QUANTITY, { ...cart, stockOffer: 120000 });
-    const r = reduce(s, btn("changeDepot"), baseCtx());
+    const r = reduce(mkSession(STATES.QUANTITY, cart), btn("changeDepot"), baseCtx());
     assert.equal(r.session.state, STATES.DEPOT);
   });
 
-  it("typing a fresh (valid) number over the offer also works", () => {
-    const s = mkSession(STATES.QUANTITY, { ...cart, stockOffer: 120000 });
-    const r = reduce(s, txt("40000"), baseCtx());
+  it("typing a smaller number after the refusal just works", () => {
+    const refused = reduce(mkSession(STATES.QUANTITY, cart), txt("150000"), baseCtx());
+    const r = reduce(refused.session, txt("40000"), baseCtx());
     assert.equal(r.session.state, STATES.COLLECT);
     assert.equal(r.session.cart.quantity, 40000);
   });
@@ -455,11 +512,11 @@ describe("COLLECT and LOGISTICS", () => {
     assert.equal(r.session.state, STATES.LOGISTICS);
   });
 
-  it("one truck: one plate reaches CONFIRM", () => {
+  it("one truck (implicit): one plate reaches CONFIRM", () => {
     const s = mkSession(STATES.LOGISTICS, { ...cart, deliveryType: "pickup" });
     const r = reduce(s, txt("abc-123-xy"), baseCtx());
     assert.equal(r.session.state, STATES.CONFIRM);
-    assert.deepEqual(r.session.cart.plates, ["ABC-123-XY"]); // normalised upper
+    assert.deepEqual(r.session.cart.trucks, [{ quantity: 30000, plate: "ABC-123-XY" }]);
   });
 
   it("an implausible plate is bounced", () => {
@@ -469,13 +526,58 @@ describe("COLLECT and LOGISTICS", () => {
     assert.equal(r.session.failureCount, 1);
   });
 
-  it("150,000 L needs three trucks: plates are collected one at a time", () => {
+  it("above one truck the CUSTOMER declares the fleet: count, litres, plates", () => {
     const big = { depotId: 1, productId: 10, quantity: 110000, deliveryType: "pickup" };
-    const first = reduce(mkSession(STATES.LOGISTICS, big), txt("AAA-111-AA"), baseCtx());
-    assert.equal(first.session.state, STATES.LOGISTICS); // truck 2 still owed
-    const second = reduce(first.session, txt("BBB-222-BB"), baseCtx());
-    assert.equal(second.session.state, STATES.CONFIRM);
-    assert.equal(second.session.cart.plates.length, 2);
+    // First question: how many trucks?
+    const s = mkSession(STATES.COLLECT, big);
+    const asked = reduce(s, btn("pickup"), baseCtx());
+    assert.equal(asked.session.state, STATES.LOGISTICS);
+    assert.match(asked.replies[asked.replies.length - 1].body, /how many trucks/i);
+
+    // 1 truck can't carry 110,000 L.
+    const tooFew = reduce(asked.session, txt("1"), baseCtx());
+    assert.equal(tooFew.session.cart.truckCount, undefined);
+
+    // 2 trucks accepted → truck 1's litres.
+    const counted = reduce(asked.session, txt("2"), baseCtx());
+    assert.equal(counted.session.cart.truckCount, 2);
+    assert.match(counted.replies[counted.replies.length - 1].body, /Truck 1 of 2/);
+
+    // 70,000 L exceeds a truck.
+    const tooMuch = reduce(counted.session, txt("70000"), baseCtx());
+    assert.equal(tooMuch.session.cart.currentLitres, undefined);
+
+    // 60,000 L accepted → truck 1's plate.
+    const loaded = reduce(counted.session, txt("60,000"), baseCtx());
+    assert.equal(loaded.session.cart.currentLitres, 60000);
+    const plated = reduce(loaded.session, txt("AAA-111-AA"), baseCtx());
+    assert.deepEqual(plated.session.cart.trucks, [{ quantity: 60000, plate: "AAA-111-AA" }]);
+
+    // Last truck takes the remainder automatically — only its plate is asked.
+    assert.match(plated.replies[plated.replies.length - 1].body, /remaining 50,000 L/);
+    const finished = reduce(plated.session, txt("BBB-222-BB"), baseCtx());
+    assert.equal(finished.session.state, STATES.CONFIRM);
+    assert.deepEqual(finished.session.cart.trucks, [
+      { quantity: 60000, plate: "AAA-111-AA" },
+      { quantity: 50000, plate: "BBB-222-BB" },
+    ]);
+  });
+
+  it("a truck cannot starve or overload the ones after it", () => {
+    // Floor: truck 2 of 3 taking ALL 50,000 remaining leaves truck 3 nothing.
+    const midway = {
+      depotId: 1, productId: 10, quantity: 110000, deliveryType: "pickup",
+      truckCount: 3, trucks: [{ quantity: 60000, plate: "AAA-111-AA" }],
+    };
+    const starved = reduce(mkSession(STATES.LOGISTICS, midway), txt("50000"), baseCtx());
+    assert.equal(starved.session.cart.currentLitres, undefined);
+    assert.equal(starved.session.failureCount, 1);
+
+    // Ceiling: truck 1 of 3 taking only 1,000 L of 130,000 leaves 129,000 —
+    // more than two trucks can physically carry.
+    const big = { depotId: 1, productId: 10, quantity: 130000, deliveryType: "pickup", truckCount: 3, trucks: [] };
+    const overloaded = reduce(mkSession(STATES.LOGISTICS, big), txt("1000"), baseCtx());
+    assert.equal(overloaded.session.cart.currentLitres, undefined);
   });
 });
 
@@ -514,11 +616,12 @@ describe("CONFIRM", () => {
     assert.deepEqual(rowIds(r.replies[0]), ["edit:depot", "edit:product", "edit:quantity", "edit:collect"]);
   });
 
-  it("editing quantity clears it (and the plates sized off it) and re-asks", () => {
+  it("editing quantity clears it (and the trucks sized off it) and re-asks", () => {
     const r = reduce(mkSession(STATES.CONFIRM, fullPickupCart()), lst("edit:quantity"), baseCtx());
     assert.equal(r.session.state, STATES.QUANTITY);
     assert.equal(r.session.cart.quantity, undefined);
-    assert.equal(r.session.cart.plates, undefined);
+    assert.equal(r.session.cart.trucks, undefined);
+    assert.equal(r.session.cart.truckCount, undefined);
     assert.equal(r.session.cart.deliveryType, "pickup"); // survives
   });
 
@@ -637,7 +740,8 @@ describe("order outcomes", () => {
     const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
     const r = reduce(s, { type: INBOUND.ORDER_FAILED, reason: "stock", stock: 45000 }, baseCtx());
     assert.equal(r.session.state, STATES.QUANTITY);
-    assert.ok(r.replies[0].body.includes("45,000"));
+    assert.match(r.replies[0].body, /smaller quantity/i);
+    assert.ok(!r.replies[0].body.includes("45,000"), "the fresh stock figure stays private");
     assert.equal(r.session.cart.pendingOrder, undefined);
   });
 

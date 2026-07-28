@@ -139,7 +139,7 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     await say("pickup");
     const { session, outbound } = await say("abc-123-xy");
     assert.equal(session.state, "CONFIRM");
-    assert.deepEqual(session.cart.plates, ["ABC-123-XY"]);
+    assert.deepEqual(session.cart.trucks, [{ quantity: 5000, plate: "ABC-123-XY" }]);
     const summary = outbound[outbound.length - 1].payload;
     assert.equal(summary.kind, "buttons");
     assert.match(summary.body, /500,000/); // 5,000 L × ₦100 — the server-side total

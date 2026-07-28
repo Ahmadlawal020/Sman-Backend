@@ -90,11 +90,20 @@ const pricesFooter = () => "\n\nTap *Place an order* from the menu when you're r
 
 // -------------------------------------------------------------------- depot
 
-const depotPrompt = () => "Which depot would you like to order from?";
+const stateListPrompt = () => "Which state are you ordering from?";
+
+const stateListButton = () => "Choose a state";
+
+const stateRowDescription = (count) => `${count} depot${count === 1 ? "" : "s"}`;
+
+const changeStateRow = () => ({ title: "⬅ Change state" });
+
+const depotPrompt = (stateName) =>
+  stateName ? `Which depot in ${stateName}?` : "Which depot would you like to order from?";
 
 const depotListButton = () => "Choose a depot";
 
-const moreRow = () => ({ title: "More depots ▸", description: "See the next page" });
+const moreRow = () => ({ title: "More ▸", description: "See the next page" });
 
 const depotUnavailable = () =>
   "That depot isn't available right now. Here are the ones that are:";
@@ -105,15 +114,16 @@ const productPrompt = (depotName) => `What are you buying at ${depotName}?`;
 
 const productListButton = () => "Choose a product";
 
-const productRowDescription = (price, stock) => `${naira(price)}/L · ${litres(stock)} available`;
+// Price only — how much stock we hold is our business, not the row's.
+const productRowDescription = (price) => `${naira(price)}/L`;
 
 const productUnavailable = (depotName) =>
   `That product isn't available at ${depotName} right now. Here's what is:`;
 
 // ----------------------------------------------------------------- quantity
 
-const quantityPrompt = (productName, depotName, stock) =>
-  `How many litres of ${productName}?\n\nWe have ${litres(stock)} at ${depotName} right now.`;
+const quantityPrompt = (productName, depotName) =>
+  `How many litres of ${productName} at ${depotName}?`;
 
 const quantityInvalid = () =>
   'Please send the quantity as a number of litres — for example *30000* or *30,000*.';
@@ -124,11 +134,11 @@ const quantityBelowMin = (min) =>
 const quantityAboveCap = (cap) =>
   `That looks like a typo — we can take up to ${litres(cap)} in one order. How many litres would you like?`;
 
-const quantityOverStock = (stock, depotName) =>
-  `We have ${litres(stock)} at ${depotName} right now — would you like that instead?`;
+// Deliberately number-free: remaining stock is commercial information.
+const quantityOverStock = (depotName) =>
+  `We can't supply that quantity at ${depotName} right now. 😔 Try a smaller amount, or another depot.`;
 
-const overStockButtons = (stock) => ({
-  takeStock: `Yes — ${Number(stock).toLocaleString("en-NG")} L`,
+const overStockButtons = () => ({
   changeDepot: "Change depot",
   menu: "Back to menu",
 });
@@ -141,9 +151,24 @@ const collectButtons = () => ({ pickup: "Pickup (my truck)", delivery: "Delivery
 
 // ---------------------------------------------------------------- logistics
 
+const truckCountPrompt = (quantity, minTrucks, maxTrucks) =>
+  `${litres(quantity)} for pickup — how many trucks will you be using? 🚛\n\nEach truck can carry up to ${litres(60000)}, so that's ${minTrucks === maxTrucks ? minTrucks : `between ${minTrucks} and ${maxTrucks}`} truck${maxTrucks === 1 ? "" : "s"}. Send a number.`;
+
+const truckCountInvalid = (minTrucks, maxTrucks) =>
+  `Please send a number of trucks between ${minTrucks} and ${maxTrucks} for this quantity.`;
+
+const truckLitresPrompt = (index, count, remaining) =>
+  `Truck ${index} of ${count} — how many litres will it carry?\n\n(${litres(remaining)} left to assign, up to ${litres(60000)} per truck.)`;
+
+const truckLitresInvalid = (remaining) =>
+  `That doesn't work — each truck carries at most ${litres(60000)}, and the remaining trucks still need something to carry. You have ${litres(remaining)} left to assign.`;
+
+const lastTruckPrompt = (count, remaining) =>
+  `Truck ${count} of ${count} takes the remaining ${litres(remaining)}. What's its plate number?`;
+
 const platePrompt = (index, count, litresForTruck) =>
   count > 1
-    ? `This order needs ${count} trucks. 🚛\n\nTruck ${index} of ${count} (${litres(litresForTruck)}) — what's the plate number?`
+    ? `Truck ${index} of ${count} (${litres(litresForTruck)}) — what's the plate number?`
     : "What's the plate number of the truck coming for pickup?";
 
 const plateInvalid = () =>
@@ -156,11 +181,14 @@ const addressInvalid = () =>
 
 // ------------------------------------------------------------------ confirm
 
-const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPrice, total, plates, address }) => {
+const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPrice, total, trucks = [], address }) => {
+  const truckLine = trucks
+    .map((t) => (trucks.length > 1 ? `${t.plate} (${litres(t.quantity)})` : t.plate))
+    .join(", ");
   const collect =
     deliveryType === "delivery"
       ? `Delivery to: ${address}`
-      : `Pickup — truck${plates.length > 1 ? "s" : ""}: ${plates.join(", ")}`;
+      : `Pickup — truck${trucks.length > 1 ? "s" : ""}: ${truckLine}`;
   return (
     "Here's your order 🧾\n\n" +
     `• ${litres(quantity)} ${productName}\n` +
@@ -215,10 +243,11 @@ const portalManageHint = (portalUrl) =>
 
 const invoiceCaption = (orderNumber) => `Invoice for order ${orderNumber}`;
 
-const orderFailedStock = (stock, depotName) =>
-  stock > 0
-    ? `So sorry — someone beat you to part of that stock. 😔 We now have ${litres(stock)} at ${depotName}. How many litres would you like?`
-    : `So sorry — that stock was just bought out at ${depotName}. 😔 Let's pick another depot:`;
+// Number-free on purpose — see quantityOverStock.
+const orderFailedStock = (hasSome, depotName) =>
+  hasSome
+    ? `So sorry — someone beat you to part of that stock at ${depotName}. 😔 Please try a smaller quantity.`
+    : `So sorry — that product was just bought out at ${depotName}. 😔 Let's pick another depot:`;
 
 const orderFailedGeneric = (supportPhone) =>
   `Something went wrong creating your order — your money has NOT been taken. 🙏 Please try again in a moment, or call us on ${supportPhone}.`;
@@ -269,6 +298,10 @@ module.exports = {
   pricesDepotLine,
   pricesProductPart,
   pricesFooter,
+  stateListPrompt,
+  stateListButton,
+  stateRowDescription,
+  changeStateRow,
   depotPrompt,
   depotListButton,
   moreRow,
@@ -285,6 +318,11 @@ module.exports = {
   overStockButtons,
   collectPrompt,
   collectButtons,
+  truckCountPrompt,
+  truckCountInvalid,
+  truckLitresPrompt,
+  truckLitresInvalid,
+  lastTruckPrompt,
   platePrompt,
   plateInvalid,
   addressPrompt,
