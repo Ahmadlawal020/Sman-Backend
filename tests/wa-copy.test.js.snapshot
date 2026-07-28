@@ -1,6 +1,7 @@
 exports[`every copy string, pinned 1`] = `
 {
   "identifyPrompt": "Welcome to Soroman Energy 👋\\n\\nWhat name should we put on your orders?",
+  "identifyGreeting": "Hello 👋 Before we start — what name should we put on your orders?",
   "identifyInvalidName": "That doesn't look like a name we can put on an order. Please send your full name — letters only, 2 to 60 characters.",
   "welcome": "Thanks, Ada Obi — you're all set. 🎉\\n\\nWhat would you like to do?",
   "menuGreetingNamed": "Hello Ada Obi 👋 What would you like to do?",

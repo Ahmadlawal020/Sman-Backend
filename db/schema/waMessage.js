@@ -39,6 +39,11 @@ const waMessages = pgTable(
     waPhone: varchar("wa_phone", { length: 30 }).notNull(),
     sessionId: integer("session_id").references(() => waSessions.id, { onDelete: "set null" }),
     customerId: integer("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    // Outbound only: the inbound message this reply answers. Two jobs — a
+    // retried turn reuses existing replies instead of minting duplicates, and
+    // the send worker treats linked (conversational) replies as perishable
+    // while unlinked ones (event pushes) stay durable however late.
+    inReplyTo: integer("in_reply_to"),
     // Inbound: Meta's raw message object. Outbound: the engine reply as data.
     payload: jsonb("payload").notNull(),
     status: waMessageStatusEnum("status").notNull(),
@@ -56,6 +61,8 @@ const waMessages = pgTable(
     index("wa_messages_phone_dir_idx").on(table.waPhone, table.direction, table.createdAt),
     // The janitor: inbound rows still unprocessed after a crash.
     index("wa_messages_status_idx").on(table.status, table.createdAt),
+    // The retry guard: "do replies for this inbound already exist?"
+    index("wa_messages_reply_to_idx").on(table.inReplyTo),
   ]
 );
 

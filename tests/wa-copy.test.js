@@ -28,6 +28,7 @@ test("every copy string, pinned", (t) => {
 
   t.assert.snapshot({
     identifyPrompt: copy.identifyPrompt(),
+    identifyGreeting: copy.identifyGreeting(),
     identifyInvalidName: copy.identifyInvalidName(),
     welcome: copy.welcome("Ada Obi"),
 
