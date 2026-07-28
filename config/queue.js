@@ -64,13 +64,38 @@ const QUEUE_OPTIONS = {
 let boss = null;
 let started = null;
 
+// One flaky network minute used to print dozens of identical lines. Log the
+// first occurrence immediately, then swallow repeats and report the count
+// when the message changes or 30 s pass — errors stay visible, not deafening.
+let lastError = { message: null, at: 0, suppressed: 0 };
+const logQueueError = (err) => {
+  const message = err?.message || String(err);
+  const now = Date.now();
+  if (message === lastError.message && now - lastError.at < 30_000) {
+    lastError.suppressed += 1;
+    return;
+  }
+  if (lastError.suppressed > 0) {
+    console.error(`[queue] (previous error repeated ${lastError.suppressed} more times)`);
+  }
+  console.error("[queue] pg-boss error:", message);
+  lastError = { message, at: now, suppressed: 0 };
+};
+
 const getBoss = () => {
   if (!boss) {
     const connectionString = process.env.PGBOSS_DATABASE_URL || process.env.DATABASE_URL;
     // Workers poll every 2 s by default (pollingIntervalSeconds is a WORKER
     // option, not a constructor one) — Neon-friendly as-is.
-    boss = new PgBoss({ connectionString, schema: "pgboss" });
-    boss.on("error", (err) => console.error("[queue] pg-boss error:", err.message));
+    //
+    // Tests get their own schema: the suite runs against the same database as
+    // a developer's live server, and without isolation the server's workers
+    // consume the tests' jobs (and vice versa) — real sends fired at fixture
+    // phone numbers, assertions racing a foreign worker.
+    const schema =
+      process.env.PGBOSS_SCHEMA || (process.env.NODE_ENV === "test" ? "pgboss_test" : "pgboss");
+    boss = new PgBoss({ connectionString, schema });
+    boss.on("error", (err) => logQueueError(err));
   }
   return boss;
 };

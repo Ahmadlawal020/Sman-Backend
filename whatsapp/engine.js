@@ -209,6 +209,31 @@ const clearCollect = (cart) => {
   return rest;
 };
 
+/**
+ * A short deterministic fingerprint of the order-defining cart fields. The
+ * CONFIRM button carries it (`confirm:<token>`), so a tap on a summary sent
+ * before the cart changed is detectable — WhatsApp buttons live forever in
+ * the chat history, and confirming a total the customer never saw is the one
+ * stale-tap case the state machine alone cannot catch. FNV-1a: pure, tiny,
+ * and stable — no randomness, per the engine's ground rules.
+ */
+const cartToken = (cart) => {
+  const key = JSON.stringify([
+    cart.depotId,
+    cart.productId,
+    cart.quantity,
+    cart.deliveryType,
+    cart.plates || [],
+    cart.address || "",
+  ]);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16);
+};
+
 // ------------------------------------------------------------------- prompts
 
 /** The question a state asks — reused on entry, resume and re-prompt. */
@@ -323,7 +348,13 @@ const confirmReply = (session, context) => {
   if (total > 0 && balance >= total) {
     body += `\n\n${copy.confirmWalletHint(balance)}`;
   }
-  return buttons(body, copy.confirmButtons());
+  const b = copy.confirmButtons();
+  // The confirm id fingerprints the cart this summary describes.
+  return buttons(body, {
+    [`confirm:${cartToken(cart)}`]: b.confirm,
+    edit: b.edit,
+    cancel: b.cancel,
+  });
 };
 
 // --------------------------------------------------------------------- reduce
@@ -779,7 +810,15 @@ const handleConfirm = (session, ctx, value) => {
     ]);
   }
 
-  if (value === "confirm") {
+  if (value === "confirm" || value.startsWith("confirm:")) {
+    // A tokened tap must match the CURRENT cart: WhatsApp buttons never
+    // expire, and an old summary's Confirm must not commit a cart the
+    // customer never saw. A typed "confirm" (no token) means "what's
+    // current" and always passes.
+    const token = value.startsWith("confirm:") ? value.slice("confirm:".length) : null;
+    if (token && token !== cartToken(cart)) {
+      return done(session, [text(copy.confirmOutdated()), confirmReply(session, ctx)]);
+    }
     const { cart: valid, lead } = revalidateCart(cart, ctx);
     if (valid !== cart || nextStep(valid) !== STATES.CONFIRM) {
       // Context shifted under the cart — walk the missing step, don't fail.

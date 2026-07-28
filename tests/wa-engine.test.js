@@ -541,6 +541,42 @@ describe("CONFIRM", () => {
     assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
   });
 
+  it("the Confirm button fingerprints the cart it summarises", () => {
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const ids = buttonIds(r.replies[0]);
+    assert.match(ids[0], /^confirm:[0-9a-f]+$/);
+    assert.deepEqual(ids.slice(1), ["edit", "cancel"]);
+  });
+
+  it("tapping the current summary's tokened Confirm places the order", () => {
+    const summary = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const confirmId = buttonIds(summary.replies[0])[0];
+    const r = reduce(summary.session, btn(confirmId), baseCtx());
+    assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
+  });
+
+  it("a Confirm from an OUTDATED summary is refused with the current one re-shown", () => {
+    // Reach CONFIRM, capture that summary's button…
+    const first = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const staleId = buttonIds(first.replies[0])[0];
+    // …then change the quantity (new summary, new token)…
+    const edited = reduce(first.session, lst("edit:quantity"), baseCtx());
+    const requoted = reduce(edited.session, txt("40000"), baseCtx());
+    const replated = reduce(requoted.session, txt("ABC-123-XY"), baseCtx());
+    assert.equal(replated.session.state, STATES.CONFIRM);
+    // …and tap the OLD button.
+    const r = reduce(replated.session, btn(staleId), baseCtx());
+    assert.deepEqual(r.effects, [], "the stale tap must not order");
+    assert.equal(r.session.state, STATES.CONFIRM);
+    assert.deepEqual(kinds(r), [REPLY.TEXT, REPLY.BUTTONS]); // heads-up + fresh summary
+    assert.match(r.replies[1].body, /40,000/);
+  });
+
+  it("a typed 'confirm' (no token) always means the current cart", () => {
+    const r = reduce(mkSession(STATES.CONFIRM, fullPickupCart()), txt("confirm"), baseCtx());
+    assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
+  });
+
   it("a wallet that covers the total announces itself on the summary", () => {
     const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } });
     const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), ctx);

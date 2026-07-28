@@ -175,6 +175,9 @@ const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPr
 const confirmWalletHint = (balance) =>
   `💡 You have ${naira(balance)} in your wallet — enough to cover this. Confirm and we'll pay from it instantly, no transfer needed.`;
 
+const confirmOutdated = () =>
+  "Heads up — your order changed after that summary was sent, so that button is out of date. Here's the current one:";
+
 const confirmButtons = () => ({ confirm: "Confirm ✅", edit: "Edit", cancel: "Cancel" });
 
 const editPrompt = () => "What would you like to change?";
@@ -288,6 +291,7 @@ module.exports = {
   addressInvalid,
   confirmSummary,
   confirmWalletHint,
+  confirmOutdated,
   confirmButtons,
   orderPaidWallet,
   editPrompt,

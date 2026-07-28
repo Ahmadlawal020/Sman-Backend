@@ -99,6 +99,7 @@ test("every copy string, pinned", (t) => {
     }),
     confirmWalletHint: copy.confirmWalletHint(30000000),
     orderPaidWallet: copy.orderPaidWallet(ORDER),
+    confirmOutdated: copy.confirmOutdated(),
     confirmButtons: copy.confirmButtons(),
     editPrompt: copy.editPrompt(),
     editListButton: copy.editListButton(),
