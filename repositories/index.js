@@ -24,4 +24,6 @@ module.exports = {
   dailyReportRepo: require("./dailyReport.repository"),
   incidentRecordRepo: require("./incidentRecord.repository"),
   offlineSaleRepo: require("./offlineSale.repository"),
+  waSessionRepo: require("./waSession.repository"),
+  waMessageRepo: require("./waMessage.repository"),
 };

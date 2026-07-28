@@ -57,6 +57,13 @@
       "when": 1785215973124,
       "tag": "0007_whatsapp_ordering",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785217823421,
+      "tag": "0008_wa_outbound_wamid",
+      "breakpoints": true
     }
   ]
 }

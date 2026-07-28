@@ -14,9 +14,10 @@ app.use(helmet());
 app.use(logger);
 app.use(cors(corsOptions));
 
-// Webhook must be mounted BEFORE global express.json() so its raw-body
-// parser runs and the HMAC verify callback actually fires.
+// Webhooks must be mounted BEFORE global express.json() so their raw-body
+// parsers run and the HMAC verify callbacks actually fire.
 app.use("/api/webhooks", require("./routes/webhook.route"));
+app.use("/api/whatsapp/webhook", require("./routes/whatsappWebhook.route"));
 
 app.use(express.json());
 // `res.cookie` is built in, but `req.cookies` is not and never was — parsing

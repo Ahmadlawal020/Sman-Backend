@@ -9,6 +9,7 @@ const {
   index,
   uniqueIndex,
 } = require("drizzle-orm/pg-core");
+const { sql } = require("drizzle-orm");
 const { waMessageDirectionEnum, waMessageStatusEnum } = require("./enums");
 const { waSessions } = require("./waSession");
 const { customers } = require("./customer");
@@ -30,7 +31,10 @@ const waMessages = pgTable(
   "wa_messages",
   {
     id: serial("id").primaryKey(),
-    wamid: varchar("wamid", { length: 128 }).notNull(),
+    // Nullable because an OUTBOUND row exists before Meta assigns its wamid
+    // (queued → sent fills it in). Inbound rows always carry one, and the
+    // partial unique index below is the dedupe wall for them.
+    wamid: varchar("wamid", { length: 128 }),
     direction: waMessageDirectionEnum("direction").notNull(),
     waPhone: varchar("wa_phone", { length: 30 }).notNull(),
     sessionId: integer("session_id").references(() => waSessions.id, { onDelete: "set null" }),
@@ -43,7 +47,9 @@ const waMessages = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("wa_messages_wamid_idx").on(table.wamid),
+    uniqueIndex("wa_messages_wamid_idx")
+      .on(table.wamid)
+      .where(sql`${table.wamid} IS NOT NULL`),
     // The transcript projection, in order.
     index("wa_messages_session_idx").on(table.sessionId, table.createdAt),
     // The service-window question: newest inbound for a phone.
