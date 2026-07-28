@@ -49,8 +49,37 @@ function httpError(status, message) {
  *        Their quantities must sum to the order quantity; each ≤ 60,000 L.
  * @param {{type: "staff"|"customer"|"system", staffId?: number, customerId?: number}} [input.actor]
  *        Who is placing the order — recorded on the order.created audit row.
- * @returns {{ order: object, payment: object, isPaidWithWallet: boolean }}
+ * @param {string|null} [input.idempotencyKey]
+ *        Dedupe key for redeliverable requests (WhatsApp passes the wamid).
+ *        Same key twice → the original order back, alreadyProcessed: true.
+ * @returns {{ order: object, payment: object, isPaidWithWallet: boolean, alreadyProcessed?: boolean }}
  */
+
+/** The answer an idempotent replay gets: the original order, not a new one. */
+async function replayResult(orderId) {
+  const fullOrder = await orderRepo.findByIdFull(orderId);
+  return {
+    order: fullOrder,
+    isPaidWithWallet: fullOrder.paymentStatus === "Paid",
+    alreadyProcessed: true,
+    payment: {
+      accountNumber: fullOrder.virtualAccountNumber,
+      bankName: fullOrder.virtualAccountBank,
+      accountName: fullOrder.virtualAccountName,
+      emailSent: false,
+      smsSent: false,
+    },
+  };
+}
+
+// Only the idempotency-key index counts — an orderNumber collision (or any
+// other 23505) must still surface as the error it is.
+const isIdempotencyConflict = (err) => {
+  const code = err?.code || err?.cause?.code;
+  const constraint = err?.constraint_name || err?.cause?.constraint_name || "";
+  return code === "23505" && constraint === "orders_idempotency_key_idx";
+};
+
 async function placeOrder({
   customerId,
   state,
@@ -60,7 +89,16 @@ async function placeOrder({
   deliveryType,
   trucks,
   actor = { type: "system" },
+  // Callers whose requests can be redelivered (the WhatsApp CONFIRM step
+  // passes the inbound message's wamid) supply a key; a second call with the
+  // same key returns the original order instead of creating a duplicate.
+  idempotencyKey = null,
 }) {
+  if (idempotencyKey) {
+    const existing = await orderRepo.findByIdempotencyKey(idempotencyKey);
+    if (existing) return replayResult(existing.id);
+  }
+
   const customer = await customerRepo.findById(customerId);
   if (!customer) {
     throw httpError(404, "Customer not found");
@@ -167,7 +205,9 @@ async function placeOrder({
   // declared pickup loads and the Pending→Paid transition are ONE unit: a
   // failure anywhere rolls all of it back. A guarded write returning null
   // (stock claimed) is a lost race → a { status: 400 } that rolls back.
-  const { order, isPaidWithWallet } = await db.transaction(async (tx) => {
+  let order, isPaidWithWallet;
+  try {
+    ({ order, isPaidWithWallet } = await db.transaction(async (tx) => {
     const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
     if (!updatedPfi) {
       throw httpError(
@@ -196,6 +236,7 @@ async function placeOrder({
         virtualAccountNumber,
         virtualAccountBank,
         virtualAccountName,
+        idempotencyKey,
       },
       tx
     );
@@ -288,7 +329,17 @@ async function placeOrder({
     }
 
     return { order: orderRow, isPaidWithWallet: paid };
-  });
+    }));
+  } catch (err) {
+    // Two same-key requests racing: the loser's insert hits the partial unique
+    // index and its whole transaction rolls back (no stock burnt, no hold).
+    // Answer with the winner's order — same as the early replay check.
+    if (idempotencyKey && isIdempotencyConflict(err)) {
+      const existing = await orderRepo.findByIdempotencyKey(idempotencyKey);
+      if (existing) return replayResult(existing.id);
+    }
+    throw err;
+  }
 
   // --- Post-commit side effects. The order is durable; these are best-effort.
   if (isPaidWithWallet) {
@@ -360,4 +411,47 @@ async function placeOrder({
   };
 }
 
-module.exports = { placeOrder, httpError };
+/**
+ * Cancel a live order (any status through Released). One transaction: the
+ * state machine locks the row and rejects an illegal or concurrent cancel
+ * BEFORE any restitution, then stock release, capacity restore and the hold
+ * release run as the same unit. Shared by the staff endpoint and the
+ * WhatsApp customer cancel — the actor in the audit row tells them apart.
+ */
+async function cancelOrder({
+  orderId,
+  actor,
+  reason = null,
+  cancelledBy = null,
+  ipAddress = null,
+  userAgent = null,
+}) {
+  return db.transaction(async (tx) => {
+    const order = await orderStatus.transition(orderId, "Cancelled", {
+      tx,
+      actor,
+      set: {
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancellationReason: reason,
+      },
+      metadata: { reason, refunded: false },
+      ipAddress,
+      userAgent,
+    });
+
+    if (order.pfiId) {
+      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+    }
+    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
+
+    // Return any held funds. The hold — not a debit/credit pair — is the
+    // record, so a cancelled order leaves no ledger churn. On an Unpaid order
+    // there is no active hold and this is a no-op.
+    await walletService.releaseHold(order.id, tx);
+
+    return order;
+  });
+}
+
+module.exports = { placeOrder, cancelOrder, httpError };

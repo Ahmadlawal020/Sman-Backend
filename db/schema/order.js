@@ -64,11 +64,19 @@ const orders = pgTable(
     cancelledBy: integer("cancelled_by").references(() => staff.id, { onDelete: "set null" }),
     cancellationReason: text("cancellation_reason"),
 
+    // Supplied by callers whose requests can be redelivered (the WhatsApp
+    // CONFIRM step passes the message's wamid). A second placeOrder with the
+    // same key returns the original order instead of creating a duplicate.
+    idempotencyKey: varchar("idempotency_key", { length: 128 }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("orders_order_number_idx").on(table.orderNumber),
+    uniqueIndex("orders_idempotency_key_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
     index("orders_customer_payment_created_idx").on(table.customerId, table.paymentStatus, table.createdAt),
     index("orders_virtual_account_payment_idx").on(table.virtualAccountNumber, table.paymentStatus),
     index("orders_status_idx").on(table.status),

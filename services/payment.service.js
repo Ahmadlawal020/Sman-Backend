@@ -11,6 +11,20 @@ const {
 const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
+const { QUEUES, enqueue } = require("../config/queue");
+
+/**
+ * Push "payment received" into the customer's WhatsApp conversation. Only the
+ * enqueue happens here (no cycle back into the whatsapp module); the
+ * wa-events worker decides whether a session exists to re-enter. Guarded on
+ * the kill switch so a disabled deployment doesn't accumulate jobs.
+ */
+const notifyWhatsAppPaymentConfirmed = (orderId) => {
+  if (process.env.WHATSAPP_ENABLED !== "true") return;
+  enqueue(QUEUES.WA_EVENTS, { type: "payment_confirmed", orderId }).catch((err) =>
+    console.error("[wa] payment-confirmed enqueue failed:", err.message)
+  );
+};
 
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
 
@@ -30,6 +44,14 @@ const splitName = (name) => {
     last_name: initials.slice(1).join(" ") || initials[0] || "",
   };
 };
+
+// Paystack provisions no real bank accounts on a test key: dedicated
+// accounts in test mode must ask for "test-bank" or the call is refused —
+// which made DVA creation impossible in development for any customer who
+// didn't already have one (the WhatsApp flow's fresh customers being the
+// first real path to hit it).
+const preferredBank = () =>
+  (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test") ? "test-bank" : "wema-bank";
 
 const createDedicatedAccount = async (customer) => {
   try {
@@ -65,7 +87,7 @@ const createDedicatedAccount = async (customer) => {
         last_name,
         email: customer.email || `customer-${customer._id || customer.id}@soroman.com`,
         phone: customer.phone,
-        preferred_bank: "wema-bank",
+        preferred_bank: preferredBank(),
       },
       { headers: getPaystackHeaders() }
     );
@@ -313,6 +335,10 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
           set: { paymentConfirmedAt: new Date() },
           metadata: { via: "settlement", amount: String(orderTotal) },
         });
+        // Keep the bot's promise — "we'll message you here the moment it
+        // lands." Best-effort enqueue; the worker skips customers who never
+        // used WhatsApp, and a failure here never blocks the settlement.
+        notifyWhatsAppPaymentConfirmed(order.id);
       } catch (stErr) {
         console.error(`Failed to advance order ${order.orderNumber} to Paid:`, stErr.message);
       }

@@ -181,6 +181,58 @@ const releaseStatusEnum = pgEnum("release_status", [
   "released",
 ]);
 
+// Which surface created the customer. Three creation paths now exist and
+// telling them apart matters for support and for activation rules — a
+// WhatsApp-created customer skipped the OTP because the channel itself
+// proved phone control.
+const customerCreatedViaEnum = pgEnum("customer_created_via", [
+  "desk",
+  "portal",
+  "whatsapp",
+]);
+
+// The conversation engine's states, persisted per session. Mirrors
+// whatsapp/constants.js STATES — a session resumes exactly where it stopped.
+const waSessionStateEnum = pgEnum("wa_session_state", [
+  "IDENTIFY",
+  "MENU",
+  "DEPOT",
+  "PRODUCT",
+  "QUANTITY",
+  "COLLECT",
+  "LOGISTICS",
+  "CONFIRM",
+  "AWAIT_PAYMENT",
+]);
+
+const waMessageDirectionEnum = pgEnum("wa_message_direction", [
+  "inbound",
+  "outbound",
+]);
+
+// Inbound: received → processed. Outbound: queued → sent → delivered → read,
+// or failed (send exhausted retries) / skipped (kill switch, no template).
+// Every hop is recorded — the send path is never fire-and-forget.
+const waMessageStatusEnum = pgEnum("wa_message_status", [
+  "received",
+  "processed",
+  "queued",
+  "sent",
+  "delivered",
+  "read",
+  "failed",
+  "skipped",
+]);
+
+// Meta owns template approval; this mirrors their verdict locally so an
+// outside-window send can check it without a network call.
+const waTemplateStatusEnum = pgEnum("wa_template_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "paused",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -210,4 +262,9 @@ module.exports = {
   incidentStatusEnum,
   offlineSaleStatusEnum,
   releaseStatusEnum,
+  customerCreatedViaEnum,
+  waSessionStateEnum,
+  waMessageDirectionEnum,
+  waMessageStatusEnum,
+  waTemplateStatusEnum,
 };

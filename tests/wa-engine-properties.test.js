@@ -74,10 +74,15 @@ const arbCart = fc.record(
     productId: fc.integer({ min: 1, max: 60 }),
     quantity: fc.integer({ min: -5, max: 2_000_000 }),
     deliveryType: fc.constantFrom("pickup", "delivery", "??"),
-    plates: fc.array(fc.string({ maxLength: 16 }), { maxLength: 5 }),
+    trucks: fc.array(
+      fc.record({ quantity: fc.integer({ min: -5, max: 100000 }), plate: fc.string({ maxLength: 16 }) }),
+      { maxLength: 5 }
+    ),
+    truckCount: fc.integer({ min: -2, max: 15 }),
+    currentLitres: fc.integer({ min: -5, max: 100000 }),
+    region: fc.string({ maxLength: 20 }),
     address: fc.string({ maxLength: 80 }),
     page: fc.integer({ min: -3, max: 30 }),
-    stockOffer: fc.integer({ min: 0, max: 2_000_000 }),
     pendingOrder: fc.boolean(),
     pendingCustomer: fc.boolean(),
     resumeState: fc.constantFrom(...Object.values(STATES)),
@@ -105,8 +110,8 @@ const arbUserValue = fc.oneof(
   fc.string({ maxLength: 40 }), // arbitrary human input, emoji and all
   fc.constantFrom(
     "menu", "hi", "cancel", "help", "track", "retry", "order", "prices", "reorder",
-    "confirm", "edit", "pickup", "delivery", "more", "resume", "startover",
-    "takeStock", "changeDepot", "30000", "30,000", "0", "-5", "999999999",
+    "confirm", "confirm:deadbeef", "confirm:", "edit", "pickup", "delivery", "more", "resume", "startover",
+    "changeDepot", "states", "state:Delta", "state:nowhere", "2", "30000", "30,000", "0", "-5", "999999999",
     "edit:depot", "edit:quantity", "depot:1", "depot:404", "product:10", "ABC-123-XY"
   )
 );

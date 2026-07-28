@@ -50,6 +50,27 @@
       "when": 1785180552236,
       "tag": "0006_order_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785215973124,
+      "tag": "0007_whatsapp_ordering",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785217823421,
+      "tag": "0008_wa_outbound_wamid",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785218328851,
+      "tag": "0009_wa_session_failures",
+      "breakpoints": true
     }
   ]
 }

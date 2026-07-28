@@ -78,6 +78,15 @@ testConnection()
     app.listen(PORT, () => {
       console.log(`Dashboard server running on port ${PORT}`);
     });
+
+    // WhatsApp workers ride the same process. A queue failure logs loudly but
+    // never takes the dashboard down — the durable inbox holds messages until
+    // the workers are healthy, and the janitor cron re-queues what it finds.
+    if (process.env.WHATSAPP_ENABLED === "true") {
+      require("./whatsapp/worker")
+        .startWhatsApp()
+        .catch((err) => console.error("Fatal for WhatsApp (dashboard unaffected):", err.message));
+    }
   })
   .catch(() => {
     console.error("Failed to connect to database. Exiting.");

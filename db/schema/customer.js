@@ -8,7 +8,7 @@ const {
   index,
   uniqueIndex,
 } = require("drizzle-orm/pg-core");
-const { customerStatusEnum } = require("./enums");
+const { customerStatusEnum, customerCreatedViaEnum } = require("./enums");
 
 const customers = pgTable(
   "customers",
@@ -20,6 +20,10 @@ const customers = pgTable(
     companyName: varchar("company_name", { length: 255 }).default(""),
     address: text("address").default(""),
     status: customerStatusEnum("status").default("Active").notNull(),
+    // Which surface created this customer. WhatsApp-created customers are
+    // Active with phone_verified_at set on creation — the message itself
+    // proved phone control, so no OTP was sent.
+    createdVia: customerCreatedViaEnum("created_via").default("desk").notNull(),
     balance: decimal("balance", { precision: 15, scale: 2 }).default("0").notNull(),
     deposit: decimal("deposit", { precision: 15, scale: 2 }).default("0").notNull(),
     previousDeposit: decimal("previous_deposit", { precision: 15, scale: 2 }).default("0").notNull(),

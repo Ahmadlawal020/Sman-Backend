@@ -11,7 +11,8 @@ const { db } = require("../../config/db");
 const walletService = require("../../services/wallet.service");
 const { generateTicketForTruck } = require("../../services/ticket.service");
 const orderStatus = require("../../services/orderStatus.service");
-const { placeOrder } = require("../../services/order.service");
+const orderService = require("../../services/order.service");
+const { placeOrder } = orderService;
 
 /** Small helper: an HTTP error the error handler renders with its status. */
 function httpErr(status, message) {
@@ -200,29 +201,13 @@ const releaseOrder = asyncHandler(async (req, res) => {
 const cancelOrder = asyncHandler(async (req, res) => {
   const { reason } = req.body;
 
-  await db.transaction(async (tx) => {
-    const order = await orderStatus.transition(Number(req.params.id), "Cancelled", {
-      tx,
-      actor: { type: "staff", staffId: req.user.id },
-      set: {
-        cancelledAt: new Date(),
-        cancelledBy: req.user.id,
-        cancellationReason: reason ?? null,
-      },
-      metadata: { reason: reason ?? null, refunded: false },
-      ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
-    });
-
-    if (order.pfiId) {
-      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
-    }
-    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
-
-    // Return any held funds. The hold — not a debit/credit pair — is the record,
-    // so a cancelled order leaves no ledger churn. On an Unpaid order there is no
-    // active hold and this is a no-op.
-    await walletService.releaseHold(order.id, tx);
+  await orderService.cancelOrder({
+    orderId: Number(req.params.id),
+    actor: { type: "staff", staffId: req.user.id },
+    reason: reason ?? null,
+    cancelledBy: req.user.id,
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
   });
 
   const updatedOrder = await orderRepo.findByIdFull(Number(req.params.id));
