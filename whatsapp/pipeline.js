@@ -82,7 +82,11 @@ const processInbound = async ({ waMessageId }) => {
 
   // Blue-tick + "typing…" immediately, in parallel with the real work — the
   // customer sees "we've heard you" while context loads and the engine runs.
-  sendTypingIndicator(message.wamid);
+  // Best-effort, but not silent: a failure logs its reason, so "too fast to
+  // render" and "actually failing" are distinguishable in the console.
+  sendTypingIndicator(message.wamid).then((r) => {
+    if (r && r.ok === false) console.warn("[wa] typing indicator failed:", r.error);
+  });
 
   const waPhone = message.waPhone;
   const stored = await waSessionRepo.findByPhone(waPhone);
