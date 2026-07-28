@@ -16,7 +16,10 @@ const { REPLY } = require("./constants");
  * old SMS path broke silently in production; not here.
  */
 
-const GRAPH_VERSION = "v20.0";
+// Graph API versions live ~2 years each (v20.0 dies 2026-09-24; v25.0 is
+// current as of 2026-02). Overridable so a version bump is an env change,
+// not a deploy.
+const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v25.0";
 
 const config = () => ({
   enabled: process.env.WHATSAPP_ENABLED === "true",

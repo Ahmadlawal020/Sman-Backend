@@ -56,12 +56,9 @@ let started = null;
 const getBoss = () => {
   if (!boss) {
     const connectionString = process.env.PGBOSS_DATABASE_URL || process.env.DATABASE_URL;
-    boss = new PgBoss({
-      connectionString,
-      schema: "pgboss",
-      // Neon-friendly: modest polling, no aggressive maintenance cadence.
-      pollingIntervalSeconds: 2,
-    });
+    // Workers poll every 2 s by default (pollingIntervalSeconds is a WORKER
+    // option, not a constructor one) — Neon-friendly as-is.
+    boss = new PgBoss({ connectionString, schema: "pgboss" });
     boss.on("error", (err) => console.error("[queue] pg-boss error:", err.message));
   }
   return boss;
@@ -113,7 +110,8 @@ const scheduleCron = async (queue, cron, data = {}) => {
 
 const stopQueue = async () => {
   if (boss) {
-    await boss.stop({ graceful: true, wait: false }).catch(() => {});
+    // Valid StopOptions are {close, graceful, timeout} — `wait` is not one.
+    await boss.stop({ graceful: true, timeout: 5000 }).catch(() => {});
     boss = null;
     started = null;
   }
