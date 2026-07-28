@@ -97,6 +97,8 @@ test("every copy string, pinned", (t) => {
       plates: [],
       address: "14 Airport Road, Warri, Delta",
     }),
+    confirmWalletHint: copy.confirmWalletHint(30000000),
+    orderPaidWallet: copy.orderPaidWallet(ORDER),
     confirmButtons: copy.confirmButtons(),
     editPrompt: copy.editPrompt(),
     editListButton: copy.editListButton(),

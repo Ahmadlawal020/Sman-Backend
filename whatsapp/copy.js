@@ -172,6 +172,9 @@ const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPr
   );
 };
 
+const confirmWalletHint = (balance) =>
+  `💡 You have ${naira(balance)} in your wallet — enough to cover this. Confirm and we'll pay from it instantly, no transfer needed.`;
+
 const confirmButtons = () => ({ confirm: "Confirm ✅", edit: "Edit", cancel: "Cancel" });
 
 const editPrompt = () => "What would you like to change?";
@@ -198,6 +201,11 @@ const orderCreated = (order) =>
   `*${order.virtualAccountNumber}*\n` +
   `${order.virtualAccountName}\n\n` +
   "Payment is confirmed automatically — we'll message you here the moment it lands.";
+
+const orderPaidWallet = (order) =>
+  `Order *${order.orderNumber}* is in — and already paid ✅\n\n` +
+  `${naira(order.totalAmount)} was covered by your wallet balance, so there's nothing to transfer. ` +
+  "Your loading ticket is being prepared, and we'll keep you posted here at every step.";
 
 const portalManageHint = (portalUrl) =>
   `Need to change a truck or plate later? Manage this order at ${portalUrl}`;
@@ -279,7 +287,9 @@ module.exports = {
   addressPrompt,
   addressInvalid,
   confirmSummary,
+  confirmWalletHint,
   confirmButtons,
+  orderPaidWallet,
   editPrompt,
   editListButton,
   editRows,

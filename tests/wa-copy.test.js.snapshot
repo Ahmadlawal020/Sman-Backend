@@ -58,6 +58,8 @@ exports[`every copy string, pinned 1`] = `
   "addressInvalid": "That address looks too short. Please send the full delivery address, including the area and state.",
   "confirmPickup": "Here's your order 🧾\\n\\n• 30,000 L PMS\\n• Depot: Warri\\n• Pickup — truck: ABC-123-XY\\n• Price: ₦850/L\\n• *Total: ₦25,500,000*\\n\\nConfirm to get your invoice and payment details.",
   "confirmDelivery": "Here's your order 🧾\\n\\n• 10,000 L AGO\\n• Depot: Lagos\\n• Delivery to: 14 Airport Road, Warri, Delta\\n• Price: ₦1,020/L\\n• *Total: ₦10,200,000*\\n\\nConfirm to get your invoice and payment details.",
+  "confirmWalletHint": "💡 You have ₦30,000,000 in your wallet — enough to cover this. Confirm and we'll pay from it instantly, no transfer needed.",
+  "orderPaidWallet": "Order *SOR-1042* is in — and already paid ✅\\n\\n₦25,500,000 was covered by your wallet balance, so there's nothing to transfer. Your loading ticket is being prepared, and we'll keep you posted here at every step.",
   "confirmButtons": {
     "confirm": "Confirm ✅",
     "edit": "Edit",

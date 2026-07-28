@@ -25,11 +25,15 @@ const QUEUES = Object.freeze({
   // rate limits are transient; a still-failing send lands in the dead-letter
   // queue where it is a queryable row, not a lost message.
   WA_SEND: "wa-send",
+  // Business events entering a conversation from the OUTSIDE — a payment
+  // confirmed by the settlement sweep re-enters the customer's session here.
+  WA_EVENTS: "wa-events",
 });
 
 const DEAD_LETTER = Object.freeze({
   [QUEUES.WA_INBOUND]: "wa-inbound-dead",
   [QUEUES.WA_SEND]: "wa-send-dead",
+  [QUEUES.WA_EVENTS]: "wa-events-dead",
 });
 
 // Per-queue policy, applied at createQueue time.
@@ -47,6 +51,13 @@ const QUEUE_OPTIONS = {
     retryBackoff: true, // 10s, 20s, 40s … transient API trouble self-heals
     expireInSeconds: 60,
     deadLetter: DEAD_LETTER[QUEUES.WA_SEND],
+  },
+  [QUEUES.WA_EVENTS]: {
+    retryLimit: 5,
+    retryDelay: 30, // nobody is mid-conversation waiting on these
+    retryBackoff: true,
+    expireInSeconds: 60,
+    deadLetter: DEAD_LETTER[QUEUES.WA_EVENTS],
   },
 };
 

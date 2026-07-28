@@ -540,6 +540,19 @@ describe("CONFIRM", () => {
     assert.equal(r.session.failureCount, 1);
     assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
   });
+
+  it("a wallet that covers the total announces itself on the summary", () => {
+    const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } });
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), ctx);
+    assert.match(r.replies[0].body, /wallet/i);
+    assert.match(r.replies[0].body, /30,000,000/);
+  });
+
+  it("an insufficient wallet stays out of the summary", () => {
+    const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "500" } });
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), ctx);
+    assert.doesNotMatch(r.replies[0].body, /wallet/i);
+  });
 });
 
 // ------------------------------------------------ order outcomes and payment
@@ -563,6 +576,18 @@ describe("order outcomes", () => {
     assert.equal(r.session.lastOrderId, 501);
     assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.TEXT, REPLY.TEXT]);
     assert.ok(r.replies[1].body.includes("9930001111"));
+  });
+
+  it("an order already paid from the wallet asks for NO transfer and awaits nothing", () => {
+    const paid = { ...ORDER, paymentStatus: "Paid" };
+    const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
+    const r = reduce(s, { type: INBOUND.ORDER_CREATED, order: paid }, baseCtx());
+    assert.equal(r.session.state, STATES.MENU); // nothing to await
+    assert.deepEqual(r.session.cart, {});
+    assert.equal(r.session.lastOrderId, 501);
+    const body = r.replies.find((x) => x.kind === REPLY.TEXT).body;
+    assert.match(body, /wallet/i);
+    assert.doesNotMatch(body, /9930001111/, "no transfer instructions on a paid order");
   });
 
   it("no invoice URL: no document reply, everything else intact", () => {

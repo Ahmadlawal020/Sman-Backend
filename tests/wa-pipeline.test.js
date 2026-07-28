@@ -9,7 +9,7 @@ const { depots, products, depotProductPrices, pfis, waSessions } = require("../d
 const { eq } = require("drizzle-orm");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { normalizeInbound } = require("../whatsapp/normalize");
-const { processInbound, processSend } = require("../whatsapp/pipeline");
+const { processInbound, processSend, processEvent } = require("../whatsapp/pipeline");
 const { runMaintenance } = require("../whatsapp/worker");
 const { stopQueue } = require("../config/queue");
 const { closeDb } = require("./helpers");
@@ -191,6 +191,46 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     const { outbound } = await say("track");
     const reply = outbound[outbound.length - 1].payload;
     assert.match(reply.body, /Pending|waiting/i);
+  });
+
+  test("a settlement-confirmed payment pushes 'payment received' into the conversation", async () => {
+    // Put the session back where a paying customer would be.
+    const stored = await waSessionRepo.findByPhone(PHONE);
+    const orderId = stored.lastOrderId;
+    await waSessionRepo.save(PHONE, {
+      customerId: stored.customerId,
+      state: "AWAIT_PAYMENT",
+      cart: { awaiting: { orderNumber: "x", totalAmount: 1, virtualAccountBank: "b", virtualAccountNumber: "n" } },
+      lastOrderId: orderId,
+      failureCount: 0,
+    });
+    const before = (await waMessageRepo.findBySession(stored.id)).length;
+
+    await processEvent({ type: "payment_confirmed", orderId });
+
+    const session = await waSessionRepo.findByPhone(PHONE);
+    assert.equal(session.state, "MENU", "nothing left to await");
+    const all = await waMessageRepo.findBySession(session.id);
+    assert.ok(all.length > before, "a push went out");
+    const push = all[all.length - 1];
+    assert.equal(push.direction, "outbound");
+    assert.match(push.payload.body, /Payment received/i);
+  });
+
+  test("a payment event for a customer with no WhatsApp session is skipped quietly", async () => {
+    const stored = await waSessionRepo.findByPhone(PHONE);
+    const orderId = stored.lastOrderId;
+    await waSessionRepo.deleteByPhone(PHONE);
+    await processEvent({ type: "payment_confirmed", orderId }); // must not throw
+    assert.equal(await waSessionRepo.findByPhone(PHONE), null, "still no session — none was invented");
+    // Put the conversation back for the tests that follow.
+    await waSessionRepo.save(PHONE, {
+      customerId: stored.customerId,
+      state: stored.state,
+      cart: stored.cart,
+      lastOrderId: stored.lastOrderId,
+      failureCount: 0,
+    });
   });
 
   test("the maintenance sweep deletes sessions past their resume grace, keeps the rest", async () => {

@@ -2,7 +2,8 @@ const { reduce } = require("./engine");
 const { normalizeInbound } = require("./normalize");
 const { loadContext } = require("./context");
 const { EFFECTS, INBOUND } = require("./constants");
-const { customerRepo, waMessageRepo, waSessionRepo } = require("../repositories");
+const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
+const { toE164 } = require("../utils/phone");
 const { placeOrder } = require("../services/order.service");
 const { sendReply } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
@@ -112,24 +113,63 @@ const processInbound = async ({ waMessageId }) => {
   }
 
   const saved = await waSessionRepo.save(waPhone, session);
-
-  // Record first, send later: each reply is a queued wa_messages row before
-  // any network attempt, so the kill switch or a Cloud API outage leaves a
-  // visible trail instead of silence.
-  for (const reply of replies) {
-    const outbound = await waMessageRepo.createOutbound({
-      waPhone,
-      sessionId: saved.id,
-      customerId: customer?.id ?? null,
-      payload: reply,
-    });
-    await enqueue(QUEUES.WA_SEND, { waMessageId: outbound.id });
-  }
+  await dispatchReplies(waPhone, saved.id, customer?.id ?? null, replies);
 
   await waMessageRepo.markProcessed(message.id, {
     sessionId: saved.id,
     customerId: customer?.id ?? null,
   });
+};
+
+/**
+ * Record first, send later: each reply is a queued wa_messages row before any
+ * network attempt, so the kill switch or a Cloud API outage leaves a visible
+ * trail instead of silence.
+ */
+const dispatchReplies = async (waPhone, sessionId, customerId, replies) => {
+  for (const reply of replies) {
+    const outbound = await waMessageRepo.createOutbound({
+      waPhone,
+      sessionId,
+      customerId,
+      payload: reply,
+    });
+    await enqueue(QUEUES.WA_SEND, { waMessageId: outbound.id });
+  }
+};
+
+/**
+ * A business event entering the conversation from OUTSIDE — the settlement
+ * sweep confirming payment. Job handler for the wa-events queue. Customers
+ * who never used WhatsApp simply have no session and are skipped; telling
+ * them by SMS/email is the notification engine's job, not this one's.
+ */
+const processEvent = async ({ type, orderId }) => {
+  if (type !== "payment_confirmed") return;
+
+  const order = await orderRepo.findByIdFull(orderId);
+  if (!order) return;
+  const customer = await customerRepo.findById(order.customerId);
+  if (!customer?.phone) return;
+
+  const waPhone = toE164(customer.phone) || customer.phone;
+  const stored = await waSessionRepo.findByPhone(waPhone);
+  if (!stored) return; // not a WhatsApp conversation — nothing to re-enter
+
+  let session = {
+    waPhone,
+    customerId: customer.id,
+    state: stored.state,
+    cart: stored.cart || {},
+    lastOrderId: stored.lastOrderId,
+    failureCount: stored.failureCount || 0,
+  };
+
+  const context = await loadContext({ waPhone, customer, session });
+  const result = reduce(session, { type: INBOUND.PAYMENT_CONFIRMED, order }, context);
+
+  const saved = await waSessionRepo.save(waPhone, result.session);
+  await dispatchReplies(waPhone, saved.id, customer.id, result.replies);
 };
 
 /**
@@ -155,4 +195,4 @@ const processSend = async ({ waMessageId }) => {
   }
 };
 
-module.exports = { processInbound, processSend, performEffect, MAX_TURNS };
+module.exports = { processInbound, processSend, processEvent, performEffect, MAX_TURNS };

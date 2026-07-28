@@ -1,5 +1,5 @@
 const { QUEUES, enqueue, registerWorker, scheduleCron } = require("../config/queue");
-const { processInbound, processSend } = require("./pipeline");
+const { processInbound, processSend, processEvent } = require("./pipeline");
 const { waSessionRepo } = require("../repositories");
 const { db } = require("../config/db");
 const { waMessages } = require("../db/schema");
@@ -65,6 +65,7 @@ const startWhatsApp = async () => {
 
   await registerWorker(QUEUES.WA_INBOUND, processInbound);
   await registerWorker(QUEUES.WA_SEND, processSend);
+  await registerWorker(QUEUES.WA_EVENTS, processEvent);
   await scheduleCron(MAINTENANCE_QUEUE, "*/10 * * * *");
   await registerWorker(MAINTENANCE_QUEUE, runMaintenance);
 

@@ -306,16 +306,23 @@ const confirmReply = (session, context) => {
     // Context shifted under the cart (price pulled, stock gone) — re-pick.
     return depotList(0, context);
   }
-  const body = copy.confirmSummary({
+  const total = (Number(product.price) || 0) * (Number(cart.quantity) || 0);
+  let body = copy.confirmSummary({
     productName: product.name,
     quantity: cart.quantity,
     depotName: depot.name,
     deliveryType: cart.deliveryType,
     unitPrice: product.price,
-    total: (Number(product.price) || 0) * (Number(cart.quantity) || 0),
+    total,
     plates: cart.plates || [],
     address: cart.address,
   });
+  // A wallet that covers the order pays it instantly inside placeOrder — say
+  // so BEFORE the tap, so "already paid" never reads as a surprise.
+  const balance = Number(context.customer?.balance) || 0;
+  if (total > 0 && balance >= total) {
+    body += `\n\n${copy.confirmWalletHint(balance)}`;
+  }
   return buttons(body, copy.confirmButtons());
 };
 
@@ -408,19 +415,24 @@ const reduceInner = (session, inbound, ctx, expired) => {
     }
     case INBOUND.ORDER_CREATED: {
       const order = inbound.order || {};
+      // A covering wallet balance pays the order inside placeOrder itself —
+      // it arrives here already Paid. Nothing to await, nothing to transfer.
+      const paidFromWallet = order.paymentStatus === "Paid";
       const next = {
         ...session,
-        state: STATES.AWAIT_PAYMENT,
+        state: paidFromWallet ? STATES.MENU : STATES.AWAIT_PAYMENT,
         lastOrderId: order.id,
         failureCount: 0,
-        cart: {
-          awaiting: {
-            orderNumber: order.orderNumber,
-            totalAmount: order.totalAmount,
-            virtualAccountBank: order.virtualAccountBank,
-            virtualAccountNumber: order.virtualAccountNumber,
-          },
-        },
+        cart: paidFromWallet
+          ? emptyCart()
+          : {
+              awaiting: {
+                orderNumber: order.orderNumber,
+                totalAmount: order.totalAmount,
+                virtualAccountBank: order.virtualAccountBank,
+                virtualAccountNumber: order.virtualAccountNumber,
+              },
+            },
       };
       const replies = [];
       if (order.invoiceUrl) {
@@ -428,7 +440,7 @@ const reduceInner = (session, inbound, ctx, expired) => {
           document(order.invoiceUrl, `invoice-${order.orderNumber}.pdf`, copy.invoiceCaption(order.orderNumber))
         );
       }
-      replies.push(text(copy.orderCreated(order)));
+      replies.push(text(paidFromWallet ? copy.orderPaidWallet(order) : copy.orderCreated(order)));
       if (order.deliveryType === "pickup" && ctx.portalUrl) {
         replies.push(text(copy.portalManageHint(ctx.portalUrl)));
       }

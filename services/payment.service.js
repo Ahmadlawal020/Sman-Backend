@@ -11,6 +11,20 @@ const {
 const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
+const { QUEUES, enqueue } = require("../config/queue");
+
+/**
+ * Push "payment received" into the customer's WhatsApp conversation. Only the
+ * enqueue happens here (no cycle back into the whatsapp module); the
+ * wa-events worker decides whether a session exists to re-enter. Guarded on
+ * the kill switch so a disabled deployment doesn't accumulate jobs.
+ */
+const notifyWhatsAppPaymentConfirmed = (orderId) => {
+  if (process.env.WHATSAPP_ENABLED !== "true") return;
+  enqueue(QUEUES.WA_EVENTS, { type: "payment_confirmed", orderId }).catch((err) =>
+    console.error("[wa] payment-confirmed enqueue failed:", err.message)
+  );
+};
 
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
 
@@ -313,6 +327,10 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
           set: { paymentConfirmedAt: new Date() },
           metadata: { via: "settlement", amount: String(orderTotal) },
         });
+        // Keep the bot's promise — "we'll message you here the moment it
+        // lands." Best-effort enqueue; the worker skips customers who never
+        // used WhatsApp, and a failure here never blocks the settlement.
+        notifyWhatsAppPaymentConfirmed(order.id);
       } catch (stErr) {
         console.error(`Failed to advance order ${order.orderNumber} to Paid:`, stErr.message);
       }
