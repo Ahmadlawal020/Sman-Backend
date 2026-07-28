@@ -94,6 +94,27 @@ describe("cookie transport and CSRF", () => {
     assert.equal(seen.size, 5, "a fresh token per issue");
   });
 
+  test("cookie mode also returns the CSRF token in the body, matching the cookie", async () => {
+    // The cookie copy alone is unreachable: it is path-scoped to the auth
+    // prefix, and document.cookie only yields cookies whose path matches the
+    // page's URL — an SPA served from `/` can never read it. The body copy is
+    // what the client actually echoes back as the header.
+    const res = await login();
+    const cookies = parseCookies(res);
+
+    assert.ok(res.body.data.csrfToken, "csrfToken is in the response body");
+    assert.equal(
+      res.body.data.csrfToken,
+      cookies[CSRF_COOKIE].value,
+      "body and cookie carry the same token — the double submit must match"
+    );
+  });
+
+  test("body transport gets no CSRF token — it has no CSRF exposure", async () => {
+    const res = await login({ "X-Auth-Transport": "body" });
+    assert.equal(res.body.data.csrfToken, undefined);
+  });
+
   // --- hybrid transport ----------------------------------------------------
 
   test("cookie is the default — the weaker transport is never given by omission", async () => {
