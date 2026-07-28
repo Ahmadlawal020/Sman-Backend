@@ -9,8 +9,12 @@ const REQUIRED_ENV_VARS = ["DATABASE_URL", "PAYSTACK_SECRET_KEY", "NODE_ENV"];
 
 const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missing.length > 0) {
-  console.error(`Fatal: Missing required environment variables: ${missing.join(", ")}`);
-  console.error("Please configure these in your .env file before starting the server.");
+  console.error(
+    `Fatal: Missing required environment variables: ${missing.join(", ")}`,
+  );
+  console.error(
+    "Please configure these in your .env file before starting the server.",
+  );
   process.exit(1);
 }
 
@@ -21,7 +25,7 @@ if (missing.length > 0) {
 const VALID_ENVS = ["production", "staging", "development", "test"];
 if (!VALID_ENVS.includes(process.env.NODE_ENV)) {
   console.error(
-    `Fatal: NODE_ENV must be one of ${VALID_ENVS.join(", ")} — got "${process.env.NODE_ENV}"`
+    `Fatal: NODE_ENV must be one of ${VALID_ENVS.join(", ")} — got "${process.env.NODE_ENV}"`,
   );
   process.exit(1);
 }
@@ -43,14 +47,21 @@ if (process.env.OTP_DEV_MODE === "true") {
     process.env.NODE_ENV === "production" ||
     (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_live_");
   if (looksLive) {
-    console.error("Fatal: OTP_DEV_MODE must not be enabled in a production environment.");
+    console.error(
+      "Fatal: OTP_DEV_MODE must not be enabled in a production environment.",
+    );
     process.exit(1);
   }
-  console.warn("[otp] OTP_DEV_MODE is ON — codes are fixed and no SMS is sent.");
+  console.warn(
+    "[otp] OTP_DEV_MODE is ON — codes are fixed and no SMS is sent.",
+  );
 }
 
 // Turnstile is optional while the frontend catches up, but never in production.
-if (process.env.NODE_ENV === "production" && !process.env.TURNSTILE_SECRET_KEY) {
+if (
+  process.env.NODE_ENV === "production" &&
+  !process.env.TURNSTILE_SECRET_KEY
+) {
   console.error("Fatal: TURNSTILE_SECRET_KEY must be set in production.");
   process.exit(1);
 }
