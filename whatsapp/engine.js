@@ -297,12 +297,19 @@ const promptFor = (state, session, context) => {
     }
     case STATES.CONFIRM:
       return [confirmReply(session, context)];
-    case STATES.AWAIT_PAYMENT:
-      return cart.awaiting ? [text(copy.awaitPaymentNudge(cart.awaiting))] : [text(copy.helpText())];
+    case STATES.AWAIT_PAYMENT: {
+      if (!cart.awaiting) return [text(copy.helpText())];
+      const defs = { cancelorder: copy.awaitPaymentCancelButton() };
+      if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
+      return [buttons(copy.awaitPaymentNudge(cart.awaiting), defs)];
+    }
     default:
       return [menuReply(session, context)];
   }
 };
+
+const cancelOrderConfirmReply = (session) =>
+  buttons(copy.cancelOrderConfirm(session.cart.awaiting?.orderNumber), copy.cancelOrderButtons());
 
 const menuReply = (session, context) => {
   const name = context.customer ? context.customer.name : null;
@@ -311,10 +318,16 @@ const menuReply = (session, context) => {
   }
   const b = copy.menuButtons();
   if (context.lastOrder) {
-    const reorder = copy.reorderRow(context.lastOrder);
+    // An UNPAID last order is not reorder material — it's an open tab. Offer
+    // to finish (or cancel) it instead of quietly duplicating it.
+    const last = context.lastOrder;
+    const middle =
+      last.status === "Pending"
+        ? { id: "paylast", ...copy.payLastRow(last) }
+        : { id: "reorder", ...copy.reorderRow(last) };
     return list(copy.menuGreeting(name), "Menu", [
       { id: "order", title: b.order },
-      { id: "reorder", title: reorder.title, description: reorder.description },
+      middle,
       { id: "prices", title: b.prices },
       { id: "track", title: b.track },
     ]);
@@ -551,10 +564,22 @@ const reduceInner = (session, inbound, ctx, expired) => {
           text(copy.orderFailedStock(false, depotName)),
         ]);
       }
+      if (inbound.reason === "cancel") {
+        // The cancel was refused (already moved on) — stay put, say so.
+        return done(session, [
+          text(copy.cancelFailed(ctx.supportPhone || "our support line")),
+          ...promptFor(session.state, session, ctx),
+        ]);
+      }
       return done({ ...next, state: STATES.CONFIRM }, [
         text(copy.orderFailedGeneric(ctx.supportPhone || "our support line")),
         confirmReply(next, ctx),
       ]);
+    }
+    case INBOUND.ORDER_CANCELLED: {
+      const order = inbound.order || {};
+      const next = { ...session, state: STATES.MENU, cart: emptyCart(), failureCount: 0 };
+      return done(next, [text(copy.orderCancelled(order)), menuReply(next, ctx)]);
     }
     case INBOUND.PAYMENT_CONFIRMED: {
       const order = inbound.order || {};
@@ -591,14 +616,22 @@ const reduceInner = (session, inbound, ctx, expired) => {
     return goTo(session, STATES.MENU, ctx);
   }
   if (COMMANDS.CANCEL.includes(value)) {
+    // In AWAIT_PAYMENT there is no cart to discard — there is a REAL unpaid
+    // order. "cancel" means cancelling that, which deserves a confirmation.
+    if (session.state === STATES.AWAIT_PAYMENT && session.lastOrderId) {
+      return done(session, [cancelOrderConfirmReply(session)]);
+    }
     return goTo({ ...session, cart: emptyCart() }, STATES.MENU, ctx, [text(copy.cancelled())]);
   }
   if (COMMANDS.HELP.includes(value)) {
     return done(session, [text(copy.helpText())]);
   }
   if (COMMANDS.TRACK.includes(value)) {
-    const reply = ctx.lastOrder ? text(copy.trackStatus(ctx.lastOrder)) : text(copy.trackNoOrder());
-    return done(session, [reply]); // state untouched — track is an action
+    // Tracking lives in the apps — the bot points the way, state untouched.
+    const reply = ctx.lastOrder
+      ? text(copy.trackViaApp(ctx.lastOrder.orderNumber, ctx.portalUrl))
+      : text(copy.trackNoOrder());
+    return done(session, [reply]);
   }
   if (value === "retry") {
     // The three-strikes "Try again" button: re-ask, with the slate clean.
@@ -672,6 +705,25 @@ const handleAwaitPayment = (session, ctx, value) => {
       [{ type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } }]
     );
   }
+  // Cancelling an unpaid order: confirm first, then a real effect.
+  if (value === "cancelorder" && session.lastOrderId) {
+    return done(session, [cancelOrderConfirmReply(session)]);
+  }
+  if (value === "cancelorder:yes" && session.lastOrderId) {
+    return done(
+      session,
+      [],
+      [
+        {
+          type: EFFECTS.CANCEL_ORDER,
+          payload: { orderId: session.lastOrderId, customerId: session.customerId },
+        },
+      ]
+    );
+  }
+  if (value === "keeporder") {
+    return done(session, promptFor(STATES.AWAIT_PAYMENT, session, ctx));
+  }
   return done(session, promptFor(STATES.AWAIT_PAYMENT, session, ctx));
 };
 
@@ -704,6 +756,24 @@ const handleMenu = (session, ctx, value) => {
   if (value === "prices") {
     return done(session, [pricesReply(ctx)]);
   }
+  if (value === "paylast" && ctx.lastOrder && ctx.lastOrder.status === "Pending") {
+    // Re-open the unpaid order: back to AWAIT_PAYMENT with its details, where
+    // the payment nudge, the cancel option (and the dev button) all live.
+    const last = ctx.lastOrder;
+    const next = {
+      ...session,
+      lastOrderId: last.id,
+      cart: {
+        awaiting: {
+          orderNumber: last.orderNumber,
+          totalAmount: last.totalAmount,
+          virtualAccountBank: last.virtualAccountBank,
+          virtualAccountNumber: last.virtualAccountNumber,
+        },
+      },
+    };
+    return goTo(next, STATES.AWAIT_PAYMENT, ctx);
+  }
   if (value === "reorder" && ctx.lastOrder) {
     const last = ctx.lastOrder;
     const depot = findDepot(ctx, last.depotId);
@@ -725,12 +795,17 @@ const handleMenu = (session, ctx, value) => {
 };
 
 const pricesReply = (ctx) => {
-  const depots = depotsOf(ctx);
+  const depots = orderableDepots(ctx);
   if (depots.length === 0) return text(copy.noStockAnywhere());
+  const states = statesOf(ctx);
   let body = copy.pricesHeader();
-  for (const depot of depots) {
-    const parts = productsOf(depot).map((p) => copy.pricesProductPart(p.name, p.price));
-    if (parts.length > 0) body += copy.pricesDepotLine(depot.name, parts);
+  for (const stateName of states) {
+    // A single-state operation needs no geography headers.
+    if (states.length > 1) body += copy.pricesStateHeader(stateName);
+    for (const depot of depots.filter((d) => String(d.state || "Other") === stateName)) {
+      const parts = productsOf(depot).map((p) => copy.pricesProductPart(p.name, p.price));
+      if (parts.length > 0) body += copy.pricesDepotLine(depot.name, parts);
+    }
   }
   return text(body + copy.pricesFooter());
 };

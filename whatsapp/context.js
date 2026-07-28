@@ -91,6 +91,9 @@ const loadLastOrder = async (customerId, lastOrderId) => {
     productName: full.productName || "product",
     depotName: full.depotName || "depot",
     totalAmount: full.totalAmount,
+    // For "Finish payment" on an unpaid last order.
+    virtualAccountBank: full.virtualAccountBank,
+    virtualAccountNumber: full.virtualAccountNumber,
   };
 };
 

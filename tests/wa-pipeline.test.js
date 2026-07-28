@@ -187,10 +187,10 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.equal(s.lastOrderId, ordersBefore);
   });
 
-  test("track answers from the session's last order", async () => {
+  test("track points at the portal, not an in-chat status", async () => {
     const { outbound } = await say("track");
     const reply = outbound[outbound.length - 1].payload;
-    assert.match(reply.body, /Pending|waiting/i);
+    assert.match(reply.body, /portal|app/i);
   });
 
   test("a settlement-confirmed payment pushes 'payment received' into the conversation", async () => {

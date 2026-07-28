@@ -35,20 +35,18 @@ test("every copy string, pinned", (t) => {
     menuGreetingAnonymous: copy.menuGreeting(null),
     menuButtons: copy.menuButtons(),
     reorderRow: copy.reorderRow(ORDER),
+    payLastRow: copy.payLastRow(ORDER),
     noStockAnywhere: copy.noStockAnywhere(),
     inactiveCustomer: copy.inactiveCustomer(SUPPORT),
     helpText: copy.helpText(),
 
-    trackPending: copy.trackStatus({ ...ORDER, status: "Pending" }),
-    trackPaid: copy.trackStatus({ ...ORDER, status: "Paid" }),
-    trackReleased: copy.trackStatus({ ...ORDER, status: "Released" }),
-    trackLoading: copy.trackStatus({ ...ORDER, status: "Loading" }),
-    trackCompleted: copy.trackStatus({ ...ORDER, status: "Completed" }),
-    trackCancelled: copy.trackStatus({ ...ORDER, status: "Cancelled" }),
+    trackViaApp: copy.trackViaApp("SOR-1042", "https://portal.example"),
+    trackViaAppNoUrl: copy.trackViaApp(null, ""),
     trackNoOrder: copy.trackNoOrder(),
 
     pricesExample:
       copy.pricesHeader() +
+      copy.pricesStateHeader("Delta") +
       copy.pricesDepotLine("Warri", [copy.pricesProductPart("PMS", 850), copy.pricesProductPart("AGO", 1020)]) +
       copy.pricesFooter(),
 
@@ -139,6 +137,11 @@ test("every copy string, pinned", (t) => {
     devPaidButton: copy.devPaidButton(),
     devSimulating: copy.devSimulating(),
     awaitPaymentNudge: copy.awaitPaymentNudge(ORDER),
+    awaitPaymentCancelButton: copy.awaitPaymentCancelButton(),
+    cancelOrderConfirm: copy.cancelOrderConfirm("SOR-1042"),
+    cancelOrderButtons: copy.cancelOrderButtons(),
+    orderCancelled: copy.orderCancelled(ORDER),
+    cancelFailed: copy.cancelFailed("+234-800-SOROMAN"),
     paymentConfirmed: copy.paymentConfirmed(ORDER),
 
     cancelled: copy.cancelled(),

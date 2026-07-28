@@ -209,6 +209,34 @@ describe("MENU", () => {
     assert.equal(r.session.state, STATES.MENU);
     assert.deepEqual(kinds(r), [REPLY.TEXT]);
     assert.ok(r.replies[0].body.includes("Warri"));
+    assert.ok(!r.replies[0].body.includes("📍"), "single state: no geography headers");
+  });
+
+  it("'prices' groups by state when there is more than one", () => {
+    const IKEJA = { id: 3, name: "Ikeja", state: "Lagos", products: [{ id: 10, name: "PMS", price: 870, stock: 1000 }] };
+    const r = reduce(mkSession(STATES.MENU), btn("prices"), baseCtx({ depots: [WARRI, LAGOS, IKEJA] }));
+    const body = r.replies[0].body;
+    assert.ok(body.includes("📍 *Delta*"));
+    assert.ok(body.includes("📍 *Lagos*"));
+    assert.ok(body.indexOf("Warri") > body.indexOf("*Delta*"), "depots sit under their state");
+    assert.ok(body.indexOf("Ikeja") > body.indexOf("*Lagos*"));
+  });
+
+  it("an UNPAID last order offers Finish payment, never Reorder", () => {
+    const pending = { ...LAST_ORDER, status: "Pending" };
+    const r = reduce(mkSession(STATES.MENU), txt("menu"), baseCtx({ lastOrder: pending }));
+    const ids = rowIds(r.replies[0]);
+    assert.ok(ids.includes("paylast"));
+    assert.ok(!ids.includes("reorder"), "an open tab is not reorder material");
+  });
+
+  it("Finish payment re-opens AWAIT_PAYMENT with the order's details", () => {
+    const pending = { ...LAST_ORDER, status: "Pending", virtualAccountBank: "Wema Bank", virtualAccountNumber: "9930001111" };
+    const r = reduce(mkSession(STATES.MENU), lst("paylast"), baseCtx({ lastOrder: pending }));
+    assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
+    assert.equal(r.session.cart.awaiting.orderNumber, "SOR-99");
+    assert.ok(r.replies[0].body.includes("9930001111"));
+    assert.ok(buttonIds(r.replies[0]).includes("cancelorder"));
   });
 
   it("'reorder' prefills the cart and jumps to what's missing (plates)", () => {
@@ -260,10 +288,12 @@ describe("global commands beat state", () => {
     assert.deepEqual(kinds(r), [REPLY.TEXT]);
   });
 
-  it("'track' reports the last order from any state, state untouched", () => {
+  it("'track' points at the apps — no in-chat status, state untouched", () => {
     const r = reduce(mkSession(STATES.QUANTITY, cart), txt("track"), baseCtx({ lastOrder: LAST_ORDER }));
     assert.equal(r.session.state, STATES.QUANTITY);
     assert.ok(r.replies[0].body.includes("SOR-99"));
+    assert.ok(r.replies[0].body.includes("https://portal.example"), "links the portal");
+    assert.ok(!/Completed|Pending|Released/.test(r.replies[0].body), "status lives in the app");
   });
 
   it("'track' with no orders says so", () => {
@@ -778,6 +808,41 @@ describe("order outcomes", () => {
 
     const prod = reduce(s, btn("devpaid"), baseCtx());
     assert.deepEqual(prod.effects, [], "a stale dev button does nothing in production");
+  });
+
+  it("cancelling an unpaid order: confirm first, then a real effect, then MENU", () => {
+    const s = mkSession(
+      STATES.AWAIT_PAYMENT,
+      { awaiting: { orderNumber: "SOR-501" } },
+      { lastOrderId: 501 }
+    );
+    // Typed "cancel" in AWAIT_PAYMENT asks about the ORDER, not a cart.
+    const asked = reduce(s, txt("cancel"), baseCtx());
+    assert.equal(asked.session.state, STATES.AWAIT_PAYMENT, "nothing cancelled yet");
+    assert.deepEqual(buttonIds(asked.replies[0]), ["cancelorder:yes", "keeporder"]);
+    assert.deepEqual(asked.effects, []);
+
+    // Keep it → back to the nudge.
+    const kept = reduce(asked.session, btn("keeporder"), baseCtx());
+    assert.equal(kept.session.state, STATES.AWAIT_PAYMENT);
+    assert.deepEqual(kept.effects, []);
+
+    // Confirm the cancel → the effect goes out.
+    const confirmed = reduce(asked.session, btn("cancelorder:yes"), baseCtx());
+    assert.deepEqual(effectTypes(confirmed), [EFFECTS.CANCEL_ORDER]);
+    assert.equal(confirmed.effects[0].payload.orderId, 501);
+
+    // The outcome re-enters: cancelled → MENU with the goodbye.
+    const done_ = reduce(confirmed.session, { type: INBOUND.ORDER_CANCELLED, order: { orderNumber: "SOR-501" } }, baseCtx());
+    assert.equal(done_.session.state, STATES.MENU);
+    assert.match(done_.replies[0].body, /cancelled/i);
+  });
+
+  it("a refused cancel (order moved on) says call us and stays put", () => {
+    const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-501" } }, { lastOrderId: 501 });
+    const r = reduce(s, { type: INBOUND.ORDER_FAILED, reason: "cancel" }, baseCtx());
+    assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
+    assert.match(r.replies[0].body, /couldn't cancel/i);
   });
 
   it("AWAIT_PAYMENT nudges with the account details on random text", () => {

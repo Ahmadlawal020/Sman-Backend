@@ -4,7 +4,7 @@ const { loadContext } = require("./context");
 const { EFFECTS, INBOUND } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
-const { placeOrder } = require("../services/order.service");
+const { placeOrder, cancelOrder } = require("../services/order.service");
 const walletService = require("../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../services/payment.service");
 const { sendReply, sendTypingIndicator } = require("./client");
@@ -64,6 +64,22 @@ const performEffect = async (effect, { wamid, waPhone }) => {
           return { type: INBOUND.ORDER_FAILED, reason: "stock", stock: 0 };
         }
         return { type: INBOUND.ORDER_FAILED, reason: "generic" };
+      }
+    }
+
+    case EFFECTS.CANCEL_ORDER: {
+      try {
+        const order = await cancelOrder({
+          orderId: effect.payload.orderId,
+          actor: { type: "customer", customerId: effect.payload.customerId },
+          reason: "Cancelled by customer via WhatsApp",
+        });
+        return { type: INBOUND.ORDER_CANCELLED, order };
+      } catch (err) {
+        // Already Paid/Released past cancellation, or a concurrent cancel —
+        // the engine tells the customer to call rather than pretending.
+        console.error("[wa-pipeline] CANCEL_ORDER failed:", err.message);
+        return { type: INBOUND.ORDER_FAILED, reason: "cancel" };
       }
     }
 

@@ -411,4 +411,47 @@ async function placeOrder({
   };
 }
 
-module.exports = { placeOrder, httpError };
+/**
+ * Cancel a live order (any status through Released). One transaction: the
+ * state machine locks the row and rejects an illegal or concurrent cancel
+ * BEFORE any restitution, then stock release, capacity restore and the hold
+ * release run as the same unit. Shared by the staff endpoint and the
+ * WhatsApp customer cancel — the actor in the audit row tells them apart.
+ */
+async function cancelOrder({
+  orderId,
+  actor,
+  reason = null,
+  cancelledBy = null,
+  ipAddress = null,
+  userAgent = null,
+}) {
+  return db.transaction(async (tx) => {
+    const order = await orderStatus.transition(orderId, "Cancelled", {
+      tx,
+      actor,
+      set: {
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancellationReason: reason,
+      },
+      metadata: { reason, refunded: false },
+      ipAddress,
+      userAgent,
+    });
+
+    if (order.pfiId) {
+      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+    }
+    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
+
+    // Return any held funds. The hold — not a debit/credit pair — is the
+    // record, so a cancelled order leaves no ledger churn. On an Unpaid order
+    // there is no active hold and this is a no-op.
+    await walletService.releaseHold(order.id, tx);
+
+    return order;
+  });
+}
+
+module.exports = { placeOrder, cancelOrder, httpError };

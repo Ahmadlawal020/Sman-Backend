@@ -44,6 +44,11 @@ const reorderRow = (lastOrder) => ({
   description: `${litres(lastOrder.quantity)} ${lastOrder.productName} — ${lastOrder.depotName}`,
 });
 
+const payLastRow = (lastOrder) => ({
+  title: "Finish payment",
+  description: `${lastOrder.orderNumber} is awaiting your transfer`,
+});
+
 const noStockAnywhere = () =>
   "We're sorry — every depot is out of stock right now. 😔 Please check back shortly; stock updates through the day.";
 
@@ -60,29 +65,21 @@ const helpText = () =>
 
 // -------------------------------------------------------------------- track
 
-const trackStatus = (order) => {
-  const lines = {
-    Pending: "We're waiting for your payment. Once it lands, we'll confirm here.",
-    Paid: "Payment received ✅ Your order is with our team for release.",
-    Released: "Released ✅ Your truck can proceed to the depot gate.",
-    Loading: "Loading is underway at the depot. 🚛",
-    Completed: "Completed ✅ Thank you for choosing Soroman!",
-    Cancelled: "This order was cancelled.",
-  };
-  return (
-    `Order *${order.orderNumber}* — ${litres(order.quantity)} ${order.productName}, ${order.depotName}.\n\n` +
-    `Status: *${order.status}*\n${lines[order.status] || ""}`
-  );
-};
+// Tracking lives in the apps, not the chat — the portal shows the full
+// timeline; the bot just opens the door.
+const trackViaApp = (orderNumber, portalUrl) =>
+  `To track ${orderNumber ? `order *${orderNumber}*` : "your orders"}, use the Soroman web portal${portalUrl ? `:\n${portalUrl}` : ""}\n\n…or the Soroman mobile app. 📱`;
 
 const trackNoOrder = () =>
   "You don't have any orders with us yet. Tap *Place an order* from the menu to get started.";
 
 // ------------------------------------------------------------------- prices
 
-const pricesHeader = () => "Today's prices 📋\n";
+const pricesHeader = () => "Today's prices 📋";
 
-const pricesDepotLine = (depotName, productParts) => `\n*${depotName}*: ${productParts.join(", ")}`;
+const pricesStateHeader = (stateName) => `\n\n📍 *${stateName}*`;
+
+const pricesDepotLine = (depotName, productParts) => `\n${depotName} — ${productParts.join(", ")}`;
 
 const pricesProductPart = (productName, price) => `${productName} ${naira(price)}/L`;
 
@@ -262,7 +259,20 @@ const devPaidButton = () => "I've paid ✅ (test)";
 const devSimulating = () => "🧪 Simulating your transfer — confirmation coming up…";
 
 const awaitPaymentNudge = (order) =>
-  `We're waiting on your transfer for order *${order.orderNumber}* — ${naira(order.totalAmount)} to ${order.virtualAccountBank} *${order.virtualAccountNumber}*.\n\nType *track* any time for status.`;
+  `We're waiting on your transfer for order *${order.orderNumber}* — ${naira(order.totalAmount)} to ${order.virtualAccountBank} *${order.virtualAccountNumber}*.`;
+
+const awaitPaymentCancelButton = () => "Cancel this order";
+
+const cancelOrderConfirm = (orderNumber) =>
+  `Cancel ${orderNumber ? `order *${orderNumber}*` : "this order"}? It hasn't been paid — nothing will be charged, and the stock goes back on sale.`;
+
+const cancelOrderButtons = () => ({ "cancelorder:yes": "Yes, cancel it", keeporder: "Keep my order" });
+
+const orderCancelled = (order) =>
+  `Order ${order?.orderNumber ? `*${order.orderNumber}* ` : ""}has been cancelled ✅ Nothing was charged.\n\nWhat would you like to do?`;
+
+const cancelFailed = (supportPhone) =>
+  `We couldn't cancel that order — it may already be processing. Please call us on ${supportPhone} and we'll sort it out.`;
 
 const paymentConfirmed = (order) =>
   `Payment received ✅ Order *${order.orderNumber}* is confirmed.\n\nWe'll keep you posted here at every step — release, loading and completion.`;
@@ -298,12 +308,14 @@ module.exports = {
   menuGreeting,
   menuButtons,
   reorderRow,
+  payLastRow,
   noStockAnywhere,
   inactiveCustomer,
   helpText,
-  trackStatus,
+  trackViaApp,
   trackNoOrder,
   pricesHeader,
+  pricesStateHeader,
   pricesDepotLine,
   pricesProductPart,
   pricesFooter,
@@ -354,6 +366,11 @@ module.exports = {
   devPaidButton,
   devSimulating,
   awaitPaymentNudge,
+  awaitPaymentCancelButton,
+  cancelOrderConfirm,
+  cancelOrderButtons,
+  orderCancelled,
+  cancelFailed,
   paymentConfirmed,
   cancelled,
   expiredResume,

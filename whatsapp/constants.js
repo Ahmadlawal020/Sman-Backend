@@ -56,6 +56,7 @@ const INBOUND = Object.freeze({
   // and feeds the outcome back in as an ordinary input.
   ORDER_CREATED: "ORDER_CREATED",
   ORDER_FAILED: "ORDER_FAILED",
+  ORDER_CANCELLED: "ORDER_CANCELLED",
   CUSTOMER_CREATED: "CUSTOMER_CREATED",
   PAYMENT_CONFIRMED: "PAYMENT_CONFIRMED",
 });
@@ -71,6 +72,7 @@ const REPLY = Object.freeze({
 const EFFECTS = Object.freeze({
   CREATE_ORDER: "CREATE_ORDER",
   CREATE_CUSTOMER: "CREATE_CUSTOMER",
+  CANCEL_ORDER: "CANCEL_ORDER",
   // Test environments only: the "I've paid" button simulates the transfer.
   DEV_SIMULATE_PAYMENT: "DEV_SIMULATE_PAYMENT",
 });
