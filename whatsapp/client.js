@@ -24,7 +24,11 @@ const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v25.0";
 // Env values arrive from dashboard paste-boxes: strip whitespace and any
 // literal wrapping quotes, or a stray newline becomes "%0A" in the Graph URL
 // and every send dies with "Unknown path components".
-const cleanEnv = (value) => String(value || "").trim().replace(/^["']|["']$/g, "");
+const cleanEnv = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^\/+|\/+$/g, "");
 
 const config = () => ({
   enabled: cleanEnv(process.env.WHATSAPP_ENABLED) === "true",
