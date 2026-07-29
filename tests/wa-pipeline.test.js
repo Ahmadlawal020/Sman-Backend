@@ -187,10 +187,12 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.equal(s.lastOrderId, ordersBefore);
   });
 
-  test("track points at the portal, not an in-chat status", async () => {
+  test("track answers with the order's current status in chat", async () => {
+    // The order just placed is Pending, so track shows it directly with the
+    // payment details as the next step.
     const { outbound } = await say("track");
     const reply = outbound[outbound.length - 1].payload;
-    assert.match(reply.body, /portal|app/i);
+    assert.match(reply.body, /awaiting payment/i);
   });
 
   test("a settlement-confirmed payment pushes 'payment received' into the conversation", async () => {

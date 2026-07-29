@@ -281,8 +281,8 @@ describe("MENU", () => {
     const IKEJA = { id: 3, name: "Ikeja", state: "Lagos", products: [{ id: 10, name: "PMS", price: 870, stock: 1000 }] };
     const r = reduce(mkSession(STATES.MENU), btn("prices"), baseCtx({ depots: [WARRI, LAGOS, IKEJA] }));
     const body = r.replies[0].body;
-    assert.ok(body.includes("📍 *Delta*"));
-    assert.ok(body.includes("📍 *Lagos*"));
+    assert.ok(body.includes("*Delta*"));
+    assert.ok(body.includes("*Lagos*"));
     assert.ok(body.indexOf("Warri") > body.indexOf("*Delta*"), "depots sit under their state");
     assert.ok(body.indexOf("Ikeja") > body.indexOf("*Lagos*"));
   });
@@ -353,14 +353,6 @@ describe("global commands beat state", () => {
     assert.deepEqual(kinds(r), [REPLY.TEXT]);
   });
 
-  it("'track' points at the apps — no in-chat status, state untouched", () => {
-    const r = reduce(mkSession(STATES.QUANTITY, cart), txt("track"), baseCtx({ lastOrder: LAST_ORDER }));
-    assert.equal(r.session.state, STATES.QUANTITY);
-    assert.ok(r.replies[0].body.includes("SOR-99"));
-    assert.ok(r.replies[0].body.includes("https://portal.example"), "links the portal");
-    assert.ok(!/Completed|Pending|Released/.test(r.replies[0].body), "status lives in the app");
-  });
-
   it("'track' with no orders says so", () => {
     const r = reduce(mkSession(STATES.MENU), txt("track"), baseCtx());
     assert.deepEqual(kinds(r), [REPLY.TEXT]);
@@ -398,6 +390,97 @@ describe("global commands beat state", () => {
 });
 
 // ---------------------------------------------------------------------- depot
+
+// ------------------------------------------------------------------- track
+
+describe("track — status in chat", () => {
+  const OPEN_PENDING = {
+    id: 101,
+    orderNumber: "SOR-101",
+    status: "Pending",
+    quantity: 30000,
+    totalAmount: 25500000,
+    deliveryType: "pickup",
+    virtualAccountBank: "Wema Bank",
+    virtualAccountNumber: "9930001111",
+    productName: "PMS",
+    depotName: "Warri",
+  };
+  const OPEN_LOADING = {
+    id: 102,
+    orderNumber: "SOR-102",
+    status: "Loading",
+    quantity: 45000,
+    totalAmount: 38250000,
+    deliveryType: "delivery",
+    productName: "AGO",
+    depotName: "Lagos",
+  };
+
+  it("one open order: status answered directly as a portal CTA, state untouched", () => {
+    const r = reduce(
+      mkSession(STATES.QUANTITY, { depotId: 1 }),
+      txt("track"),
+      baseCtx({ openOrders: [OPEN_PENDING], lastOrder: LAST_ORDER })
+    );
+    assert.equal(r.session.state, STATES.QUANTITY);
+    assert.deepEqual(kinds(r), [REPLY.CTA]);
+    assert.ok(r.replies[0].body.includes("SOR-101"));
+    assert.ok(r.replies[0].body.includes("Awaiting payment"));
+    assert.ok(r.replies[0].body.includes("9930001111"), "Pending repeats the transfer details");
+    assert.equal(r.replies[0].url, "https://portal.example");
+  });
+
+  it("multiple open orders: a picker list, one row per order", () => {
+    const r = reduce(mkSession(STATES.MENU), txt("track"), baseCtx({ openOrders: [OPEN_PENDING, OPEN_LOADING] }));
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
+    assert.deepEqual(rowIds(r.replies[0]), ["trackorder:101", "trackorder:102"]);
+    const rows = r.replies[0].sections[0].rows;
+    assert.equal(rows[0].title, "SOR-101");
+    assert.ok(rows[1].description.includes("Loading"));
+  });
+
+  it("picking a row answers that order's status — never a fumble", () => {
+    const r = reduce(
+      mkSession(STATES.MENU),
+      lst("trackorder:102"),
+      baseCtx({ openOrders: [OPEN_PENDING, OPEN_LOADING] })
+    );
+    assert.equal(r.session.failureCount, 0);
+    assert.deepEqual(kinds(r), [REPLY.CTA]);
+    assert.ok(r.replies[0].body.includes("SOR-102"));
+    assert.ok(r.replies[0].body.includes("being loaded for delivery"), "delivery wording for a delivery order");
+  });
+
+  it("a stale picker row (order closed since) gets an honest answer", () => {
+    const r = reduce(mkSession(STATES.MENU), lst("trackorder:999"), baseCtx({ openOrders: [OPEN_PENDING] }));
+    assert.deepEqual(kinds(r), [REPLY.TEXT]);
+    assert.match(r.replies[0].body, /could not find/i);
+  });
+
+  it("a stale row matching the last order still answers with its final state", () => {
+    const r = reduce(
+      mkSession(STATES.MENU),
+      lst("trackorder:99"),
+      baseCtx({ openOrders: [], lastOrder: LAST_ORDER })
+    );
+    assert.deepEqual(kinds(r), [REPLY.CTA]);
+    assert.ok(r.replies[0].body.includes("Completed"));
+  });
+
+  it("nothing open: the last order's outcome is shown", () => {
+    const r = reduce(mkSession(STATES.MENU), txt("track"), baseCtx({ openOrders: [], lastOrder: LAST_ORDER }));
+    assert.deepEqual(kinds(r), [REPLY.CTA]);
+    assert.ok(r.replies[0].body.includes("SOR-99"));
+    assert.ok(r.replies[0].body.includes("Completed"));
+  });
+
+  it("without a portal URL the status arrives as plain text", () => {
+    const r = reduce(mkSession(STATES.MENU), txt("track"), baseCtx({ openOrders: [OPEN_PENDING], portalUrl: "" }));
+    assert.deepEqual(kinds(r), [REPLY.TEXT]);
+    assert.ok(r.replies[0].body.includes("SOR-101"));
+  });
+});
 
 describe("DEPOT", () => {
   it("a list selection advances to PRODUCT", () => {
@@ -627,7 +710,7 @@ describe("COLLECT and LOGISTICS", () => {
     const s = mkSession(STATES.COLLECT, big);
     const asked = reduce(s, btn("pickup"), baseCtx());
     assert.equal(asked.session.state, STATES.LOGISTICS);
-    assert.match(asked.replies[asked.replies.length - 1].body, /how many trucks/i);
+    assert.match(asked.replies[asked.replies.length - 1].body, /number of trucks/i);
 
     // 1 truck can't carry 110,000 L.
     const tooFew = reduce(asked.session, txt("1"), baseCtx());
@@ -907,7 +990,7 @@ describe("order outcomes", () => {
     const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-501" } }, { lastOrderId: 501 });
     const r = reduce(s, { type: INBOUND.ORDER_FAILED, reason: "cancel" }, baseCtx());
     assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
-    assert.match(r.replies[0].body, /couldn't cancel/i);
+    assert.match(r.replies[0].body, /unable to cancel/i);
   });
 
   it("AWAIT_PAYMENT nudges with the account details on random text", () => {

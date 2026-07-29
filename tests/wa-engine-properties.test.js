@@ -59,10 +59,24 @@ const arbLastOrder = fc.oneof(
   })
 );
 
+const arbOpenOrder = fc.record({
+  id: fc.integer({ min: 1, max: 1000 }),
+  orderNumber: fc.string({ maxLength: 20 }),
+  status: fc.constantFrom("Pending", "Paid", "Released", "Loading"),
+  quantity: fc.integer({ min: 0, max: 2_000_000 }),
+  totalAmount: fc.integer({ min: 0 }),
+  deliveryType: fc.constantFrom("pickup", "delivery"),
+  virtualAccountBank: fc.string({ maxLength: 30 }),
+  virtualAccountNumber: fc.string({ maxLength: 12 }),
+  productName: fc.oneof(fc.string({ maxLength: 40 }), fc.constant(null)),
+  depotName: fc.oneof(fc.string({ maxLength: 40 }), fc.constant(null)),
+});
+
 const arbContext = fc.record({
   customer: arbCustomer,
   depots: fc.array(arbDepot, { maxLength: 15 }),
   lastOrder: arbLastOrder,
+  openOrders: fc.oneof(fc.constant(undefined), fc.array(arbOpenOrder, { maxLength: 9 })),
   supportPhone: fc.constant("+2340000000000"),
   portalUrl: fc.oneof(fc.constant(undefined), fc.constant("https://portal.example")),
   withinServiceWindow: fc.boolean(),
@@ -116,6 +130,7 @@ const arbUserValue = fc.oneof(
   fc.constantFrom(
     "menu", "hi", "cancel", "help", "track", "retry", "order", "prices", "reorder",
     "website", "community", "support", "app",
+    "trackorder:1", "trackorder:", "trackorder:999", "trackorder:abc",
     "confirm", "confirm:deadbeef", "confirm:", "edit", "pickup", "delivery", "more", "resume", "startover",
     "changeDepot", "states", "state:Delta", "state:nowhere", "2", "30000", "30,000", "0", "-5", "999999999",
     "edit:depot", "edit:quantity", "depot:1", "depot:404", "product:10", "ABC-123-XY"

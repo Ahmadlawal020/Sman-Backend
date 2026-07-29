@@ -77,15 +77,68 @@ const inactiveCustomer = (supportPhone) =>
 const helpText = () =>
   "The following commands are available at any time:\n\n" +
   "• *menu*: return to the main menu\n" +
-  "• *track*: check the status of your last order\n" +
+  "• *track*: check the status of your orders\n" +
   "• *cancel*: cancel the order currently in progress\n" +
   "• *help*: display this message\n\n" +
   "To place an order, select *Place an order* from the menu.";
 
 // -------------------------------------------------------------------- track
 
-const trackViaApp = (orderNumber, portalUrl) =>
-  `To track ${orderNumber ? `order *${orderNumber}*` : "your orders"}, please use the Soroman web portal${portalUrl ? `:\n${portalUrl}` : ""} or the Soroman mobile application.`;
+// Customer-facing names for order statuses. Keys are the order_status enum.
+const trackStatusLabel = (status) =>
+  ({
+    Pending: "Awaiting payment",
+    Paid: "Payment received",
+    Released: "Released",
+    Loading: "Loading",
+    Completed: "Completed",
+    Cancelled: "Cancelled",
+  }[status] || String(status || "In progress"));
+
+// What happens next, per status. The status line answers "where is it";
+// this line answers "what should I expect or do".
+const trackNextStep = (order) => {
+  switch (order.status) {
+    case "Pending":
+      return `We are awaiting your bank transfer of ${naira(order.totalAmount)} to ${order.virtualAccountBank} ${order.virtualAccountNumber}. Your order will be confirmed automatically once payment is received.`;
+    case "Paid":
+      return "Your payment has been received and your loading ticket is being prepared. We will notify you here when your order is released.";
+    case "Released":
+      return order.deliveryType === "delivery"
+        ? "Your order has been released and is being prepared for delivery."
+        : "Your order has been released. Your truck may proceed to the depot for loading.";
+    case "Loading":
+      return order.deliveryType === "delivery"
+        ? "Your order is currently being loaded for delivery."
+        : "Your order is currently being loaded at the depot.";
+    case "Completed":
+      return "This order has been completed. Thank you for choosing Soroman.";
+    case "Cancelled":
+      return "This order was cancelled. Nothing was charged.";
+    default:
+      return "We will notify you here as your order progresses.";
+  }
+};
+
+const trackStatus = (order) =>
+  `Order *${order.orderNumber}*: ${litres(order.quantity)} ${order.productName}, ${order.depotName}.\n\n` +
+  `Status: *${trackStatusLabel(order.status)}*\n\n` +
+  trackNextStep(order);
+
+const trackPortalButton = () => "View full timeline";
+
+const trackListPrompt = () =>
+  "You have more than one order in progress. Please select the order you would like to check.";
+
+const trackListButton = () => "Choose an order";
+
+const trackRow = (order) => ({
+  title: order.orderNumber,
+  description: `${litres(order.quantity)} ${order.productName}, ${order.depotName}. ${trackStatusLabel(order.status)}`,
+});
+
+const trackOrderGone = () =>
+  "We could not find that order. It may have been completed. Please type *track* to see your current orders.";
 
 const trackNoOrder = () =>
   "You do not have any orders with us yet. Please select *Place an order* from the menu to begin.";
@@ -329,7 +382,13 @@ module.exports = {
   noStockAnywhere,
   inactiveCustomer,
   helpText,
-  trackViaApp,
+  trackStatus,
+  trackStatusLabel,
+  trackPortalButton,
+  trackListPrompt,
+  trackListButton,
+  trackRow,
+  trackOrderGone,
   trackNoOrder,
   pricesHeader,
   pricesStateHeader,

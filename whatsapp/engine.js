@@ -357,6 +357,38 @@ const menuReply = (session, context) => {
   return list(copy.menuGreeting(name), "Menu", rows);
 };
 
+// ------------------------------------------------------------------- track
+
+/** One order's status, with the portal a tap away when it is configured. */
+const trackStatusReply = (order, ctx) =>
+  ctx.portalUrl
+    ? cta(copy.trackStatus(order), copy.trackPortalButton(), ctx.portalUrl)
+    : text(copy.trackStatus(order));
+
+const trackReply = (ctx) => {
+  const open = ctx.openOrders || [];
+  if (open.length === 1) return trackStatusReply(open[0], ctx);
+  if (open.length > 1) {
+    return list(
+      copy.trackListPrompt(),
+      copy.trackListButton(),
+      open.map((o) => ({ id: `trackorder:${o.id}`, ...copy.trackRow(o) }))
+    );
+  }
+  // Nothing in flight: the last order's outcome, or a first-order nudge.
+  if (ctx.lastOrder) return trackStatusReply(ctx.lastOrder, ctx);
+  return text(copy.trackNoOrder());
+};
+
+const trackOrderReply = (ctx, rawId) => {
+  const id = Number(rawId);
+  const open = ctx.openOrders || [];
+  const order = open.find((o) => Number(o.id) === id)
+    || (ctx.lastOrder && Number(ctx.lastOrder.id) === id ? ctx.lastOrder : null);
+  // A stale row (order closed since the list was sent) gets an honest answer.
+  return order ? trackStatusReply(order, ctx) : text(copy.trackOrderGone());
+};
+
 const orderableDepots = (context) => depotsOf(context).filter((d) => productsOf(d).length > 0);
 
 const statesOf = (context) => [
@@ -658,11 +690,14 @@ const reduceInner = (session, inbound, ctx, expired) => {
     return done(session, [text(copy.helpText())]);
   }
   if (COMMANDS.TRACK.includes(value)) {
-    // Tracking lives in the apps — the bot points the way, state untouched.
-    const reply = ctx.lastOrder
-      ? text(copy.trackViaApp(ctx.lastOrder.orderNumber, ctx.portalUrl))
-      : text(copy.trackNoOrder());
-    return done(session, [reply]);
+    // Status in chat, state untouched: one open order answers directly, more
+    // than one offers a picker, none falls back to the last order's outcome.
+    return done(session, [trackReply(ctx)]);
+  }
+  if (value.startsWith("trackorder:")) {
+    // A picker row — global like `track` itself, so a tap on yesterday's list
+    // still answers after the session moved on. Never a fumble.
+    return done(session, [trackOrderReply(ctx, value.slice("trackorder:".length))]);
   }
   if (value === "retry") {
     // The three-strikes "Try again" button: re-ask, with the slate clean.
