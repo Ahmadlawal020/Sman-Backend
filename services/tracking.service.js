@@ -22,15 +22,32 @@ const { orders, depots, products, orderTrucks } = require("../db/schema");
  * is the customer's business, surfaced to them behind sign-in.
  */
 
+// Per-truck movement, in words. Driver details are deliberately absent — a
+// plate is on a public road, a driver's name and phone are not.
+const TRUCK_STATUS_LABEL = {
+  pending: "Assigned",
+  gated_in: "At the depot",
+  loaded: "Loaded",
+  gated_out: "Departed",
+};
+
+const loadedCount = (trucks) => trucks.filter((t) => t.status === "loaded" || t.status === "gated_out").length;
+
 const NOTE = {
   received: () => "Order received — awaiting payment.",
   payment_confirmed: () => "Payment confirmed.",
   processing: (o) => `Payment confirmed — ${o.depotName} is preparing your load.`,
-  released: () => "Released — waiting for a truck to load.",
-  loading: (o) =>
-    o.truck
-      ? `Truck ${o.truck} is loading at ${o.depotName}.`
-      : `Loading at ${o.depotName}.`,
+  released: (o) =>
+    o.trucks.length
+      ? `Released — ${o.trucks.length} truck${o.trucks.length > 1 ? "s" : ""} assigned, waiting to load.`
+      : "Released — waiting for a truck to load.",
+  loading: (o) => {
+    if (!o.trucks.length) return `Loading at ${o.depotName}.`;
+    const done = loadedCount(o.trucks);
+    return done < o.trucks.length
+      ? `Loading at ${o.depotName} — ${done} of ${o.trucks.length} trucks loaded.`
+      : `All ${o.trucks.length} trucks loaded at ${o.depotName}.`;
+  },
   completed: () => "Loaded and signed out at the depot gate.",
 };
 
@@ -75,14 +92,23 @@ const trackByRef = async (ref) => {
   if (!row) return null;
   if (row.status === "Cancelled") return null;
 
-  // The first allocated truck's plate, once one has been assigned at release.
-  const [truck] = await db
-    .select({ truckNumber: orderTrucks.truckNumber })
+  // Every allocated truck and where it is, once trucks have been assigned at
+  // release. Plate + status only — never the driver's name or phone.
+  const truckRows = await db
+    .select({
+      truckIndex: orderTrucks.truckIndex,
+      truckNumber: orderTrucks.truckNumber,
+      status: orderTrucks.status,
+    })
     .from(orderTrucks)
     .where(eq(orderTrucks.orderId, row.id))
-    .orderBy(asc(orderTrucks.truckIndex))
-    .limit(1);
-  row.truck = truck?.truckNumber || undefined;
+    .orderBy(asc(orderTrucks.truckIndex));
+  row.trucks = truckRows.map((t) => ({
+    index: t.truckIndex,
+    plate: t.truckNumber || null,
+    status: t.status,
+    statusLabel: TRUCK_STATUS_LABEL[t.status] || t.status,
+  }));
 
   const reached = { received: row.createdAt };
   if (row.paymentConfirmedAt) {
@@ -115,7 +141,8 @@ const trackByRef = async (ref) => {
     stage,
     reached,
     note: NOTE[stage](row),
-    ...(row.truck ? { truck: row.truck } : {}),
+    // Present once trucks are assigned at release; empty before then.
+    trucks: row.trucks,
   };
 };
 

@@ -7,7 +7,7 @@ const request = require("supertest");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis, orders } = require("../db/schema");
+const { depots, products, depotProductPrices, pfis, orders, orderTrucks } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const { customerRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
@@ -134,6 +134,50 @@ describe("public order tracking", () => {
     const res = await request(app).get(`${TRACK}/  ${order.orderNumber.toLowerCase()}  `);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.data.tracked.ref, order.orderNumber);
+  });
+
+  test("the loading stage shows each truck and its status — plates only, no driver", async () => {
+    const { accessToken } = await activeCustomer("5");
+    const order = await place(accessToken);
+    await db
+      .update(orders)
+      .set({
+        status: "Loading",
+        paymentStatus: "Paid",
+        paymentConfirmedAt: new Date(),
+        releasedAt: new Date(),
+        loadingStartedAt: new Date(),
+      })
+      .where(eq(orders.id, order.id));
+    await db.insert(orderTrucks).values([
+      { orderId: order.id, truckIndex: 1, truckNumber: "LAG-T1", quantity: "15000", status: "loaded", driverName: "Ada Private", driverPhone: "+2348010000001" },
+      { orderId: order.id, truckIndex: 2, truckNumber: "LAG-T2", quantity: "15000", status: "gated_in", driverName: "Uche Private", driverPhone: "+2348010000002" },
+    ]);
+
+    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const t = res.body.data.tracked;
+    assert.equal(t.stage, "loading");
+    assert.equal(t.trucks.length, 2, "both trucks are shown");
+    assert.deepEqual(
+      t.trucks.map((x) => [x.index, x.plate, x.status]),
+      [
+        [1, "LAG-T1", "loaded"],
+        [2, "LAG-T2", "gated_in"],
+      ],
+      "in index order, plate + status each",
+    );
+    assert.ok(t.trucks[0].statusLabel, "a human label accompanies the status");
+    assert.match(t.note, /1 of 2 trucks loaded/, "the note summarises progress");
+
+    const blob = JSON.stringify(t);
+    assert.ok(!/Ada Private|Uche Private|\+23480100000/.test(blob), "no driver name or phone leaks");
+  });
+
+  test("before release there are no trucks", async () => {
+    const { accessToken } = await activeCustomer("6");
+    const order = await place(accessToken);
+    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    assert.deepEqual(res.body.data.tracked.trucks, [], "empty until assigned at release");
   });
 
   test("a cancelled order is not publicly trackable", async () => {
