@@ -68,6 +68,14 @@ const setEmailPassword = async (customer, { email, password }) => {
         verified: true,
       });
 
+  // The email you sign in with is the account's email — persist it on the
+  // customer so it shows on the profile, invoices, and the session payload,
+  // not only inside the identity row. Otherwise a fresh login has no address
+  // to display even though email sign-in is configured.
+  if ((customer.email || "").trim().toLowerCase() !== normalized) {
+    await customerRepo.update(customer.id, { email: normalized });
+  }
+
   emitEvent("customer.identity_linked", {
     actor: { type: "customer", id: customer.id, name: customer.name },
     entityType: "customer",
