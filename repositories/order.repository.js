@@ -55,6 +55,7 @@ const findByIdFull = async (id, tx = db) => {
       price: orders.price,
       totalAmount: orders.totalAmount,
       deliveryType: orders.deliveryType,
+      deliveryAddress: orders.deliveryAddress,
       pfiId: orders.pfiId,
       virtualAccountNumber: orders.virtualAccountNumber,
       virtualAccountBank: orders.virtualAccountBank,
@@ -147,6 +148,7 @@ const findAll = async ({
         price: orders.price,
         totalAmount: orders.totalAmount,
         deliveryType: orders.deliveryType,
+        deliveryAddress: orders.deliveryAddress,
         pfiId: orders.pfiId,
         virtualAccountNumber: orders.virtualAccountNumber,
         virtualAccountBank: orders.virtualAccountBank,
@@ -163,6 +165,7 @@ const findAll = async ({
         depotCode: depots.code,
         productName: products.name,
         productSku: products.sku,
+        productCategory: products.category,
         productUnit: products.unit,
         pfiNumber: pfis.pfiNumber,
       })

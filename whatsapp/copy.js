@@ -22,6 +22,10 @@ const litres = (qty) => `${Number(qty || 0).toLocaleString("en-NG")} L`;
 const identifyPrompt = () =>
   "Welcome to Soroman Energy 👋\n\nWhat name should we put on your orders?";
 
+// A greeting answered with a greeting — re-ask the name, never a dead menu.
+const identifyGreeting = () =>
+  "Hello 👋 Before we start — what name should we put on your orders?";
+
 const identifyInvalidName = () =>
   "That doesn't look like a name we can put on an order. Please send your full name — letters only, 2 to 60 characters.";
 
@@ -303,6 +307,7 @@ module.exports = {
   naira,
   litres,
   identifyPrompt,
+  identifyGreeting,
   identifyInvalidName,
   welcome,
   menuGreeting,

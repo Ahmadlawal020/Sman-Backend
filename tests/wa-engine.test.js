@@ -164,6 +164,30 @@ describe("IDENTIFY", () => {
     assert.deepEqual(kinds(r), [REPLY.TEXT]);
   });
 
+  it("a greeting during IDENTIFY re-asks the name — never the dead-end menu", () => {
+    for (const word of ["hi", "hello", "menu", "start"]) {
+      const r = reduce(mkSession(STATES.IDENTIFY), txt(word), baseCtx({ customer: null }));
+      assert.equal(r.session.state, STATES.IDENTIFY, `"${word}" must not escape IDENTIFY`);
+      assert.deepEqual(kinds(r), [REPLY.TEXT]);
+      assert.match(r.replies[0].body, /name/i);
+    }
+  });
+
+  it("'cancel' during IDENTIFY also stays — there is nothing to cancel yet", () => {
+    const r = reduce(mkSession(STATES.IDENTIFY), txt("cancel"), baseCtx({ customer: null }));
+    assert.equal(r.session.state, STATES.IDENTIFY);
+    assert.match(r.replies[0].body, /name/i);
+  });
+
+  it("the old boomerang is gone: greeting → tap → no second welcome loop", () => {
+    // Before the fix: "hi" bounced to MENU, and the next tap snapped back to
+    // IDENTIFY with the full welcome — reading as chronic amnesia.
+    const greeted = reduce(mkSession(STATES.IDENTIFY), txt("hi"), baseCtx({ customer: null }));
+    assert.equal(greeted.session.state, STATES.IDENTIFY);
+    const named = reduce(greeted.session, txt("Ada Obi"), baseCtx({ customer: null }));
+    assert.deepEqual(effectTypes(named), [EFFECTS.CREATE_CUSTOMER], "the flow continues normally");
+  });
+
   it("CUSTOMER_CREATED lands on a personalised MENU", () => {
     const r = reduce(
       mkSession(STATES.IDENTIFY, { pendingCustomer: true }),

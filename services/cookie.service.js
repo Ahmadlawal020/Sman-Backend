@@ -157,6 +157,13 @@ const getTransportCounts = () => JSON.parse(JSON.stringify(transportCounts));
 /**
  * Attach a freshly issued token to the response, honouring the client's
  * declared transport. Returns what the body should carry, if anything.
+ *
+ * Cookie mode also returns the CSRF token for the body. The cookie copy alone
+ * is not enough: it is path-scoped to the auth prefix, and document.cookie
+ * only yields cookies whose path matches the PAGE's URL — so an SPA served
+ * from `/` (or another origin entirely) can never read it. The client holds
+ * the body copy in memory and echoes it as the CSRF header; the double-submit
+ * check still compares that header against the cookie the browser attached.
  */
 function applyIssuedToken(req, res, realm, refreshToken) {
   const useBody = usesBodyTransport(req);
@@ -165,13 +172,14 @@ function applyIssuedToken(req, res, realm, refreshToken) {
   if (useBody) {
     // No cookie for native clients. They hold the token themselves, and
     // issuing a cookie they ignore would put two copies of the same
-    // credential in play with no rule about which is authoritative.
-    return refreshToken;
+    // credential in play with no rule about which is authoritative. No CSRF
+    // either — a body-transport client is not exposed to CSRF at all.
+    return { refreshToken, csrfToken: undefined };
   }
 
   setRefreshCookie(res, realm, refreshToken);
-  setCsrfCookie(res, realm);
-  return undefined;
+  const csrfToken = setCsrfCookie(res, realm);
+  return { refreshToken: undefined, csrfToken };
 }
 
 module.exports = {

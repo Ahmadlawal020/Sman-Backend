@@ -39,6 +39,7 @@ const createOrder = z.object({
   state: requiredString("State", 100),
   quantity: quantity("Quantity"),
   deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
+  deliveryAddress: optionalString("Delivery address", 2000),
   trucks: z.array(pickupTruck).max(20, "Too many trucks on one order").optional(),
 });
 
@@ -69,6 +70,8 @@ const createMyOrder = z.object({
   state: requiredString("State", 100),
   quantity: quantity("Quantity"),
   deliveryType: enumOf("Delivery type", ["delivery", "pickup"]),
+  // Delivery only — where the truck goes. The service ignores it on pickup.
+  deliveryAddress: optionalString("Delivery address", 2000),
   trucks: z.array(pickupTruck).max(20, "Too many trucks on one order").optional(),
 });
 

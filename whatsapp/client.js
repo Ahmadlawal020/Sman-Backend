@@ -16,15 +16,31 @@ const { REPLY } = require("./constants");
  * old SMS path broke silently in production; not here.
  */
 
+// Env values arrive from dashboard paste-boxes: strip whitespace and any
+// literal wrapping quotes, or a stray newline becomes "%0A" in the Graph URL
+// and every send dies with "Unknown path components".
+const cleanEnv = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^\/+|\/+$/g, "");
+
 // Graph API versions live ~2 years each (v20.0 dies 2026-09-24; v25.0 is
 // current as of 2026-02). Overridable so a version bump is an env change,
-// not a deploy.
-const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v25.0";
+// not a deploy. Sanitized like every other env value, and normalised so
+// "25.0" still works — an unroutable version segment kills EVERY send with
+// the same "Unknown path components" the id typos produce.
+const graphVersion = () => {
+  const v = cleanEnv(process.env.WHATSAPP_GRAPH_VERSION);
+  if (!v) return "v25.0";
+  return /^v/i.test(v) ? v.toLowerCase() : `v${v}`;
+};
+const GRAPH_VERSION = graphVersion();
 
 const config = () => ({
-  enabled: process.env.WHATSAPP_ENABLED === "true",
-  token: process.env.WHATSAPP_ACCESS_TOKEN,
-  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+  enabled: cleanEnv(process.env.WHATSAPP_ENABLED) === "true",
+  token: cleanEnv(process.env.WHATSAPP_ACCESS_TOKEN),
+  phoneNumberId: cleanEnv(process.env.WHATSAPP_PHONE_NUMBER_ID),
 });
 
 // The API addresses recipients as wa_ids: E.164 digits without the "+".
@@ -121,7 +137,7 @@ const sendReply = async (to, reply) => {
 
   try {
     const res = await axios.post(
-      `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`,
+      `https://graph.facebook.com/${graphVersion()}/${phoneNumberId}/messages`,
       toApiPayload(to, reply),
       { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
     );
@@ -153,7 +169,7 @@ const sendTypingIndicator = async (inboundWamid) => {
   }
   try {
     await axios.post(
-      `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`,
+      `https://graph.facebook.com/${graphVersion()}/${phoneNumberId}/messages`,
       {
         messaging_product: "whatsapp",
         status: "read",

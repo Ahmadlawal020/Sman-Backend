@@ -69,6 +69,15 @@ function devMode() {
   return process.env.OTP_DEV_MODE === "true" && Boolean(process.env.OTP_DEV_CODE);
 }
 
+/**
+ * The fixed code, but ONLY in dev mode — for surfacing on the OTP screen so
+ * testers on an environment with no live SMS can sign in. Null otherwise, and
+ * dev mode cannot boot in production, so this is never exposed there.
+ */
+function devCode() {
+  return devMode() ? process.env.OTP_DEV_CODE : null;
+}
+
 function dailyCap() {
   const raw = Number(process.env.OTP_DAILY_SEND_CAP);
   return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_DAILY_CAP;
@@ -165,6 +174,7 @@ module.exports = {
   CODE_TTL_MINUTES,
   LIMITS,
   devMode,
+  devCode,
   dailyCap,
   isOverDailyCap,
   checkRateLimits,

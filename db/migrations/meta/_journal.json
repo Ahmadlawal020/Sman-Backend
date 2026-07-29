@@ -71,6 +71,20 @@
       "when": 1785218328851,
       "tag": "0009_wa_session_failures",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785273948563,
+      "tag": "0010_chunky_vulture",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785282827995,
+      "tag": "0011_wa_reply_links",
+      "breakpoints": true
     }
   ]
 }

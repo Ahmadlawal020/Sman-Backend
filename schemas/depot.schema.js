@@ -1,7 +1,40 @@
 const z = require("zod");
+<<<<<<< HEAD
 const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination, numberLike } = require("./fields");
+=======
+const { id, money, numberLike, requiredString, enumOf, searchTerm, pagination } = require("./fields");
+>>>>>>> 75ba6aef9031f2f6464b3124be09485eb2c454df
 
 const DEPOT_STATUS = ["Active", "Maintenance", "High Capacity"];
+
+/**
+ * A non-negative whole count for the integer columns (`capacity`,
+ * `parked_trucks_count`, `max_capacity`). `numberLike` first so a form field
+ * sending "30000" is accepted; the min floor matches each column's CHECK.
+ */
+const wholeCount = (label, { min = 0 } = {}) =>
+  numberLike(label).pipe(
+    z
+      .number()
+      .int(`${label} must be a whole number`)
+      .min(min, `${label} must be at least ${min}`)
+  );
+
+/**
+ * One row of the depot_product_capacities join. The controller reads
+ * `pc.product` (the product id) and `pc.capacity`, so those are the names the
+ * schema must whitelist — anything else is stripped before the controller
+ * runs, which is exactly the bug this shape fixes.
+ */
+const productCapacity = z.object({
+  product: id("Product"),
+  capacity: wholeCount("Capacity", { min: 0 }),
+});
+
+const productPrice = z.object({
+  product: id("Product"),
+  currentPrice: money("Price", { min: 0.01 }),
+});
 
 /**
  * Setting a fuel price. `min: 0.01` rather than 0: a zero price is almost
@@ -14,8 +47,16 @@ const updateProductPrice = z.object({
   price: money("Price", { min: 0.01 }),
 });
 
+/**
+ * The full write shape of a depot. Every field the controller reads must be
+ * declared here: the validate middleware strips unknown keys and replaces
+ * req.body wholesale, so any omitted field never reaches the controller — that
+ * silently dropped `productCapacities`, `staffIds`, `city`, `country`,
+ * `postcode`, `maxCapacity` and `establishedYear` on write.
+ */
 const createDepot = z.object({
   name: requiredString("Depot name", 255),
+<<<<<<< HEAD
   code: optionalString("Depot code", 50),
   address: optionalString("Address", 1000),
   city: optionalString("City", 100),
@@ -39,6 +80,21 @@ const createDepot = z.object({
     })
   ).optional(),
   staffIds: z.array(z.any()).optional(),
+=======
+  code: requiredString("Depot code", 50),
+  address: requiredString("Address", 1000),
+  city: requiredString("City", 100),
+  state: requiredString("State", 100),
+  country: requiredString("Country", 100),
+  postcode: requiredString("Postcode", 20),
+  parkedTrucksCount: wholeCount("Parked trucks count", { min: 0 }).optional(),
+  maxCapacity: wholeCount("Max capacity", { min: 1 }),
+  status: enumOf("Status", DEPOT_STATUS).optional(),
+  establishedYear: requiredString("Established year", 10),
+  productCapacities: z.array(productCapacity).optional(),
+  productPrices: z.array(productPrice).optional(),
+  staffIds: z.array(id("Staff id")).optional(),
+>>>>>>> 75ba6aef9031f2f6464b3124be09485eb2c454df
 });
 
 const updateDepot = createDepot.partial();

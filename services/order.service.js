@@ -44,6 +44,9 @@ function httpError(status, message) {
  * @param {number} input.productId
  * @param {number} input.quantity
  * @param {"delivery"|"pickup"} input.deliveryType
+ * @param {string} [input.deliveryAddress]
+ *        Delivery only: where the truck goes, in the customer's words.
+ *        Ignored for pickup — the depot is the address.
  * @param {Array<{truckNumber?: string, quantity: number, driverName?: string, driverPhone?: string}>} [input.trucks]
  *        Pickup only: the customer's declared trucks and the quantity on each.
  *        Their quantities must sum to the order quantity; each ≤ 60,000 L.
@@ -87,6 +90,7 @@ async function placeOrder({
   productId,
   quantity,
   deliveryType,
+  deliveryAddress,
   trucks,
   actor = { type: "system" },
   // Callers whose requests can be redelivered (the WhatsApp CONFIRM step
@@ -231,6 +235,10 @@ async function placeOrder({
         price: String(serverPrice),
         totalAmount: String(totalAmount),
         deliveryType,
+        deliveryAddress:
+          deliveryType === "delivery" && typeof deliveryAddress === "string"
+            ? deliveryAddress.trim()
+            : "",
         status: "Pending",
         paymentStatus: "Unpaid",
         virtualAccountNumber,
