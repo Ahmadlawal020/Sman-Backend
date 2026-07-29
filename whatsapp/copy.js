@@ -5,8 +5,8 @@
  * an accidental rewording shows up as a diff in review, not in a customer's
  * chat.
  *
- * Tone (agreed): warm professional, light emoji. This channel moves millions
- * of naira; friendly, never flippant.
+ * Tone (agreed): formal and professional. No emojis, no dashes. Every
+ * message should read clearly regardless of the reader's background.
  *
  * Support contact arrives as a variable (from SUPPORT_PHONE config) so no
  * real phone number lives in code.
@@ -20,22 +20,21 @@ const litres = (qty) => `${Number(qty || 0).toLocaleString("en-NG")} L`;
 // ---------------------------------------------------------------- identify
 
 const identifyPrompt = () =>
-  "Welcome to Soroman Energy 👋\n\nWhat name should we put on your orders?";
+  "Welcome to Soroman Energy.\n\nPlease provide the name to be used on your orders.";
 
-// A greeting answered with a greeting — re-ask the name, never a dead menu.
 const identifyGreeting = () =>
-  "Hello 👋 Before we start — what name should we put on your orders?";
+  "Hello. Before we proceed, please provide the name to be used on your orders.";
 
 const identifyInvalidName = () =>
-  "That doesn't look like a name we can put on an order. Please send your full name — letters only, 2 to 60 characters.";
+  "This does not appear to be a valid name. Please provide your full name using letters only, between 2 and 60 characters.";
 
 const welcome = (name) =>
-  `Thanks, ${name} — you're all set. 🎉\n\nWhat would you like to do?`;
+  `Thank you, ${name}. Your account has been set up.\n\nWhat would you like to do?`;
 
 // -------------------------------------------------------------------- menu
 
 const menuGreeting = (name) =>
-  name ? `Hello ${name} 👋 What would you like to do?` : "Hello 👋 What would you like to do?";
+  name ? `Hello ${name}. What would you like to do?` : "Hello. What would you like to do?";
 
 const menuButtons = () => ({
   order: "Place an order",
@@ -45,7 +44,7 @@ const menuButtons = () => ({
 
 const reorderRow = (lastOrder) => ({
   title: "Reorder last order",
-  description: `${litres(lastOrder.quantity)} ${lastOrder.productName} — ${lastOrder.depotName}`,
+  description: `${litres(lastOrder.quantity)} ${lastOrder.productName}, ${lastOrder.depotName}`,
 });
 
 const payLastRow = (lastOrder) => ({
@@ -56,104 +55,100 @@ const payLastRow = (lastOrder) => ({
 // Menu rows that open a link. A row only renders when its URL is configured
 // (context decides); titles ≤24 chars, CTA button text ≤20 — WhatsApp limits.
 const linkRows = () => ({
-  website: { title: "Visit Soroman page", description: "Products, depots and news" },
+  website: { title: "Visit our website", description: "Products, depots and news" },
   community: { title: "Join our community", description: "Updates and offers on WhatsApp" },
-  support: { title: "Chat with support", description: "We're happy to help" },
+  support: { title: "Chat with support", description: "We are happy to help" },
   app: { title: "Download mobile app", description: "Order and track on the go" },
 });
 
 const linkCtas = () => ({
-  website: { body: "Everything Soroman in one place — products, depots and news. 🌐", button: "Visit website" },
-  community: { body: "Join the Soroman community on WhatsApp for updates, offers and tips. 🤝", button: "Join community" },
-  support: { body: "Questions? Our support team is one tap away. 💬", button: "Chat with support" },
-  app: { body: "Get the Soroman app — order and track on the go. 📱", button: "Download the app" },
+  website: { body: "You may find all Soroman products, depots and updates on our website.", button: "Visit website" },
+  community: { body: "Join the Soroman community on WhatsApp for updates, offers and tips.", button: "Join community" },
+  support: { body: "If you have any questions, our support team is available to assist you.", button: "Chat with support" },
+  app: { body: "Download the Soroman mobile application to place orders and track deliveries.", button: "Download the app" },
 });
 
 const noStockAnywhere = () =>
-  "We're sorry — every depot is out of stock right now. 😔 Please check back shortly; stock updates through the day.";
+  "We regret that all depots are currently out of stock. Please check back later, as stock is updated throughout the day.";
 
 const inactiveCustomer = (supportPhone) =>
-  `Your account isn't active at the moment, so we can't take an order here. Please call us on ${supportPhone} and we'll get you sorted.`;
+  `Your account is not currently active, so we are unable to process an order at this time. Please contact us on ${supportPhone} for assistance.`;
 
 const helpText = () =>
-  "Here's what you can type at any time:\n\n" +
-  "• *menu* — back to the main menu\n" +
-  "• *track* — status of your last order\n" +
-  "• *cancel* — discard the order you're building\n" +
-  "• *help* — this message\n\n" +
-  "To order, just tap *Place an order* from the menu.";
+  "The following commands are available at any time:\n\n" +
+  "• *menu*: return to the main menu\n" +
+  "• *track*: check the status of your last order\n" +
+  "• *cancel*: cancel the order currently in progress\n" +
+  "• *help*: display this message\n\n" +
+  "To place an order, select *Place an order* from the menu.";
 
 // -------------------------------------------------------------------- track
 
-// Tracking lives in the apps, not the chat — the portal shows the full
-// timeline; the bot just opens the door.
 const trackViaApp = (orderNumber, portalUrl) =>
-  `To track ${orderNumber ? `order *${orderNumber}*` : "your orders"}, use the Soroman web portal${portalUrl ? `:\n${portalUrl}` : ""}\n\n…or the Soroman mobile app. 📱`;
+  `To track ${orderNumber ? `order *${orderNumber}*` : "your orders"}, please use the Soroman web portal${portalUrl ? `:\n${portalUrl}` : ""} or the Soroman mobile application.`;
 
 const trackNoOrder = () =>
-  "You don't have any orders with us yet. Tap *Place an order* from the menu to get started.";
+  "You do not have any orders with us yet. Please select *Place an order* from the menu to begin.";
 
 // ------------------------------------------------------------------- prices
 
-const pricesHeader = () => "Today's prices 📋";
+const pricesHeader = () => "Today's Prices";
 
-const pricesStateHeader = (stateName) => `\n\n📍 *${stateName}*`;
+const pricesStateHeader = (stateName) => `\n\n*${stateName}*`;
 
-const pricesDepotLine = (depotName, productParts) => `\n${depotName} — ${productParts.join(", ")}`;
+const pricesDepotLine = (depotName, productParts) => `\n${depotName}: ${productParts.join(", ")}`;
 
 const pricesProductPart = (productName, price) => `${productName} ${naira(price)}/L`;
 
-const pricesFooter = () => "\n\nTap *Place an order* from the menu when you're ready.";
+const pricesFooter = () => "\n\nSelect *Place an order* from the menu when you are ready.";
 
 // -------------------------------------------------------------------- depot
 
-const stateListPrompt = () => "Which state would you like to order from?";
+const stateListPrompt = () => "Please select the state you would like to order from.";
 
 const stateListButton = () => "Choose a state";
 
 const stateRowDescription = (count) => `${count} depot${count === 1 ? "" : "s"}`;
 
-const changeStateRow = () => ({ title: "⬅ Change state" });
+const changeStateRow = () => ({ title: "Change state" });
 
 const depotPrompt = (stateName) =>
-  stateName ? `Which depot in ${stateName}?` : "Which depot would you like to order from?";
+  stateName ? `Please select a depot in ${stateName}.` : "Please select the depot you would like to order from.";
 
 const depotListButton = () => "Choose a depot";
 
-const moreRow = () => ({ title: "More ▸", description: "See the next page" });
+const moreRow = () => ({ title: "More", description: "View the next page" });
 
 const depotUnavailable = () =>
-  "That depot isn't available right now. Here are the ones that are:";
+  "That depot is not currently available. Please select from the depots listed below.";
 
 // ------------------------------------------------------------------ product
 
-const productPrompt = (depotName) => `What are you buying at ${depotName}?`;
+const productPrompt = (depotName) => `Please select the product you would like to purchase at ${depotName}.`;
 
 const productListButton = () => "Choose a product";
 
-// Price only — how much stock we hold is our business, not the row's.
 const productRowDescription = (price) => `${naira(price)}/L`;
 
 const productUnavailable = (depotName) =>
-  `That product isn't available at ${depotName} right now. Here's what is:`;
+  `That product is not currently available at ${depotName}. Please select from the products listed below.`;
 
 // ----------------------------------------------------------------- quantity
 
 const quantityPrompt = (productName, depotName) =>
-  `How many litres of ${productName} at ${depotName}?`;
+  `Please enter the number of litres of ${productName} you would like at ${depotName}.`;
 
 const quantityInvalid = () =>
-  'Please send the quantity as a number of litres — for example *30000* or *30,000*.';
+  "Please enter the quantity in litres, for example, *30000* or *30,000*.";
 
 const quantityBelowMin = (min) =>
-  `Our minimum order is ${litres(min)}. How many litres would you like?`;
+  `The minimum order quantity is ${litres(min)}. Please enter the number of litres you would like.`;
 
 const quantityAboveCap = (cap) =>
-  `That looks like a typo — we can take up to ${litres(cap)} in one order. How many litres would you like?`;
+  `This quantity appears to be incorrect. The maximum order quantity is ${litres(cap)}. Please enter the number of litres you would like.`;
 
-// Deliberately number-free: remaining stock is commercial information.
 const quantityOverStock = (depotName) =>
-  `We can't supply that quantity at ${depotName} right now. 😔 Try a smaller amount, or another depot.`;
+  `We are unable to supply that quantity at ${depotName} at this time. Please try a smaller amount or select another depot.`;
 
 const overStockButtons = () => ({
   changeDepot: "Change depot",
@@ -162,39 +157,39 @@ const overStockButtons = () => ({
 
 // ------------------------------------------------------------------ collect
 
-const collectPrompt = () => "How would you like to collect it?";
+const collectPrompt = () => "How would you like to receive your order?";
 
-const collectButtons = () => ({ pickup: "Pickup (my truck)", delivery: "Delivery to me" });
+const collectButtons = () => ({ pickup: "Loading by my truck", delivery: "Delivery by Soroman truck" });
 
 // ---------------------------------------------------------------- logistics
 
 const truckCountPrompt = (quantity, minTrucks, maxTrucks) =>
-  `${litres(quantity)} for pickup — how many trucks will you be using? 🚛\n\nEach truck can carry up to ${litres(60000)}, so that's ${minTrucks === maxTrucks ? minTrucks : `between ${minTrucks} and ${maxTrucks}`} truck${maxTrucks === 1 ? "" : "s"}. Send a number.`;
+  `You have selected ${litres(quantity)} for loading. Please enter the number of trucks you will be sending.\n\nEach truck can carry up to ${litres(60000)}. For this quantity, you will require ${minTrucks === maxTrucks ? minTrucks : `between ${minTrucks} and ${maxTrucks}`} truck${maxTrucks === 1 ? "" : "s"}.`;
 
 const truckCountInvalid = (minTrucks, maxTrucks) =>
-  `Please send a number of trucks between ${minTrucks} and ${maxTrucks} for this quantity.`;
+  `Please enter a number of trucks between ${minTrucks} and ${maxTrucks} for this quantity.`;
 
 const truckLitresPrompt = (index, count, remaining) =>
-  `Truck ${index} of ${count} — how many litres will it carry?\n\n(${litres(remaining)} left to assign, up to ${litres(60000)} per truck.)`;
+  `Truck ${index} of ${count}. Please enter the number of litres this truck will carry.\n\n${litres(remaining)} remain to be assigned. Each truck can carry up to ${litres(60000)}.`;
 
 const truckLitresInvalid = (remaining) =>
-  `That doesn't work — each truck carries at most ${litres(60000)}, and the remaining trucks still need something to carry. You have ${litres(remaining)} left to assign.`;
+  `This quantity is not valid. Each truck can carry at most ${litres(60000)}, and the remaining trucks must also be assigned an amount. ${litres(remaining)} remain to be assigned.`;
 
 const lastTruckPrompt = (count, remaining) =>
-  `Truck ${count} of ${count} takes the remaining ${litres(remaining)}. What's its plate number?`;
+  `Truck ${count} of ${count} will carry the remaining ${litres(remaining)}. Please provide its plate number.`;
 
 const platePrompt = (index, count, litresForTruck) =>
   count > 1
-    ? `Truck ${index} of ${count} (${litres(litresForTruck)}) — what's the plate number?`
-    : "What's the plate number of the truck coming for pickup?";
+    ? `Truck ${index} of ${count} (${litres(litresForTruck)}). Please provide its plate number.`
+    : "Please provide the plate number of the truck coming to load.";
 
 const plateInvalid = () =>
-  "That plate number doesn't look right. Please send it like *ABC-123-XY* (letters and numbers).";
+  "That plate number does not appear to be valid. Please enter it using letters and numbers only, for example *ABC123XY*.";
 
-const addressPrompt = () => "Where should we deliver to? Please send the full address.";
+const addressPrompt = () => "Please provide the full delivery address.";
 
 const addressInvalid = () =>
-  "That address looks too short. Please send the full delivery address, including the area and state.";
+  "This address appears to be incomplete. Please provide the full delivery address, including the area and state.";
 
 // ------------------------------------------------------------------ confirm
 
@@ -204,26 +199,26 @@ const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPr
     .join(", ");
   const collect =
     deliveryType === "delivery"
-      ? `Delivery to: ${address}`
-      : `Pickup — truck${trucks.length > 1 ? "s" : ""}: ${truckLine}`;
+      ? `Delivery by Soroman truck to: ${address}`
+      : `Loading by my truck${trucks.length > 1 ? "s" : ""}: ${truckLine}`;
   return (
-    "Here's your order 🧾\n\n" +
-    `• ${litres(quantity)} ${productName}\n` +
-    `• Depot: ${depotName}\n` +
-    `• ${collect}\n` +
-    `• Price: ${naira(unitPrice)}/L\n` +
-    `• *Total: ${naira(total)}*\n\n` +
-    "Confirm to get your invoice and payment details."
+    "Please review your order details.\n\n" +
+    `Product: ${litres(quantity)} ${productName}\n` +
+    `Depot: ${depotName}\n` +
+    `${collect}\n` +
+    `Price: ${naira(unitPrice)}/L\n` +
+    `*Total: ${naira(total)}*\n\n` +
+    "Select Confirm to receive your invoice and payment details."
   );
 };
 
 const confirmWalletHint = (balance) =>
-  `💡 You have ${naira(balance)} in your wallet — enough to cover this. Confirm and we'll pay from it instantly, no transfer needed.`;
+  `Your wallet balance is ${naira(balance)}, which is sufficient to cover this order. If you confirm, payment will be made from your wallet immediately, and no transfer will be required.`;
 
 const confirmOutdated = () =>
-  "Heads up — your order changed after that summary was sent, so that button is out of date. Here's the current one:";
+  "Your order has changed since this summary was provided, so the previous button is no longer valid. Please review the updated summary below.";
 
-const confirmButtons = () => ({ confirm: "Confirm ✅", edit: "Edit", cancel: "Cancel" });
+const confirmButtons = () => ({ confirm: "Confirm", edit: "Edit", cancel: "Cancel" });
 
 const editPrompt = () => "What would you like to change?";
 
@@ -237,85 +232,84 @@ const editRows = () => ({
 });
 
 const orderPending = () =>
-  "One moment — we're creating your order… ⏳";
+  "Please wait while your order is being created.";
 
 // ----------------------------------------------------- order outcome & payment
 
 const orderCreated = (order) =>
-  `Order *${order.orderNumber}* is in ✅\n\n` +
+  `Your order *${order.orderNumber}* has been created.\n\n` +
   `*Total: ${naira(order.totalAmount)}*\n\n` +
-  `Pay by bank transfer to your dedicated account:\n` +
-  `${order.virtualAccountBank}\n` +
-  `*${order.virtualAccountNumber}*\n` +
-  `${order.virtualAccountName}\n\n` +
-  "Payment is confirmed automatically — we'll message you here the moment it lands.";
+  `Please make payment by bank transfer to your dedicated account:\n` +
+  `Bank: ${order.virtualAccountBank}\n` +
+  `Account Number: *${order.virtualAccountNumber}*\n` +
+  `Account Name: ${order.virtualAccountName}\n\n` +
+  "Payment will be confirmed automatically, and you will be notified here once it is received.";
 
 const orderPaidWallet = (order) =>
-  `Order *${order.orderNumber}* is in — and already paid ✅\n\n` +
-  `${naira(order.totalAmount)} was covered by your wallet balance, so there's nothing to transfer. ` +
-  "Your loading ticket is being prepared, and we'll keep you posted here at every step.";
+  `Your order *${order.orderNumber}* has been created and has been paid in full.\n\n` +
+  `${naira(order.totalAmount)} was paid from your wallet balance, so no transfer is required. ` +
+  "Your loading ticket is being prepared, and you will be kept informed at each step.";
 
 const portalManageHint = (portalUrl) =>
-  `Need to change a truck or plate later? Manage this order at ${portalUrl}`;
+  `To change a truck or plate number at a later time, please manage this order at ${portalUrl}`;
 
 const invoiceCaption = (orderNumber) => `Invoice for order ${orderNumber}`;
 
-// Number-free on purpose — see quantityOverStock.
 const orderFailedStock = (hasSome, depotName) =>
   hasSome
-    ? `So sorry — someone beat you to part of that stock at ${depotName}. 😔 Please try a smaller quantity.`
-    : `So sorry — that product was just bought out at ${depotName}. 😔 Let's pick another depot:`;
+    ? `We regret that part of the requested stock at ${depotName} is no longer available. Please try a smaller quantity.`
+    : `We regret that this product is no longer available at ${depotName}. Please select another depot.`;
 
 const orderFailedGeneric = (supportPhone) =>
-  `Something went wrong creating your order — your money has NOT been taken. 🙏 Please try again in a moment, or call us on ${supportPhone}.`;
+  `An error occurred while creating your order. Please note that no amount has been charged. Please try again shortly, or contact us on ${supportPhone}.`;
 
 // ------------------------------------------------- dev-only payment simulation
 
 const devPaidPrompt = () =>
-  "🧪 *Test mode* — no real transfer needed. Tap below to simulate your payment landing.";
+  "Test mode: no real transfer is required. Select the button below to simulate payment.";
 
-const devPaidButton = () => "I've paid ✅ (test)";
+const devPaidButton = () => "I have paid (test)";
 
-const devSimulating = () => "🧪 Simulating your transfer — confirmation coming up…";
+const devSimulating = () => "Simulating your transfer. Confirmation will follow shortly.";
 
 const awaitPaymentNudge = (order) =>
-  `We're waiting on your transfer for order *${order.orderNumber}* — ${naira(order.totalAmount)} to ${order.virtualAccountBank} *${order.virtualAccountNumber}*.`;
+  `We are still awaiting your transfer for order *${order.orderNumber}*. Amount: ${naira(order.totalAmount)}. Bank: ${order.virtualAccountBank}. Account Number: *${order.virtualAccountNumber}*.`;
 
 const awaitPaymentCancelButton = () => "Cancel this order";
 
 const cancelOrderConfirm = (orderNumber) =>
-  `Cancel ${orderNumber ? `order *${orderNumber}*` : "this order"}? It hasn't been paid — nothing will be charged, and the stock goes back on sale.`;
+  `Do you wish to cancel ${orderNumber ? `order *${orderNumber}*` : "this order"}? This order has not been paid. No amount will be charged, and the stock will be released.`;
 
 const cancelOrderButtons = () => ({ "cancelorder:yes": "Yes, cancel it", keeporder: "Keep my order" });
 
 const orderCancelled = (order) =>
-  `Order ${order?.orderNumber ? `*${order.orderNumber}* ` : ""}has been cancelled ✅ Nothing was charged.\n\nWhat would you like to do?`;
+  `Order ${order?.orderNumber ? `*${order.orderNumber}* ` : ""}has been cancelled. No amount was charged.\n\nWhat would you like to do?`;
 
 const cancelFailed = (supportPhone) =>
-  `We couldn't cancel that order — it may already be processing. Please call us on ${supportPhone} and we'll sort it out.`;
+  `We were unable to cancel that order, as it may already be processing. Please contact us on ${supportPhone} for assistance.`;
 
 const paymentConfirmed = (order) =>
-  `Payment received ✅ Order *${order.orderNumber}* is confirmed.\n\nWe'll keep you posted here at every step — release, loading and completion.`;
+  `Payment received. Order *${order.orderNumber}* is confirmed.\n\nYou will be kept informed at each stage, including release, loading and completion.`;
 
 // ---------------------------------------------------------- session & misc
 
 const cancelled = () =>
-  "No problem — that order has been discarded. 🗑️ Nothing was charged.\n\nWhat would you like to do?";
+  "That order has been discarded. No amount was charged.\n\nWhat would you like to do?";
 
 const expiredResume = ({ productName, quantity, depotName }) => {
   const summary = [quantity && litres(quantity), productName, depotName && `from ${depotName}`]
     .filter(Boolean)
     .join(" ");
-  return `Welcome back 👋 That order timed out${summary ? ` — you were ordering ${summary}` : ""}. Want to pick up where you left off?`;
+  return `Welcome back. Your previous order has expired${summary ? `. You were ordering ${summary}` : ""}. Would you like to continue where you left off?`;
 };
 
 const resumeButtons = () => ({ resume: "Continue order", startover: "Start over" });
 
 const unsupportedType = () =>
-  "I can only read text and taps for now — voice notes and photos don't reach me. 🙏";
+  "At this time, we are only able to process text messages and menu selections. Voice notes and photos are not supported.";
 
 const threeStrikes = () =>
-  "Let's take it from the top — that might be easier. 😅";
+  "Let us begin again. Please select an option below.";
 
 const threeStrikesButtons = () => ({ menu: "Back to menu", retry: "Try again" });
 
