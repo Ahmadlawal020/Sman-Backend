@@ -189,6 +189,30 @@ const upsertProductCapacity = async (depotId, productId, capacity) => {
   return row;
 };
 
+const setProductCapacities = async (depotId, capacitiesList) => {
+  const numericDepotId = parseInt(depotId, 10) || depotId;
+  if (!Array.isArray(capacitiesList)) return;
+
+  const validProductIds = capacitiesList.map((pc) => parseInt(pc.product, 10) || pc.product);
+
+  const existingCapacities = await db
+    .select()
+    .from(depotProductCapacities)
+    .where(eq(depotProductCapacities.depotId, numericDepotId));
+
+  for (const existing of existingCapacities) {
+    if (!validProductIds.includes(existing.productId) && !validProductIds.includes(String(existing.productId))) {
+      await db
+        .delete(depotProductCapacities)
+        .where(eq(depotProductCapacities.id, existing.id));
+    }
+  }
+
+  for (const pc of capacitiesList) {
+    await upsertProductCapacity(numericDepotId, pc.product, pc.capacity);
+  }
+};
+
 const decrementProductCapacity = async (depotId, productId, amount, tx = db) => {
   const numericProductId = parseInt(productId, 10) || productId;
   const [row] = await tx
@@ -328,6 +352,7 @@ module.exports = {
   getStaff,
   setStaff,
   getProductCapacities,
+  setProductCapacities,
   upsertProductCapacity,
   decrementProductCapacity,
   incrementProductCapacity,

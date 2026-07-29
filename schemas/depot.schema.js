@@ -1,9 +1,5 @@
 const z = require("zod");
-<<<<<<< HEAD
-const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination, numberLike } = require("./fields");
-=======
 const { id, money, numberLike, requiredString, enumOf, searchTerm, pagination } = require("./fields");
->>>>>>> 75ba6aef9031f2f6464b3124be09485eb2c454df
 
 const DEPOT_STATUS = ["Active", "Maintenance", "High Capacity"];
 
@@ -27,12 +23,12 @@ const wholeCount = (label, { min = 0 } = {}) =>
  * runs, which is exactly the bug this shape fixes.
  */
 const productCapacity = z.object({
-  product: id("Product"),
+  product: z.union([id("Product"), z.string(), z.number()]),
   capacity: wholeCount("Capacity", { min: 0 }),
 });
 
 const productPrice = z.object({
-  product: id("Product"),
+  product: z.union([id("Product"), z.string(), z.number()]),
   currentPrice: money("Price", { min: 0.01 }),
 });
 
@@ -56,31 +52,6 @@ const updateProductPrice = z.object({
  */
 const createDepot = z.object({
   name: requiredString("Depot name", 255),
-<<<<<<< HEAD
-  code: optionalString("Depot code", 50),
-  address: optionalString("Address", 1000),
-  city: optionalString("City", 100),
-  state: optionalString("State", 100),
-  country: optionalString("Country", 100),
-  postcode: optionalString("Postcode", 20),
-  establishedYear: optionalString("Established year", 10),
-  status: enumOf("Status", DEPOT_STATUS).optional(),
-  maxCapacity: numberLike("Max capacity").optional(),
-  parkedTrucksCount: numberLike("Parked trucks count").optional(),
-  productCapacities: z.array(
-    z.object({
-      product: z.any(),
-      capacity: numberLike("Capacity"),
-    })
-  ).optional(),
-  productPrices: z.array(
-    z.object({
-      product: z.any(),
-      currentPrice: money("Current price", { min: 0.01 }),
-    })
-  ).optional(),
-  staffIds: z.array(z.any()).optional(),
-=======
   code: requiredString("Depot code", 50),
   address: requiredString("Address", 1000),
   city: requiredString("City", 100),
@@ -88,13 +59,12 @@ const createDepot = z.object({
   country: requiredString("Country", 100),
   postcode: requiredString("Postcode", 20),
   parkedTrucksCount: wholeCount("Parked trucks count", { min: 0 }).optional(),
-  maxCapacity: wholeCount("Max capacity", { min: 1 }),
+  maxCapacity: wholeCount("Max capacity", { min: 0 }).optional(),
   status: enumOf("Status", DEPOT_STATUS).optional(),
   establishedYear: requiredString("Established year", 10),
   productCapacities: z.array(productCapacity).optional(),
   productPrices: z.array(productPrice).optional(),
-  staffIds: z.array(id("Staff id")).optional(),
->>>>>>> 75ba6aef9031f2f6464b3124be09485eb2c454df
+  staffIds: z.array(z.union([id("Staff id"), z.string(), z.number()])).optional(),
 });
 
 const updateDepot = createDepot.partial();

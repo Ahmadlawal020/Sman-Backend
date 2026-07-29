@@ -164,9 +164,7 @@ const updateDepot = asyncHandler(async (req, res) => {
 
   // Update product capacities if provided
   if (req.body.productCapacities !== undefined) {
-    for (const pc of req.body.productCapacities) {
-      await depotRepo.upsertProductCapacity(depot.id, pc.product, pc.capacity);
-    }
+    await depotRepo.setProductCapacities(depot.id, req.body.productCapacities);
   }
 
   // Update product prices if provided
