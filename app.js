@@ -78,6 +78,9 @@ app.use("/api/customer/dashboard", require("./routes/portal/dashboard.route"));
 // Public: live depot prices for the marketing site and the portal's order
 // form — no account needed to see what's on sale, exactly as on WhatsApp.
 app.use("/api/catalog", require("./routes/portal/catalog.route"));
+// Public: sanitised order tracking by reference — movement only, no price or
+// buyer identity. The order number is the shared secret.
+app.use("/api/tracking", require("./routes/portal/tracking.route"));
 
 // Health check
 app.get("/api/health", (req, res) => {

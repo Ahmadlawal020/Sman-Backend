@@ -1,0 +1,122 @@
+const { eq, asc } = require("drizzle-orm");
+const { db } = require("../config/db");
+const { orders, depots, products, orderTrucks } = require("../db/schema");
+
+/**
+ * Public order tracking — what anyone holding the reference may see.
+ *
+ * The order number is the shared secret, so this is unauthenticated; but it is
+ * deliberately sanitised to movement only. It NEVER carries price, total, the
+ * buyer's name/company, or their account — those stay behind sign-in. Volumes,
+ * the depot, the stage timeline, and (once assigned) the truck plate are the
+ * whole surface, because that is all a driver at a gate needs.
+ *
+ * The six public stages map onto the order's lifecycle timestamps:
+ *   received          ← created_at (always)
+ *   payment_confirmed ← payment_confirmed_at
+ *   processing        ← payment_confirmed_at (paid, depot preparing the load)
+ *   released          ← released_at
+ *   loading           ← loading_started_at
+ *   completed         ← completed_at
+ * A cancelled order is not publicly trackable (returns null → 404); its state
+ * is the customer's business, surfaced to them behind sign-in.
+ */
+
+const NOTE = {
+  received: () => "Order received — awaiting payment.",
+  payment_confirmed: () => "Payment confirmed.",
+  processing: (o) => `Payment confirmed — ${o.depotName} is preparing your load.`,
+  released: () => "Released — waiting for a truck to load.",
+  loading: (o) =>
+    o.truck
+      ? `Truck ${o.truck} is loading at ${o.depotName}.`
+      : `Loading at ${o.depotName}.`,
+  completed: () => "Loaded and signed out at the depot gate.",
+};
+
+const currentStage = (o) => {
+  if (o.completedAt) return "completed";
+  if (o.loadingStartedAt) return "loading";
+  if (o.releasedAt) return "released";
+  if (o.paymentConfirmedAt) return "processing";
+  return "received";
+};
+
+const trackByRef = async (ref) => {
+  const normalized = String(ref || "").trim().toUpperCase();
+  if (!normalized) return null;
+
+  const [row] = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      status: orders.status,
+      quantity: orders.quantity,
+      deliveryType: orders.deliveryType,
+      deliveryAddress: orders.deliveryAddress,
+      state: orders.state,
+      createdAt: orders.createdAt,
+      paymentConfirmedAt: orders.paymentConfirmedAt,
+      releasedAt: orders.releasedAt,
+      loadingStartedAt: orders.loadingStartedAt,
+      completedAt: orders.completedAt,
+      depotName: depots.name,
+      depotState: depots.state,
+      productName: products.name,
+      productCategory: products.category,
+      productUnit: products.unit,
+    })
+    .from(orders)
+    .leftJoin(depots, eq(orders.depotId, depots.id))
+    .leftJoin(products, eq(orders.productId, products.id))
+    .where(eq(orders.orderNumber, normalized))
+    .limit(1);
+
+  if (!row) return null;
+  if (row.status === "Cancelled") return null;
+
+  // The first allocated truck's plate, once one has been assigned at release.
+  const [truck] = await db
+    .select({ truckNumber: orderTrucks.truckNumber })
+    .from(orderTrucks)
+    .where(eq(orderTrucks.orderId, row.id))
+    .orderBy(asc(orderTrucks.truckIndex))
+    .limit(1);
+  row.truck = truck?.truckNumber || undefined;
+
+  const reached = { received: row.createdAt };
+  if (row.paymentConfirmedAt) {
+    reached.payment_confirmed = row.paymentConfirmedAt;
+    reached.processing = row.paymentConfirmedAt;
+  }
+  if (row.releasedAt) reached.released = row.releasedAt;
+  if (row.loadingStartedAt) reached.loading = row.loadingStartedAt;
+  if (row.completedAt) reached.completed = row.completedAt;
+
+  const stage = currentStage(row);
+
+  return {
+    ref: row.orderNumber,
+    placedAt: row.createdAt,
+    depotName: row.depotName,
+    depotState: row.depotState,
+    lines: [
+      {
+        category: row.productCategory || null,
+        name: row.productName,
+        quantity: row.quantity,
+        unit: row.productUnit || "Liters",
+      },
+    ],
+    delivery:
+      row.deliveryType === "delivery"
+        ? { type: "delivery", state: row.state, address: row.deliveryAddress || "" }
+        : { type: "pickup" },
+    stage,
+    reached,
+    note: NOTE[stage](row),
+    ...(row.truck ? { truck: row.truck } : {}),
+  };
+};
+
+module.exports = { trackByRef };
