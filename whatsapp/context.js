@@ -66,9 +66,10 @@ const loadLastOrder = async (customerId, lastOrderId) => {
  * through here too, and those are the sends the window actually constrains.
  */
 const loadContext = async ({ waPhone, customer, session }) => {
-  const [catalog, lastOrder, lastInbound] = await Promise.all([
+  const [catalog, lastOrder, openOrders, lastInbound] = await Promise.all([
     loadCatalog(),
     loadLastOrder(customer?.id, session?.lastOrderId),
+    customer?.id ? orderRepo.findOpenByCustomer(customer.id) : [],
     waMessageRepo.lastInboundAt(waPhone),
   ]);
 
@@ -80,6 +81,8 @@ const loadContext = async ({ waPhone, customer, session }) => {
     customer: customer || null,
     depots: catalog,
     lastOrder,
+    // In-flight orders (Pending..Loading), newest first — what `track` shows.
+    openOrders,
     withinServiceWindow,
     supportPhone: process.env.SUPPORT_PHONE || "our support line",
     portalUrl: process.env.CLIENT_URL || "",

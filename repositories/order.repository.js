@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
+const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orders, customers, depots, products, pfis } = require("../db/schema");
 
@@ -224,6 +224,36 @@ const findUnpaidByCustomer = async (customerId) => {
     .orderBy(asc(orders.createdAt));
 };
 
+// Everything before Completed/Cancelled — what a customer can still track.
+const OPEN_STATUSES = ["Pending", "Paid", "Released", "Loading"];
+
+/**
+ * The customer's in-flight orders with the display names joined in, newest
+ * first. Capped for the WhatsApp list (9 rows + reserve); the portal is the
+ * home of unbounded history.
+ */
+const findOpenByCustomer = async (customerId, limit = 9) => {
+  return db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      status: orders.status,
+      quantity: orders.quantity,
+      totalAmount: orders.totalAmount,
+      deliveryType: orders.deliveryType,
+      virtualAccountBank: orders.virtualAccountBank,
+      virtualAccountNumber: orders.virtualAccountNumber,
+      productName: products.name,
+      depotName: depots.name,
+    })
+    .from(orders)
+    .leftJoin(depots, eq(orders.depotId, depots.id))
+    .leftJoin(products, eq(orders.productId, products.id))
+    .where(and(eq(orders.customerId, customerId), inArray(orders.status, OPEN_STATUSES)))
+    .orderBy(desc(orders.createdAt))
+    .limit(limit);
+};
+
 const countByPfi = async (pfiId) => {
   const [{ total }] = await db
     .select({ total: count() })
@@ -242,5 +272,6 @@ module.exports = {
   create,
   update,
   findUnpaidByCustomer,
+  findOpenByCustomer,
   countByPfi,
 };

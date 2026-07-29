@@ -43,8 +43,20 @@ test("every copy string, pinned", (t) => {
     inactiveCustomer: copy.inactiveCustomer(SUPPORT),
     helpText: copy.helpText(),
 
-    trackViaApp: copy.trackViaApp("SOR-1042", "https://portal.example"),
-    trackViaAppNoUrl: copy.trackViaApp(null, ""),
+    trackStatusPendingPickup: copy.trackStatus({ ...ORDER, status: "Pending", deliveryType: "pickup" }),
+    trackStatusPaid: copy.trackStatus({ ...ORDER, status: "Paid" }),
+    trackStatusReleasedPickup: copy.trackStatus({ ...ORDER, status: "Released", deliveryType: "pickup" }),
+    trackStatusReleasedDelivery: copy.trackStatus({ ...ORDER, status: "Released", deliveryType: "delivery" }),
+    trackStatusLoadingPickup: copy.trackStatus({ ...ORDER, status: "Loading", deliveryType: "pickup" }),
+    trackStatusLoadingDelivery: copy.trackStatus({ ...ORDER, status: "Loading", deliveryType: "delivery" }),
+    trackStatusCompleted: copy.trackStatus({ ...ORDER, status: "Completed" }),
+    trackStatusCancelled: copy.trackStatus({ ...ORDER, status: "Cancelled" }),
+    trackStatusUnknown: copy.trackStatus({ ...ORDER, status: "??" }),
+    trackPortalButton: copy.trackPortalButton(),
+    trackListPrompt: copy.trackListPrompt(),
+    trackListButton: copy.trackListButton(),
+    trackRow: copy.trackRow({ ...ORDER, status: "Loading" }),
+    trackOrderGone: copy.trackOrderGone(),
     trackNoOrder: copy.trackNoOrder(),
 
     pricesExample:
