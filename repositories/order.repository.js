@@ -165,6 +165,7 @@ const findAll = async ({
         depotCode: depots.code,
         productName: products.name,
         productSku: products.sku,
+        productCategory: products.category,
         productUnit: products.unit,
         pfiNumber: pfis.pfiNumber,
       })

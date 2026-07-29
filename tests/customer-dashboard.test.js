@@ -128,6 +128,7 @@ describe("customer portal — dashboard", () => {
     assert.equal(month.litres, QTY, "its litres are counted");
     assert.equal(month.spent, 0, "but nothing is 'spent' until payment confirms");
     assert.equal(orders.length, 1, "it appears in recent orders");
+    assert.equal(orders[0].productCategory, "PMS", "the trade code the portal badges the order with");
   });
 
   test("a wallet-paid order lands in month spent and the day's trend point", async () => {
