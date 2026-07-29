@@ -52,7 +52,11 @@ const getDepotById = asyncHandler(async (req, res) => {
 });
 
 const createDepot = asyncHandler(async (req, res) => {
-  const { name, code, address, city, state, country, postcode, parkedTrucksCount, maxCapacity, status, establishedYear, productCapacities, productPrices, staffIds } = req.body;
+  let { name, code, address, city, state, country, postcode, parkedTrucksCount, maxCapacity, status, establishedYear, productCapacities, productPrices, staffIds } = req.body;
+
+  if ((maxCapacity === undefined || maxCapacity === null || maxCapacity === "") && Array.isArray(productCapacities) && productCapacities.length > 0) {
+    maxCapacity = productCapacities.reduce((sum, pc) => sum + (Number(pc.capacity) || 0), 0);
+  }
 
   if (!name || !code || !address || !city || !state || !country || !postcode || !maxCapacity || !establishedYear) {
     return res.status(400).json({
@@ -141,6 +145,13 @@ const updateDepot = asyncHandler(async (req, res) => {
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
       updateData[field] = req.body[field];
+    }
+  }
+
+  if (updateData.maxCapacity === undefined && Array.isArray(req.body.productCapacities) && req.body.productCapacities.length > 0) {
+    const computed = req.body.productCapacities.reduce((sum, pc) => sum + (Number(pc.capacity) || 0), 0);
+    if (computed > 0) {
+      updateData.maxCapacity = computed;
     }
   }
 

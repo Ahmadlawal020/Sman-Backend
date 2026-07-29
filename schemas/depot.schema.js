@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination } = require("./fields");
+const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination, numberLike } = require("./fields");
 
 const DEPOT_STATUS = ["Active", "Maintenance", "High Capacity"];
 
@@ -17,9 +17,28 @@ const updateProductPrice = z.object({
 const createDepot = z.object({
   name: requiredString("Depot name", 255),
   code: optionalString("Depot code", 50),
-  state: optionalString("State", 100),
   address: optionalString("Address", 1000),
+  city: optionalString("City", 100),
+  state: optionalString("State", 100),
+  country: optionalString("Country", 100),
+  postcode: optionalString("Postcode", 20),
+  establishedYear: optionalString("Established year", 10),
   status: enumOf("Status", DEPOT_STATUS).optional(),
+  maxCapacity: numberLike("Max capacity").optional(),
+  parkedTrucksCount: numberLike("Parked trucks count").optional(),
+  productCapacities: z.array(
+    z.object({
+      product: z.any(),
+      capacity: numberLike("Capacity"),
+    })
+  ).optional(),
+  productPrices: z.array(
+    z.object({
+      product: z.any(),
+      currentPrice: money("Current price", { min: 0.01 }),
+    })
+  ).optional(),
+  staffIds: z.array(z.any()).optional(),
 });
 
 const updateDepot = createDepot.partial();

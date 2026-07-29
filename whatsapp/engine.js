@@ -523,13 +523,13 @@ const reduceInner = (session, inbound, ctx, expired) => {
         cart: paidFromWallet
           ? emptyCart()
           : {
-              awaiting: {
-                orderNumber: order.orderNumber,
-                totalAmount: order.totalAmount,
-                virtualAccountBank: order.virtualAccountBank,
-                virtualAccountNumber: order.virtualAccountNumber,
-              },
+            awaiting: {
+              orderNumber: order.orderNumber,
+              totalAmount: order.totalAmount,
+              virtualAccountBank: order.virtualAccountBank,
+              virtualAccountNumber: order.virtualAccountNumber,
             },
+          },
       };
       const replies = [];
       if (order.invoiceUrl) {
