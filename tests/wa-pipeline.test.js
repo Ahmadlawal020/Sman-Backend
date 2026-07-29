@@ -270,6 +270,75 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.equal(session.state, before.state, "the old 'hi' must not reset the session");
   });
 
+  test("a retried turn re-uses its existing replies — the customer is never answered twice", async () => {
+    // A normal turn…
+    const { outbound } = await say("help");
+    assert.ok(outbound.length > 0);
+    const session = await waSessionRepo.findByPhone(PHONE);
+    const transcript = await waMessageRepo.findBySession(session.id);
+    const inboundRow = transcript.filter((m) => m.direction === "inbound").pop();
+    const outboundBefore = transcript.filter((m) => m.direction === "outbound").length;
+
+    // …whose final bookkeeping "never happened": simulate the crash window by
+    // reverting the inbound to received, exactly what a dropped connection
+    // between reply-queueing and markProcessed leaves behind.
+    const { waMessages: wm } = require("../db/schema");
+    await db.update(wm).set({ status: "received" }).where(eq(wm.id, inboundRow.id));
+
+    await processInbound({ waMessageId: inboundRow.id });
+
+    const after = await waMessageRepo.findBySession(session.id);
+    const outboundAfter = after.filter((m) => m.direction === "outbound").length;
+    assert.equal(outboundAfter, outboundBefore, "no duplicate replies from the retry");
+    assert.equal((await waMessageRepo.findById(inboundRow.id)).status, "processed", "bookkeeping completed");
+  });
+
+  test("replies are linked to the inbound that caused them; event pushes are not", async () => {
+    const session = await waSessionRepo.findByPhone(PHONE);
+    const transcript = await waMessageRepo.findBySession(session.id);
+    const lastInbound = transcript.filter((m) => m.direction === "inbound").pop();
+    const replies = await waMessageRepo.findRepliesTo(lastInbound.id);
+    assert.ok(replies.length > 0, "conversational replies carry in_reply_to");
+  });
+
+  test("a stale conversational reply is skipped, not delivered late", async () => {
+    const session = await waSessionRepo.findByPhone(PHONE);
+    const row = await waMessageRepo.createOutbound({
+      waPhone: PHONE,
+      sessionId: session.id,
+      payload: { kind: "text", body: "What name should we put on your orders?" },
+      inReplyTo: 1, // conversational: linked to an inbound
+    });
+    const { waMessages: wm } = require("../db/schema");
+    await db.update(wm).set({ createdAt: new Date(Date.now() - 11 * 60 * 1000) }).where(eq(wm.id, row.id));
+
+    await processSend({ waMessageId: row.id });
+
+    const after = await waMessageRepo.findById(row.id);
+    assert.equal(after.status, "skipped");
+    assert.match(after.error, /stale/);
+  });
+
+  test("an event push (no in_reply_to) survives any delay — durable by design", async () => {
+    const session = await waSessionRepo.findByPhone(PHONE);
+    const row = await waMessageRepo.createOutbound({
+      waPhone: PHONE,
+      sessionId: session.id,
+      payload: { kind: "text", body: "Payment received ✅" },
+      inReplyTo: null, // event push — settlement, cancellation
+    });
+    const { waMessages: wm } = require("../db/schema");
+    await db.update(wm).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(eq(wm.id, row.id));
+
+    await processSend({ waMessageId: row.id });
+
+    const after = await waMessageRepo.findById(row.id);
+    // Kill switch is off in tests: reaching the skip-for-kill-switch outcome
+    // proves it sailed PAST the staleness check an hour late.
+    assert.equal(after.status, "skipped");
+    assert.match(after.error, /WHATSAPP_ENABLED/);
+  });
+
   test("the maintenance sweep deletes sessions past their resume grace, keeps the rest", async () => {
     const oldPhone = `+234818${String(RUN).slice(-6)}1`;
     await waSessionRepo.save(oldPhone, { state: "MENU", cart: {}, failureCount: 0 });

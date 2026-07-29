@@ -18,6 +18,10 @@ const { QUEUES, enqueue } = require("../config/queue");
  * idempotency key) or double-create a customer (find-or-create by phone).
  */
 
+// A conversational reply older than this is dropped as stale rather than
+// delivered late. Matches the inbound guard's window.
+const STALE_OUTBOUND_MS = 10 * 60 * 1000;
+
 // An effect's outcome re-enters the engine as a new inbound. Bounded: no
 // engine path emits chains longer than this, so more means a logic bug.
 const MAX_TURNS = 4;
@@ -136,6 +140,25 @@ const processInbound = async ({ waMessageId }) => {
     return;
   }
 
+  // Turn-retry guard: if a previous run of THIS turn already produced its
+  // replies but crashed before the final bookkeeping (the classic window:
+  // replies queued, markProcessed lost to a dropped connection), do NOT run
+  // the engine again — that would answer the customer twice. Re-arm any
+  // reply that never reached a send attempt, finish the bookkeeping, done.
+  const priorReplies = await waMessageRepo.findRepliesTo(message.id);
+  if (priorReplies.length > 0) {
+    for (const reply of priorReplies) {
+      if (reply.status === "queued") {
+        await enqueue(QUEUES.WA_SEND, { waMessageId: reply.id });
+      }
+    }
+    await waMessageRepo.markProcessed(message.id, {
+      sessionId: priorReplies[0].sessionId,
+      customerId: priorReplies[0].customerId,
+    });
+    return;
+  }
+
   // Blue-tick + "typing…" immediately, in parallel with the real work — the
   // customer sees "we've heard you" while context loads and the engine runs.
   // Best-effort, but not silent: a failure logs its reason, so "too fast to
@@ -177,7 +200,7 @@ const processInbound = async ({ waMessageId }) => {
   }
 
   const saved = await waSessionRepo.save(waPhone, session);
-  await dispatchReplies(waPhone, saved.id, customer?.id ?? null, replies);
+  await dispatchReplies(waPhone, saved.id, customer?.id ?? null, replies, message.id);
 
   await waMessageRepo.markProcessed(message.id, {
     sessionId: saved.id,
@@ -188,15 +211,18 @@ const processInbound = async ({ waMessageId }) => {
 /**
  * Record first, send later: each reply is a queued wa_messages row before any
  * network attempt, so the kill switch or a Cloud API outage leaves a visible
- * trail instead of silence.
+ * trail instead of silence. `inReplyTo` links conversational replies to the
+ * inbound that caused them — the retry guard and the send-side staleness rule
+ * both key off it; event pushes pass null and stay durable.
  */
-const dispatchReplies = async (waPhone, sessionId, customerId, replies) => {
+const dispatchReplies = async (waPhone, sessionId, customerId, replies, inReplyTo = null) => {
   for (const reply of replies) {
     const outbound = await waMessageRepo.createOutbound({
       waPhone,
       sessionId,
       customerId,
       payload: reply,
+      inReplyTo,
     });
     await enqueue(QUEUES.WA_SEND, { waMessageId: outbound.id });
   }
@@ -245,6 +271,17 @@ const processSend = async ({ waMessageId }) => {
   const row = await waMessageRepo.findById(waMessageId);
   if (!row || row.direction !== "outbound") return;
   if (!["queued", "failed"].includes(row.status)) return; // sent already — a stale retry
+
+  // Conversational replies are perishable: "what's your name?" delivered 25
+  // minutes late (after an outage's retry backoff finally succeeds) is noise
+  // that derails whatever the customer is doing NOW. Same rule the inbound
+  // side already applies — silence beats a late answer. Event pushes
+  // (in_reply_to null: payment received, cancellations) stay valuable at any
+  // age and are exempt.
+  if (row.inReplyTo != null && Date.now() - new Date(row.createdAt).getTime() > STALE_OUTBOUND_MS) {
+    await waMessageRepo.markSkipped(row.id, "stale — conversational reply expired undelivered");
+    return;
+  }
 
   try {
     const result = await sendReply(row.waPhone, row.payload);

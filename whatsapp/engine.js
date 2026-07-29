@@ -612,10 +612,19 @@ const reduceInner = (session, inbound, ctx, expired) => {
   const value = valueOf(inbound);
 
   // 4. Global commands beat state — one word that always works.
+  //
+  // With ONE exception: while a customer is still nameless (IDENTIFY), the
+  // menu/cancel escapes lead nowhere real — every menu action needs an
+  // identity, so "hi" would bounce them to a menu that snaps straight back
+  // here on the next tap (observed in UAT as "it keeps re-introducing
+  // itself"). Greetings during IDENTIFY just get the name question, warmly.
+  const nameless = session.state === STATES.IDENTIFY && !ctx.customer;
   if (COMMANDS.MENU.includes(value)) {
+    if (nameless) return done(session, [text(copy.identifyGreeting())]);
     return goTo(session, STATES.MENU, ctx);
   }
   if (COMMANDS.CANCEL.includes(value)) {
+    if (nameless) return done(session, [text(copy.identifyGreeting())]);
     // In AWAIT_PAYMENT there is no cart to discard — there is a REAL unpaid
     // order. "cancel" means cancelling that, which deserves a confirmation.
     if (session.state === STATES.AWAIT_PAYMENT && session.lastOrderId) {

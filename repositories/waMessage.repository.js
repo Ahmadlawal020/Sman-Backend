@@ -42,12 +42,26 @@ const markProcessed = async (id, { sessionId, customerId } = {}) => {
 };
 
 /** An outbound reply, recorded BEFORE any send attempt. wamid arrives on success. */
-const createOutbound = async ({ waPhone, sessionId = null, customerId = null, payload }) => {
+const createOutbound = async ({ waPhone, sessionId = null, customerId = null, payload, inReplyTo = null }) => {
   const [row] = await db
     .insert(waMessages)
-    .values({ wamid: null, direction: "outbound", waPhone, sessionId, customerId, payload, status: "queued" })
+    .values({
+      wamid: null,
+      direction: "outbound",
+      waPhone,
+      sessionId,
+      customerId,
+      payload,
+      status: "queued",
+      inReplyTo,
+    })
     .returning();
   return row;
+};
+
+/** Replies already produced for an inbound message — the turn-retry guard. */
+const findRepliesTo = async (inboundId) => {
+  return db.select().from(waMessages).where(eq(waMessages.inReplyTo, inboundId)).orderBy(waMessages.id);
 };
 
 const markSent = async (id, wamid) => {
@@ -121,6 +135,7 @@ module.exports = {
   recordInbound,
   markProcessed,
   createOutbound,
+  findRepliesTo,
   markSent,
   markFailed,
   markSkipped,
