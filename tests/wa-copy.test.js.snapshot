@@ -98,7 +98,7 @@ exports[`every copy string, pinned 1`] = `
   "truckCountPrompt": "You have selected 150,000 L for loading. Please enter the number of trucks you will be sending.\\n\\nEach truck can carry up to 60,000 L. For this quantity, you will require between 3 and 10 trucks.",
   "truckCountInvalid": "Please enter a number of trucks between 3 and 10 for this quantity.",
   "truckLitresPrompt": "Truck 1 of 3. Please enter the number of litres this truck will carry.\\n\\n150,000 L remain to be assigned. Each truck can carry up to 60,000 L.",
-  "truckLitresInvalid": "This quantity is not valid. Each truck can carry at most 60,000 L, and the remaining trucks must also be assigned an amount. 150,000 L remain to be assigned.",
+  "truckLitresInvalid": "This quantity is not valid. Each truck can carry at most 60,000 L, and the remaining trucks must also be assigned an amount. 50,000 L remain to be assigned.",
   "lastTruckPrompt": "Truck 3 of 3 will carry the remaining 30,000 L. Please provide its plate number.",
   "plateSingle": "Please provide the plate number of the truck coming to load.",
   "plateMulti": "Truck 2 of 3 (50,000 L). Please provide its plate number.",

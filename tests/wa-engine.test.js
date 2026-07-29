@@ -281,8 +281,8 @@ describe("MENU", () => {
     const IKEJA = { id: 3, name: "Ikeja", state: "Lagos", products: [{ id: 10, name: "PMS", price: 870, stock: 1000 }] };
     const r = reduce(mkSession(STATES.MENU), btn("prices"), baseCtx({ depots: [WARRI, LAGOS, IKEJA] }));
     const body = r.replies[0].body;
-    assert.ok(body.includes("📍 *Delta*"));
-    assert.ok(body.includes("📍 *Lagos*"));
+    assert.ok(body.includes("*Delta*"));
+    assert.ok(body.includes("*Lagos*"));
     assert.ok(body.indexOf("Warri") > body.indexOf("*Delta*"), "depots sit under their state");
     assert.ok(body.indexOf("Ikeja") > body.indexOf("*Lagos*"));
   });
@@ -627,7 +627,7 @@ describe("COLLECT and LOGISTICS", () => {
     const s = mkSession(STATES.COLLECT, big);
     const asked = reduce(s, btn("pickup"), baseCtx());
     assert.equal(asked.session.state, STATES.LOGISTICS);
-    assert.match(asked.replies[asked.replies.length - 1].body, /how many trucks/i);
+    assert.match(asked.replies[asked.replies.length - 1].body, /number of trucks you will be sending/i);
 
     // 1 truck can't carry 110,000 L.
     const tooFew = reduce(asked.session, txt("1"), baseCtx());
@@ -907,7 +907,7 @@ describe("order outcomes", () => {
     const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-501" } }, { lastOrderId: 501 });
     const r = reduce(s, { type: INBOUND.ORDER_FAILED, reason: "cancel" }, baseCtx());
     assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
-    assert.match(r.replies[0].body, /couldn't cancel/i);
+    assert.match(r.replies[0].body, /unable to cancel/i);
   });
 
   it("AWAIT_PAYMENT nudges with the account details on random text", () => {
