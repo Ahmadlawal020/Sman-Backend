@@ -22,6 +22,16 @@ const GENERIC_OTP_RESPONSE = {
 };
 
 /**
+ * The generic body, plus the fixed dev code when OTP dev mode is on — so a
+ * tester on an SMS-less environment can read the code off the screen. Never
+ * present in production (dev mode cannot boot there).
+ */
+const otpResponse = () => {
+  const code = otpService.devCode();
+  return code ? { ...GENERIC_OTP_RESPONSE, devCode: code } : GENERIC_OTP_RESPONSE;
+};
+
+/**
  * Must exceed the slowest branch — an SMS round trip — or the timing itself
  * discloses whether a number is known.
  */
@@ -102,7 +112,7 @@ const handleRegister = asyncHandler(async (req, res) => {
   }
 
   await constantTimeFloor(startedAt, TIMING_FLOOR_MS);
-  return res.json(GENERIC_OTP_RESPONSE);
+  return res.json(otpResponse());
 });
 
 /**
@@ -138,7 +148,7 @@ const handleRequestOtp = asyncHandler(async (req, res) => {
   }
 
   await constantTimeFloor(startedAt, TIMING_FLOOR_MS);
-  return res.json(GENERIC_OTP_RESPONSE);
+  return res.json(otpResponse());
 });
 
 /**
