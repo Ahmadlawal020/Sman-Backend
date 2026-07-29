@@ -82,6 +82,10 @@ app.use("/api/catalog", require("./routes/portal/catalog.route"));
 // buyer identity. The order number is the shared secret.
 app.use("/api/tracking", require("./routes/portal/tracking.route"));
 
+// Public: device-aware store redirect behind the "Download mobile app"
+// button in WhatsApp — the one URL the bot sends for every device.
+app.use("/app", require("./routes/appRedirect.route"));
+
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Dashboard server is running" });

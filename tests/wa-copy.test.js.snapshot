@@ -19,6 +19,42 @@ exports[`every copy string, pinned 1`] = `
     "title": "Finish payment",
     "description": "SOR-1042 is awaiting your transfer"
   },
+  "linkRows": {
+    "website": {
+      "title": "Visit Soroman page",
+      "description": "Products, depots and news"
+    },
+    "community": {
+      "title": "Join our community",
+      "description": "Updates and offers on WhatsApp"
+    },
+    "support": {
+      "title": "Chat with support",
+      "description": "We're happy to help"
+    },
+    "app": {
+      "title": "Download mobile app",
+      "description": "Order and track on the go"
+    }
+  },
+  "linkCtas": {
+    "website": {
+      "body": "Everything Soroman in one place — products, depots and news. 🌐",
+      "button": "Visit website"
+    },
+    "community": {
+      "body": "Join the Soroman community on WhatsApp for updates, offers and tips. 🤝",
+      "button": "Join community"
+    },
+    "support": {
+      "body": "Questions? Our support team is one tap away. 💬",
+      "button": "Chat with support"
+    },
+    "app": {
+      "body": "Get the Soroman app — order and track on the go. 📱",
+      "button": "Download the app"
+    }
+  },
   "noStockAnywhere": "We're sorry — every depot is out of stock right now. 😔 Please check back shortly; stock updates through the day.",
   "inactiveCustomer": "Your account isn't active at the moment, so we can't take an order here. Please call us on +234-800-SOROMAN and we'll get you sorted.",
   "helpText": "Here's what you can type at any time:\\n\\n• *menu* — back to the main menu\\n• *track* — status of your last order\\n• *cancel* — discard the order you're building\\n• *help* — this message\\n\\nTo order, just tap *Place an order* from the menu.",

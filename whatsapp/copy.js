@@ -53,6 +53,22 @@ const payLastRow = (lastOrder) => ({
   description: `${lastOrder.orderNumber} is awaiting your transfer`,
 });
 
+// Menu rows that open a link. A row only renders when its URL is configured
+// (context decides); titles ≤24 chars, CTA button text ≤20 — WhatsApp limits.
+const linkRows = () => ({
+  website: { title: "Visit Soroman page", description: "Products, depots and news" },
+  community: { title: "Join our community", description: "Updates and offers on WhatsApp" },
+  support: { title: "Chat with support", description: "We're happy to help" },
+  app: { title: "Download mobile app", description: "Order and track on the go" },
+});
+
+const linkCtas = () => ({
+  website: { body: "Everything Soroman in one place — products, depots and news. 🌐", button: "Visit website" },
+  community: { body: "Join the Soroman community on WhatsApp for updates, offers and tips. 🤝", button: "Join community" },
+  support: { body: "Questions? Our support team is one tap away. 💬", button: "Chat with support" },
+  app: { body: "Get the Soroman app — order and track on the go. 📱", button: "Download the app" },
+});
+
 const noStockAnywhere = () =>
   "We're sorry — every depot is out of stock right now. 😔 Please check back shortly; stock updates through the day.";
 
@@ -314,6 +330,8 @@ module.exports = {
   menuButtons,
   reorderRow,
   payLastRow,
+  linkRows,
+  linkCtas,
   noStockAnywhere,
   inactiveCustomer,
   helpText,

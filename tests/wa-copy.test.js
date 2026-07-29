@@ -37,6 +37,8 @@ test("every copy string, pinned", (t) => {
     menuButtons: copy.menuButtons(),
     reorderRow: copy.reorderRow(ORDER),
     payLastRow: copy.payLastRow(ORDER),
+    linkRows: copy.linkRows(),
+    linkCtas: copy.linkCtas(),
     noStockAnywhere: copy.noStockAnywhere(),
     inactiveCustomer: copy.inactiveCustomer(SUPPORT),
     helpText: copy.helpText(),

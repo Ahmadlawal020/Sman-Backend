@@ -66,6 +66,11 @@ const arbContext = fc.record({
   supportPhone: fc.constant("+2340000000000"),
   portalUrl: fc.oneof(fc.constant(undefined), fc.constant("https://portal.example")),
   withinServiceWindow: fc.boolean(),
+  // Menu link rows: each independently configured or absent.
+  websiteUrl: fc.oneof(fc.constant(undefined), fc.constant("https://soroman.example")),
+  communityUrl: fc.oneof(fc.constant(undefined), fc.constant("https://chat.whatsapp.com/abc")),
+  supportWaUrl: fc.oneof(fc.constant(undefined), fc.constant("https://wa.me/2340000000000")),
+  appDownloadUrl: fc.oneof(fc.constant(undefined), fc.constant("https://api.soroman.example/app")),
 });
 
 const arbCart = fc.record(
@@ -110,6 +115,7 @@ const arbUserValue = fc.oneof(
   fc.string({ maxLength: 40 }), // arbitrary human input, emoji and all
   fc.constantFrom(
     "menu", "hi", "cancel", "help", "track", "retry", "order", "prices", "reorder",
+    "website", "community", "support", "app",
     "confirm", "confirm:deadbeef", "confirm:", "edit", "pickup", "delivery", "more", "resume", "startover",
     "changeDepot", "states", "state:Delta", "state:nowhere", "2", "30000", "30,000", "0", "-5", "999999999",
     "edit:depot", "edit:quantity", "depot:1", "depot:404", "product:10", "ABC-123-XY"
@@ -182,6 +188,13 @@ const assertReplyWithinLimits = (reply) => {
         assert.ok(r.description.length <= LIMITS.MAX_ROW_DESCRIPTION, `row description "${r.description}"`);
       }
     }
+  }
+  if (reply.kind === REPLY.CTA) {
+    assert.ok(typeof reply.url === "string" && reply.url.length > 0, "cta url");
+    assert.ok(
+      reply.buttonText.length >= 1 && reply.buttonText.length <= LIMITS.MAX_BUTTON_TITLE,
+      `cta button "${reply.buttonText}"`
+    );
   }
   if (reply.kind === REPLY.TEMPLATE) {
     assert.ok(typeof reply.name === "string" && reply.name.length > 0, "template name");
