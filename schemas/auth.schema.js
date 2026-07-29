@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, requiredString } = require("./fields");
+const { id, requiredString, optionalString } = require("./fields");
 
 /**
  * Auth schemas — staff and customer realms.
@@ -82,6 +82,11 @@ const verifyOtp = z.object({
     .trim()
     .min(1, "Verification code is required")
     .max(10, "Verification code is not valid"),
+  // Optional: remember this device so a later PIN login can skip the OTP. The
+  // OTP just proved phone possession, which is the same factor a trusted
+  // device stands in for — so trusting off a verified OTP is sound.
+  trustDevice: z.boolean().optional(),
+  deviceName: optionalString("Device name", 255),
 });
 
 module.exports = {
