@@ -4,6 +4,7 @@ const otpService = require("../../services/otp.service");
 const botCheck = require("../../services/botCheck.service");
 const sessionService = require("../../services/session.service");
 const cookieService = require("../../services/cookie.service");
+const identityService = require("../../services/identity.service");
 const { toE164, checkSmsEligibility } = require("../../utils/phone");
 const { constantTimeFloor } = require("../../utils/timing");
 const { publicCustomer } = require("../../utils/publicCustomer");
@@ -148,7 +149,7 @@ const handleRequestOtp = asyncHandler(async (req, res) => {
  * phone_verified_at, so the OTP row carries no `purpose`.
  */
 const handleVerifyOtp = asyncHandler(async (req, res) => {
-  const { phone, code } = req.body || {};
+  const { phone, code, trustDevice, deviceName } = req.body || {};
 
   const reject = () =>
     res.status(401).json({ success: false, message: "Invalid or expired code" });
@@ -213,6 +214,18 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
     refreshToken
   );
 
+  // Opt-in: remember this device so the customer can use a PIN next time
+  // instead of waiting on another OTP. Verifying the OTP is itself the phone
+  // proof a trusted device represents, so no extra factor is needed.
+  let deviceToken;
+  if (trustDevice) {
+    const trust = await identityService.trustDevice(updated, {
+      deviceName,
+      userAgent: req.get("user-agent"),
+    });
+    deviceToken = trust.deviceToken;
+  }
+
   return res.json({
     success: true,
     message: "Verified",
@@ -221,6 +234,7 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
       accessToken,
       ...(bodyToken !== undefined ? { refreshToken: bodyToken } : {}),
       ...(csrfToken !== undefined ? { csrfToken } : {}),
+      ...(deviceToken ? { deviceToken } : {}),
     },
   });
 });
