@@ -74,6 +74,7 @@ app.use("/api/customer/auth", require("./routes/portal/auth.route"));
 app.use("/api/customer/auth", require("./routes/portal/identity.route"));
 app.use("/api/customer/orders", require("./routes/portal/order.route"));
 app.use("/api/customer/profile", require("./routes/portal/profile.route"));
+app.use("/api/customer/dashboard", require("./routes/portal/dashboard.route"));
 // Public: live depot prices for the marketing site and the portal's order
 // form — no account needed to see what's on sale, exactly as on WhatsApp.
 app.use("/api/catalog", require("./routes/portal/catalog.route"));
