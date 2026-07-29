@@ -118,9 +118,11 @@ const setStaff = async (depotId, adminIds) => {
   const numericDepotId = parseInt(depotId, 10) || depotId;
   await db.delete(depotStaff).where(eq(depotStaff.depotId, numericDepotId));
   if (adminIds && adminIds.length > 0) {
+    // Column is `staffId`, not `adminId`: an `adminId` key is silently dropped
+    // by Drizzle, leaving the NOT NULL `staff_id` unset and the insert failing.
     await db
       .insert(depotStaff)
-      .values(adminIds.map((adminId) => ({ depotId: numericDepotId, adminId: parseInt(adminId, 10) || adminId })));
+      .values(adminIds.map((adminId) => ({ depotId: numericDepotId, staffId: parseInt(adminId, 10) || adminId })));
   }
 };
 
