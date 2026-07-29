@@ -710,7 +710,7 @@ describe("COLLECT and LOGISTICS", () => {
     const s = mkSession(STATES.COLLECT, big);
     const asked = reduce(s, btn("pickup"), baseCtx());
     assert.equal(asked.session.state, STATES.LOGISTICS);
-    assert.match(asked.replies[asked.replies.length - 1].body, /number of trucks/i);
+    assert.match(asked.replies[asked.replies.length - 1].body, /number of trucks you will be sending/i);
 
     // 1 truck can't carry 110,000 L.
     const tooFew = reduce(asked.session, txt("1"), baseCtx());
