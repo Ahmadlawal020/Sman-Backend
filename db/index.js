@@ -25,10 +25,45 @@ PgTimestamp.prototype.mapToDriverValue = function (value) {
   return value;
 };
 
-const connectionString = process.env.DATABASE_URL;
+// Under `npm test`, use TEST_DATABASE_URL when provided so fixtures never touch
+// the app's real database. Everything else (the server, migrations, seeds) runs
+// against DATABASE_URL as before.
+const isTest = process.env.NODE_ENV === "test";
+const connectionString =
+  isTest && process.env.TEST_DATABASE_URL
+    ? process.env.TEST_DATABASE_URL
+    : process.env.DATABASE_URL;
 
 if (!connectionString) {
   throw new Error("DATABASE_URL environment variable is not set");
+}
+
+/**
+ * Guard against the exact failure that leaked "Dash Depot"/"Cust N" fixtures
+ * into the shared dev database: the suites insert real rows and don't clean up,
+ * so running them against anything but a throwaway database pollutes it.
+ *
+ * A localhost Postgres is a throwaway (CI spins one up per run) and is always
+ * allowed. A remote host is refused unless TEST_DATABASE_URL points at an
+ * isolated database — in which case we're already using it — or the operator
+ * explicitly opts in. This lets CI pass untouched while forcing local runs to
+ * isolate.
+ */
+if (isTest && !process.env.TEST_DATABASE_URL && process.env.ALLOW_TESTS_ON_DEV_DB !== "true") {
+  let host = "(unparseable)";
+  try {
+    host = new URL(connectionString).host;
+  } catch {
+    /* leave placeholder */
+  }
+  const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(host);
+  if (!isLocal) {
+    throw new Error(
+      `Refusing to run tests against the remote database "${host}" — test fixtures would pollute it.\n` +
+        `Set TEST_DATABASE_URL to an isolated database (e.g. a separate Neon database — see .env.example),\n` +
+        `or set ALLOW_TESTS_ON_DEV_DB=true to override for a one-off run.`
+    );
+  }
 }
 
 const client = postgres(connectionString);
