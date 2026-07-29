@@ -15,9 +15,17 @@ const TIMEOUT_MS = 5000;
 /**
  * Turnstile is inert until the frontend renders the widget, so an unset secret
  * means "not wired up yet" and the check is skipped. server.js refuses to boot
- * in production with it unset, so this can only be a development state.
+ * in production with it unset — UNLESS the check is explicitly turned off.
+ *
+ * `TURNSTILE_ENABLED=false` is that off switch: it disables the bot check even
+ * in production, for when the frontend has no widget yet and registrations must
+ * still go through. The daily send cap and country allowlist remain the other
+ * two abuse layers, so this loosens — not removes — the protection.
  */
-const isEnabled = () => Boolean(process.env.TURNSTILE_SECRET_KEY);
+const isEnabled = () => {
+  if (process.env.TURNSTILE_ENABLED === "false") return false;
+  return Boolean(process.env.TURNSTILE_SECRET_KEY);
+};
 
 /**
  * @param {string} token   the widget's response token, from the client

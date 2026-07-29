@@ -57,12 +57,18 @@ if (process.env.OTP_DEV_MODE === "true") {
   );
 }
 
-// Turnstile is optional while the frontend catches up, but never in production.
+// Turnstile is optional while the frontend catches up, but never silently off
+// in production: either a secret is set, or it is explicitly disabled with
+// TURNSTILE_ENABLED=false. This stops a missing secret from disabling the bot
+// check by accident, while still allowing a deliberate opt-out.
 if (
   process.env.NODE_ENV === "production" &&
+  process.env.TURNSTILE_ENABLED !== "false" &&
   !process.env.TURNSTILE_SECRET_KEY
 ) {
-  console.error("Fatal: TURNSTILE_SECRET_KEY must be set in production.");
+  console.error(
+    "Fatal: TURNSTILE_SECRET_KEY must be set in production, or set TURNSTILE_ENABLED=false to disable the bot check.",
+  );
   process.exit(1);
 }
 
