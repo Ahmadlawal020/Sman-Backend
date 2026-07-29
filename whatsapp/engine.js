@@ -81,6 +81,16 @@ const listUnchecked = (body, button, rows) => ({
   ],
 });
 
+// One URL button per message — a Cloud API rule, not ours. The URL is not
+// clamped: a truncated link is worse than none, and these come from env
+// config, not user input.
+const cta = (body, buttonText, url) => ({
+  kind: REPLY.CTA,
+  body: clamp(body, LIMITS.MAX_BODY),
+  buttonText: clampTitle(buttonText, LIMITS.MAX_BUTTON_TITLE),
+  url,
+});
+
 const document = (link, filename, caption) => ({
   kind: REPLY.DOCUMENT,
   link,
@@ -311,28 +321,40 @@ const promptFor = (state, session, context) => {
 const cancelOrderConfirmReply = (session) =>
   buttons(copy.cancelOrderConfirm(session.cart.awaiting?.orderNumber), copy.cancelOrderButtons());
 
+/** Which link rows this deployment offers: unset env → no row, no dead taps. */
+const linkTargets = (context) => ({
+  website: context.websiteUrl,
+  community: context.communityUrl,
+  support: context.supportWaUrl,
+  app: context.appDownloadUrl,
+});
+
 const menuReply = (session, context) => {
   const name = context.customer ? context.customer.name : null;
   if (depotsOf(context).length === 0) {
     return buttons(copy.noStockAnywhere(), { track: copy.menuButtons().track, help: "Help" });
   }
   const b = copy.menuButtons();
+  const rows = [{ id: "order", title: b.order }];
   if (context.lastOrder) {
     // An UNPAID last order is not reorder material — it's an open tab. Offer
     // to finish (or cancel) it instead of quietly duplicating it.
     const last = context.lastOrder;
-    const middle =
+    rows.push(
       last.status === "Pending"
         ? { id: "paylast", ...copy.payLastRow(last) }
-        : { id: "reorder", ...copy.reorderRow(last) };
-    return list(copy.menuGreeting(name), "Menu", [
-      { id: "order", title: b.order },
-      middle,
-      { id: "prices", title: b.prices },
-      { id: "track", title: b.track },
-    ]);
+        : { id: "reorder", ...copy.reorderRow(last) }
+    );
   }
-  return buttons(copy.menuGreeting(name), b);
+  rows.push({ id: "prices", title: b.prices });
+  // Track is contextual too — a customer with no orders has nothing to track.
+  if (context.lastOrder) rows.push({ id: "track", title: b.track });
+  const targets = linkTargets(context);
+  const labels = copy.linkRows();
+  for (const key of Object.keys(targets)) {
+    if (targets[key]) rows.push({ id: key, ...labels[key] });
+  }
+  return list(copy.menuGreeting(name), "Menu", rows);
 };
 
 const orderableDepots = (context) => depotsOf(context).filter((d) => productsOf(d).length > 0);
@@ -782,6 +804,12 @@ const handleMenu = (session, ctx, value) => {
       },
     };
     return goTo(next, STATES.AWAIT_PAYMENT, ctx);
+  }
+  const links = linkTargets(ctx);
+  if (links[value]) {
+    // Stay in MENU — the link message is a leaf, not a state.
+    const c = copy.linkCtas()[value];
+    return done(session, [cta(c.body, c.button, links[value])]);
   }
   if (value === "reorder" && ctx.lastOrder) {
     const last = ctx.lastOrder;

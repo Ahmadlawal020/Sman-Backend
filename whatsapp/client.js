@@ -86,6 +86,19 @@ const toApiPayload = (to, reply) => {
           },
         },
       };
+    case REPLY.CTA:
+      return {
+        ...base,
+        type: "interactive",
+        interactive: {
+          type: "cta_url",
+          body: { text: reply.body },
+          action: {
+            name: "cta_url",
+            parameters: { display_text: reply.buttonText, url: reply.url },
+          },
+        },
+      };
     case REPLY.DOCUMENT:
       return {
         ...base,

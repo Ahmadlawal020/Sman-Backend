@@ -65,6 +65,7 @@ const REPLY = Object.freeze({
   TEXT: "text",
   BUTTONS: "buttons",
   LIST: "list",
+  CTA: "cta", // interactive cta_url — one tappable URL button per message
   DOCUMENT: "document",
   TEMPLATE: "template",
 });

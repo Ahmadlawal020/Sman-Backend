@@ -18,6 +18,14 @@ const { loadCatalog } = require("../services/catalog.service");
 
 const SERVICE_WINDOW_HOURS = 24;
 
+/** WhatsApp click-to-chat link for the support line; "" when unconfigured. */
+const supportWaLink = (phone) => {
+  const digits = String(phone || "").replace(/[^\d]/g, "");
+  return digits ? `https://wa.me/${digits}` : "";
+};
+
+const envUrl = (name) => (process.env[name] || "").trim();
+
 /** The customer's most recent order, shaped for track/reorder. */
 const loadLastOrder = async (customerId, lastOrderId) => {
   let orderId = lastOrderId;
@@ -75,6 +83,11 @@ const loadContext = async ({ waPhone, customer, session }) => {
     withinServiceWindow,
     supportPhone: process.env.SUPPORT_PHONE || "our support line",
     portalUrl: process.env.CLIENT_URL || "",
+    // Menu link rows — each renders only when its URL is configured.
+    websiteUrl: envUrl("SOROMAN_WEBSITE_URL"),
+    communityUrl: envUrl("SOROMAN_COMMUNITY_URL"),
+    supportWaUrl: supportWaLink(process.env.SUPPORT_PHONE),
+    appDownloadUrl: envUrl("APP_DOWNLOAD_URL"),
     // Test environments get an "I've paid" button that simulates the
     // transfer — never in production, never on a live Paystack key.
     devSimulatePayment:

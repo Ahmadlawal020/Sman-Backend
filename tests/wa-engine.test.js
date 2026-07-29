@@ -196,23 +196,64 @@ describe("IDENTIFY", () => {
     );
     assert.equal(r.session.state, STATES.MENU);
     assert.equal(r.session.customerId, 41);
-    assert.ok(kinds(r).includes(REPLY.BUTTONS));
+    assert.ok(kinds(r).includes(REPLY.LIST));
   });
 });
 
 // ----------------------------------------------------------------------- menu
 
 describe("MENU", () => {
-  it("no order history: three buttons", () => {
+  it("no order history: a short list — track has nothing to show yet", () => {
     const r = reduce(mkSession(STATES.MENU), txt("hello"), baseCtx());
-    assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
-    assert.deepEqual(buttonIds(r.replies[0]), ["order", "prices", "track"]);
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
+    assert.deepEqual(rowIds(r.replies[0]), ["order", "prices"]);
   });
 
-  it("with order history: a list including Reorder", () => {
+  it("with order history: a list including Reorder and Track", () => {
     const r = reduce(mkSession(STATES.MENU), txt("menu"), baseCtx({ lastOrder: LAST_ORDER }));
     assert.deepEqual(kinds(r), [REPLY.LIST]);
     assert.deepEqual(rowIds(r.replies[0]), ["order", "reorder", "prices", "track"]);
+  });
+
+  it("configured link URLs append their rows — unset ones stay hidden", () => {
+    const ctx = baseCtx({
+      lastOrder: LAST_ORDER,
+      websiteUrl: "https://soroman.example",
+      supportWaUrl: "https://wa.me/2340000000000",
+      // communityUrl and appDownloadUrl deliberately unset
+    });
+    const r = reduce(mkSession(STATES.MENU), txt("menu"), ctx);
+    assert.deepEqual(rowIds(r.replies[0]), ["order", "reorder", "prices", "track", "website", "support"]);
+  });
+
+  it("all four links + full history still fit WhatsApp's 10-row cap", () => {
+    const ctx = baseCtx({
+      lastOrder: LAST_ORDER,
+      websiteUrl: "https://soroman.example",
+      communityUrl: "https://chat.whatsapp.com/abc",
+      supportWaUrl: "https://wa.me/2340000000000",
+      appDownloadUrl: "https://api.soroman.example/app",
+    });
+    const r = reduce(mkSession(STATES.MENU), txt("menu"), ctx);
+    const ids = rowIds(r.replies[0]);
+    assert.equal(ids.length, 8);
+    assert.ok(ids.length <= LIMITS.MAX_LIST_ROWS);
+  });
+
+  it("tapping a link row answers with a cta_url and stays at MENU", () => {
+    const ctx = baseCtx({ websiteUrl: "https://soroman.example" });
+    const r = reduce(mkSession(STATES.MENU), lst("website"), ctx);
+    assert.equal(r.session.state, STATES.MENU);
+    assert.equal(r.session.failureCount, 0, "a link tap is not a fumble");
+    assert.deepEqual(kinds(r), [REPLY.CTA]);
+    assert.equal(r.replies[0].url, "https://soroman.example");
+    assert.ok(r.replies[0].buttonText.length <= LIMITS.MAX_BUTTON_TITLE);
+  });
+
+  it("a link id whose URL is not configured falls through to the menu", () => {
+    const r = reduce(mkSession(STATES.MENU), lst("community"), baseCtx());
+    assert.equal(r.session.failureCount, 1);
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
   });
 
   it("'order' starts a fresh cart at DEPOT", () => {
@@ -280,7 +321,7 @@ describe("MENU", () => {
   it("garbage re-shows the menu and counts a failure", () => {
     const r = reduce(mkSession(STATES.MENU), txt("qwerty"), baseCtx());
     assert.equal(r.session.failureCount, 1);
-    assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
   });
 });
 
@@ -930,7 +971,7 @@ describe("expired sessions", () => {
     const s = mkSession(STATES.MENU, {}, { expired: true });
     const r = reduce(s, txt("hi"), baseCtx());
     assert.equal(r.session.state, STATES.MENU);
-    assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
   });
 });
 

@@ -96,6 +96,25 @@ describe("whatsapp/client — engine replies onto the Cloud API, faithfully", ()
     assert.deepEqual(section.rows[1], { id: "depot:2", title: "Lagos" });
   });
 
+  test("cta reply → interactive cta_url message", async () => {
+    let body;
+    nock(GRAPH)
+      .post(PATH, (b) => ((body = b), true))
+      .reply(200, { messages: [{ id: "wamid.OUT7" }] });
+
+    await sendReply(TO, {
+      kind: "cta",
+      body: "Get the Soroman app — order and track on the go. 📱",
+      buttonText: "Download the app",
+      url: "https://api.soroman.example/app",
+    });
+    assert.equal(body.interactive.type, "cta_url");
+    assert.deepEqual(body.interactive.action, {
+      name: "cta_url",
+      parameters: { display_text: "Download the app", url: "https://api.soroman.example/app" },
+    });
+  });
+
   test("document reply → document message with link", async () => {
     let body;
     nock(GRAPH)
