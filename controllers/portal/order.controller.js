@@ -1,6 +1,16 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
 const { placeOrder } = require("../../services/order.service");
+const walletService = require("../../services/wallet.service");
+const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
+
+// Test-mode gate, identical to the WhatsApp DEV_SIMULATE_PAYMENT effect
+// (whatsapp/pipeline.js): only ever true against a non-production server wired
+// to a Paystack TEST key. A production deploy can never satisfy it, so the
+// route below is inert there no matter what the client sends.
+const isDevPaymentAllowed = () =>
+  process.env.NODE_ENV !== "production" &&
+  (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test");
 
 /**
  * POST /api/customer/orders — the signed-in customer places their OWN order.
@@ -65,4 +75,45 @@ const getMyOrder = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { order } });
 });
 
-module.exports = { createMyOrder, listMyOrders, getMyOrder };
+/**
+ * POST /api/customer/orders/:id/simulate-payment — the web mirror of the
+ * WhatsApp "I've paid ✅ (test)" button. For testers only: refuses outside test
+ * mode (403), so the invoice-page button is dead against production.
+ *
+ * When allowed, it takes the exact production settlement path: credit the
+ * wallet ledger for the order total (idempotent by reference), then run
+ * processUnpaidOrdersForCustomer — which drives Pending→Paid through the state
+ * machine, books the hold, generates the ticket, and enqueues the "payment
+ * received" push. The tester's confirmation is the real one, not a fake flag.
+ */
+const simulateMyPayment = asyncHandler(async (req, res) => {
+  if (!isDevPaymentAllowed()) {
+    return res.status(403).json({
+      success: false,
+      message: "Simulated payment is only available in test mode.",
+    });
+  }
+
+  const order = await orderRepo.findById(req.params.id);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  // Idempotent: an order already paid (wallet at order time, a real transfer,
+  // or a second click) needs no further work.
+  if (order.paymentStatus === "Paid") {
+    return res.json({ success: true, message: "Order is already paid." });
+  }
+
+  await walletService.credit({
+    customerId: order.customerId,
+    amount: Number(order.totalAmount),
+    description: "Simulated bank transfer (dev button)",
+    reference: `DEV-SIM-${order.id}`,
+  });
+  await processUnpaidOrdersForCustomer(order.customerId);
+
+  res.json({ success: true, message: "Simulated payment applied." });
+});
+
+module.exports = { createMyOrder, listMyOrders, getMyOrder, simulateMyPayment };
