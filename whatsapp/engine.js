@@ -236,15 +236,22 @@ const clearCollect = (cart) => {
  * the chat history, and confirming a total the customer never saw is the one
  * stale-tap case the state machine alone cannot catch. FNV-1a: pure, tiny,
  * and stable — no randomness, per the engine's ground rules.
+ *
+ * Canonicalise before hashing: Postgres jsonb does not preserve object key
+ * order, so a cart saved as `{quantity, plate}` can reload as `{plate,
+ * quantity}`. JSON.stringify would then disagree with the token embedded in
+ * the Confirm button even though nothing the customer cares about changed
+ * (observed on multi-truck pickup confirms).
  */
 const cartToken = (cart) => {
+  const trucks = (cart.trucks || []).map((t) => [String(t.plate || ""), Number(t.quantity) || 0]);
   const key = JSON.stringify([
-    cart.depotId,
-    cart.productId,
-    cart.quantity,
-    cart.deliveryType,
-    cart.trucks || [],
-    cart.address || "",
+    String(cart.depotId ?? ""),
+    String(cart.productId ?? ""),
+    Number(cart.quantity) || 0,
+    String(cart.deliveryType || ""),
+    trucks,
+    String(cart.address || ""),
   ]);
   let h = 0x811c9dc5;
   for (let i = 0; i < key.length; i += 1) {

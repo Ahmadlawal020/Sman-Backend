@@ -839,6 +839,34 @@ describe("CONFIRM", () => {
     assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
   });
 
+  it("Confirm still matches after jsonb-style key reorder on trucks", () => {
+    // Multi-truck carts are the fragile case: token hashes the trucks array,
+    // and Postgres jsonb may reshuffle object keys on reload.
+    const cart = {
+      depotId: 1,
+      productId: 10,
+      quantity: 80000,
+      deliveryType: "pickup",
+      truckCount: 3,
+      trucks: [
+        { quantity: 20000, plate: "ABC33353" },
+        { quantity: 30000, plate: "AFG4464646" },
+        { quantity: 30000, plate: "DCR25353" },
+      ],
+    };
+    const summary = reduce(mkSession(STATES.CONFIRM, cart), txt("hmm"), baseCtx());
+    const confirmId = buttonIds(summary.replies[0])[0];
+    const reloaded = {
+      ...summary.session,
+      cart: {
+        ...summary.session.cart,
+        trucks: summary.session.cart.trucks.map((t) => ({ plate: t.plate, quantity: t.quantity })),
+      },
+    };
+    const r = reduce(reloaded, btn(confirmId), baseCtx());
+    assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER], "key order must not invalidate Confirm");
+  });
+
   it("a Confirm from an OUTDATED summary is refused with the current one re-shown", () => {
     // Reach CONFIRM, capture that summary's button…
     const first = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
