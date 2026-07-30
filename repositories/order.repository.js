@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders, customers, depots, products, pfis } = require("../db/schema");
+const { orders, customers, depots, products, pfis, orderTrucks } = require("../db/schema");
 
 const findById = async (id, tx = db) => {
   const [row] = await tx.select().from(orders).where(eq(orders.id, id)).limit(1);
@@ -42,55 +42,109 @@ const findByNumber = async (orderNumber) => {
   return row || null;
 };
 
-const findByIdFull = async (id, tx = db) => {
-  const [row] = await tx
-    .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      customerId: orders.customerId,
-      state: orders.state,
-      depotId: orders.depotId,
-      productId: orders.productId,
-      quantity: orders.quantity,
-      price: orders.price,
-      totalAmount: orders.totalAmount,
-      deliveryType: orders.deliveryType,
-      deliveryAddress: orders.deliveryAddress,
-      pfiId: orders.pfiId,
-      virtualAccountNumber: orders.virtualAccountNumber,
-      virtualAccountBank: orders.virtualAccountBank,
-      virtualAccountName: orders.virtualAccountName,
-      paymentStatus: orders.paymentStatus,
-      status: orders.status,
-      createdAt: orders.createdAt,
-      updatedAt: orders.updatedAt,
-      // Customer fields
-      customerName: customers.name,
-      customerEmail: customers.email,
-      customerPhone: customers.phone,
-      customerCompanyName: customers.companyName,
-      customerBalance: customers.balance,
-      customerVirtualAccountName: customers.virtualAccountName,
-      // Depot fields
-      depotName: depots.name,
-      depotCode: depots.code,
-      depotAddress: depots.address,
-      // Product fields
-      productName: products.name,
-      productSku: products.sku,
-      productUnit: products.unit,
-      productCategory: products.category,
-      // PFI fields
-      pfiNumber: pfis.pfiNumber,
-    })
+// The joined columns a full order detail carries. Includes the per-stage
+// lifecycle timestamps and cancellation reason so callers can render the
+// order's own timeline without the public tracking endpoint — those columns
+// (order.js) are the source of truth for tracking, reused here behind auth.
+const FULL_ORDER_COLUMNS = {
+  id: orders.id,
+  orderNumber: orders.orderNumber,
+  customerId: orders.customerId,
+  state: orders.state,
+  depotId: orders.depotId,
+  productId: orders.productId,
+  quantity: orders.quantity,
+  price: orders.price,
+  totalAmount: orders.totalAmount,
+  deliveryType: orders.deliveryType,
+  deliveryAddress: orders.deliveryAddress,
+  pfiId: orders.pfiId,
+  virtualAccountNumber: orders.virtualAccountNumber,
+  virtualAccountBank: orders.virtualAccountBank,
+  virtualAccountName: orders.virtualAccountName,
+  paymentStatus: orders.paymentStatus,
+  status: orders.status,
+  // Per-stage lifecycle stamps — one timestamp per stage, reached at most once.
+  paymentConfirmedAt: orders.paymentConfirmedAt,
+  releasedAt: orders.releasedAt,
+  loadingStartedAt: orders.loadingStartedAt,
+  completedAt: orders.completedAt,
+  cancelledAt: orders.cancelledAt,
+  cancellationReason: orders.cancellationReason,
+  createdAt: orders.createdAt,
+  updatedAt: orders.updatedAt,
+  // Customer fields
+  customerName: customers.name,
+  customerEmail: customers.email,
+  customerPhone: customers.phone,
+  customerCompanyName: customers.companyName,
+  customerBalance: customers.balance,
+  customerVirtualAccountName: customers.virtualAccountName,
+  // Depot fields
+  depotName: depots.name,
+  depotCode: depots.code,
+  depotAddress: depots.address,
+  // Product fields
+  productName: products.name,
+  productSku: products.sku,
+  productUnit: products.unit,
+  productCategory: products.category,
+  // PFI fields
+  pfiNumber: pfis.pfiNumber,
+};
+
+const fullOrderQuery = (tx = db) =>
+  tx
+    .select(FULL_ORDER_COLUMNS)
     .from(orders)
     .leftJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
-    .leftJoin(pfis, eq(orders.pfiId, pfis.id))
-    .where(eq(orders.id, id))
+    .leftJoin(pfis, eq(orders.pfiId, pfis.id));
+
+const findByIdFull = async (id, tx = db) => {
+  const [row] = await fullOrderQuery(tx).where(eq(orders.id, id)).limit(1);
+  return row || null;
+};
+
+/**
+ * The same full detail keyed by order number rather than numeric id. Serves
+ * the customer portal's by-reference lookup: the reference (order number) is
+ * the id every screen and SMS shows, so the customer can open an order by the
+ * value they hold without first resolving it to a database id. Normalised the
+ * same way tracking does — trimmed and upper-cased.
+ */
+const findByNumberFull = async (orderNumber, tx = db) => {
+  const normalized = String(orderNumber || "").trim().toUpperCase();
+  if (!normalized) return null;
+  const [row] = await fullOrderQuery(tx)
+    .where(eq(orders.orderNumber, normalized))
     .limit(1);
   return row || null;
+};
+
+/**
+ * The truck loads on an order, oldest ordinal first. Carries the plate, the
+ * per-load quantity, movement status and gate stamps, plus driver contact —
+ * safe here because this is the order owner's own view behind auth (unlike the
+ * public tracking feed, which withholds driver details).
+ */
+const findTrucksByOrderId = async (orderId, tx = db) => {
+  return tx
+    .select({
+      truckIndex: orderTrucks.truckIndex,
+      truckNumber: orderTrucks.truckNumber,
+      quantity: orderTrucks.quantity,
+      status: orderTrucks.status,
+      driverName: orderTrucks.driverName,
+      driverPhone: orderTrucks.driverPhone,
+      securityEnteredAt: orderTrucks.securityEnteredAt,
+      loadedAt: orderTrucks.loadedAt,
+      securityExitedAt: orderTrucks.securityExitedAt,
+    })
+    .from(orderTrucks)
+    .where(eq(orderTrucks.orderId, orderId))
+    .orderBy(asc(orderTrucks.truckIndex));
 };
 
 const findAll = async ({
@@ -189,6 +243,7 @@ const findAll = async ({
     pagination: {
       total,
       page: pageNum,
+      limit: limitNum,
       pages: Math.ceil(total / limitNum),
     },
   };
@@ -268,6 +323,8 @@ module.exports = {
   findByNumber,
   findByIdempotencyKey,
   findByIdFull,
+  findByNumberFull,
+  findTrucksByOrderId,
   findAll,
   create,
   update,

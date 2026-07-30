@@ -1,8 +1,13 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
-const { placeOrder } = require("../../services/order.service");
+const { placeOrder, updatePickupTrucks } = require("../../services/order.service");
 const walletService = require("../../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
+const {
+  buildReached,
+  currentStage,
+  stageNote,
+} = require("../../services/tracking.service");
 
 // Test-mode gate, identical to the WhatsApp DEV_SIMULATE_PAYMENT effect
 // (whatsapp/pipeline.js): only ever true against a non-production server wired
@@ -11,6 +16,51 @@ const { processUnpaidOrdersForCustomer } = require("../../services/payment.servi
 const isDevPaymentAllowed = () =>
   process.env.NODE_ENV !== "production" &&
   (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test");
+
+// Per-truck movement in words, for the order owner's own detail view. Mirrors
+// the public tracking labels (tracking.service.js) so the two surfaces read
+// the same, but the owner's view additionally carries driver contact and gate
+// stamps — details the public feed withholds.
+const TRUCK_STATUS_LABEL = {
+  pending: "Assigned",
+  gated_in: "At the depot",
+  loaded: "Loaded",
+  gated_out: "Departed",
+};
+
+const toOwnerTruck = (t) => ({
+  index: t.truckIndex,
+  plate: t.truckNumber || null,
+  quantity: Number(t.quantity),
+  status: t.status,
+  statusLabel: TRUCK_STATUS_LABEL[t.status] || t.status,
+  driverName: t.driverName || null,
+  driverPhone: t.driverPhone || null,
+  enteredAt: t.securityEnteredAt || null,
+  loadedAt: t.loadedAt || null,
+  exitedAt: t.securityExitedAt || null,
+});
+
+/**
+ * Enrich an order the owner is reading: truck loads, the stage timeline
+ * (`reached` / `stage` / `note`), so the signed-in detail page can render
+ * progress without a second hop to the public tracking endpoint. Cancelled
+ * orders still carry `reached.cancelled` but leave `stage`/`note` null —
+ * there is no public stage for a cancellation.
+ */
+const withOwnerDetail = async (order) => {
+  const trucks = (await orderRepo.findTrucksByOrderId(order.id)).map(toOwnerTruck);
+  order.trucks = trucks;
+  order.reached = buildReached(order);
+  if (order.status === "Cancelled") {
+    order.stage = null;
+    order.note = null;
+  } else {
+    order.stage = currentStage(order);
+    order.note = stageNote(order.stage, { ...order, trucks });
+  }
+  return order;
+};
 
 /**
  * POST /api/customer/orders — the signed-in customer places their OWN order.
@@ -55,24 +105,53 @@ const createMyOrder = asyncHandler(async (req, res) => {
   });
 });
 
-/** GET /api/customer/orders — the customer's own orders, newest first. */
+/**
+ * GET /api/customer/orders — the customer's own orders, newest first.
+ * Accepts the same filters as the admin list (search by order number, status,
+ * date range) plus pagination; `customer` is always forced from the token, so
+ * the filters can only ever narrow the caller's OWN history.
+ */
 const listMyOrders = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 50 } = req.query;
-  const result = await orderRepo.findAll({ customer: req.customer.id, page, limit });
+  const { page = 1, limit = 50, search, status, dateFrom, dateTo } = req.query;
+  const result = await orderRepo.findAll({
+    customer: req.customer.id,
+    search,
+    status,
+    dateFrom,
+    dateTo,
+    page,
+    limit,
+  });
   res.json({ success: true, data: result });
 });
 
 /**
  * GET /api/customer/orders/:id — one of the customer's own orders, scoped by
  * ownership. Another customer's order reads as 404 — it never confirms the row
- * exists, let alone leaks it.
+ * exists, let alone leaks it. Carries the lifecycle timestamps, the stage
+ * timeline (`reached` / `stage` / `note`), and the order's truck loads, so the
+ * owner sees the full timeline behind auth without the public tracking hop.
  */
 const getMyOrder = asyncHandler(async (req, res) => {
   const order = await orderRepo.findByIdFull(req.params.id);
   if (!order || order.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order not found" });
   }
-  res.json({ success: true, data: { order } });
+  res.json({ success: true, data: { order: await withOwnerDetail(order) } });
+});
+
+/**
+ * GET /api/customer/orders/by-ref/:ref — the same detail as :id, but keyed by
+ * the order NUMBER (the reference the customer actually holds — on the invoice,
+ * the SMS, the dashboard). Ownership-scoped identically: an unknown reference,
+ * or one belonging to another customer, is a flat 404.
+ */
+const getMyOrderByRef = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findByNumberFull(req.params.ref);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+  res.json({ success: true, data: { order: await withOwnerDetail(order) } });
 });
 
 /**
@@ -116,4 +195,40 @@ const simulateMyPayment = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Simulated payment applied." });
 });
 
-module.exports = { createMyOrder, listMyOrders, getMyOrder, simulateMyPayment };
+/**
+ * PATCH /api/customer/orders/by-ref/:ref/trucks — replace the pickup truck
+ * declaration on the caller's own order. Plate/driver may be blank (filled at
+ * the gate); quantities must still sum to the order. Refuses once any load
+ * has gated in, or if the order has moved past Released.
+ */
+const updateMyOrderTrucks = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findByNumberFull(req.params.ref);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  await updatePickupTrucks({
+    orderId: order.id,
+    customerId: req.customer.id,
+    trucks: req.body.trucks,
+    actor: { type: "customer", customerId: req.customer.id },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  const fresh = await orderRepo.findByNumberFull(req.params.ref);
+  res.json({
+    success: true,
+    message: "Truck details saved",
+    data: { order: await withOwnerDetail(fresh) },
+  });
+});
+
+module.exports = {
+  createMyOrder,
+  listMyOrders,
+  getMyOrder,
+  getMyOrderByRef,
+  simulateMyPayment,
+  updateMyOrderTrucks,
+};

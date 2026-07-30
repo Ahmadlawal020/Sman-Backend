@@ -196,7 +196,10 @@ describe("IDENTIFY", () => {
     );
     assert.equal(r.session.state, STATES.MENU);
     assert.equal(r.session.customerId, 41);
-    assert.ok(kinds(r).includes(REPLY.LIST));
+    // Single list: welcome is the body — no separate text then "Hello" menu.
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
+    assert.match(r.replies[0].body, /account has been set up/i);
+    assert.ok(!/Hello Ada Obi/i.test(r.replies[0].body));
   });
 });
 
@@ -779,7 +782,7 @@ describe("CONFIRM", () => {
   it("a delivery confirm carries the address instead of trucks", () => {
     const cart = { depotId: 1, productId: 10, quantity: 30000, deliveryType: "delivery", address: "14 Airport Road, Warri" };
     const r = reduce(mkSession(STATES.CONFIRM, cart), btn("confirm"), baseCtx());
-    assert.equal(r.effects[0].payload.address, "14 Airport Road, Warri");
+    assert.equal(r.effects[0].payload.deliveryAddress, "14 Airport Road, Warri");
     assert.equal(r.effects[0].payload.trucks, undefined);
   });
 

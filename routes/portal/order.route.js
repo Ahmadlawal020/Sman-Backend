@@ -8,7 +8,9 @@ const {
   createMyOrder,
   listMyOrders,
   getMyOrder,
+  getMyOrderByRef,
   simulateMyPayment,
+  updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
 // Every route here is the signed-in customer acting on their OWN orders.
@@ -29,6 +31,26 @@ router.get(
   authenticateCustomer,
   validate({ query: orderSchemas.listMyOrders }),
   listMyOrders
+);
+
+// By-reference lookup. Registered before "/:id" so the two-segment path is
+// matched here rather than being mistaken for a numeric id; order numbers are
+// the reference customers actually hold (invoice, SMS, dashboard).
+router.get(
+  "/by-ref/:ref",
+  authenticateCustomer,
+  validate({ params: orderSchemas.refParam }),
+  getMyOrderByRef
+);
+
+// Replace pickup truck declaration — same by-ref key the dashboard already uses.
+router.patch(
+  "/by-ref/:ref/trucks",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.refParam, body: orderSchemas.updateMyTrucks }),
+  updateMyOrderTrucks
 );
 
 router.get(

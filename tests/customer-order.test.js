@@ -8,7 +8,7 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderRepo } = require("../repositories");
+const { customerRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
 const PORTAL_AUTH = "/api/customer/auth";
@@ -26,7 +26,9 @@ const TOTAL = UNIT_PRICE * QTY;
  * Returns the customer row + a native-transport access token.
  */
 async function registerActiveCustomer(tag) {
-  const phone = `+234813${String(RUN).slice(-6)}${tag}`;
+  // Nigerian E.164: +234 + 10 digits. Tag is an integer counter so many
+  // customers can share one RUN without colliding or overflowing the length.
+  const phone = `+234813${String(RUN).slice(-5)}${String(tag).padStart(2, "0")}`;
   const reg = await request(app).post(`${PORTAL_AUTH}/register`).send({ name: `Cust ${tag}`, phone });
   assert.equal(reg.status, 200, JSON.stringify(reg.body));
   const ver = await request(app)
@@ -212,5 +214,125 @@ describe("customer portal — a customer places their own order", () => {
       .set("Authorization", `Bearer ${a.accessToken}`);
     assert.equal(own.status, 200);
     assert.equal(own.body.data.order.id, orderId);
+    // Owner detail carries the stage timeline and trucks array so the signed-in
+    // page does not need a second hop to the public tracking endpoint.
+    assert.ok(own.body.data.order.reached?.received, "reached.received is stamped");
+    assert.equal(own.body.data.order.stage, "received");
+    assert.ok(typeof own.body.data.order.note === "string");
+    assert.ok(Array.isArray(own.body.data.order.trucks), "trucks array is present");
+    assert.ok(
+      own.body.data.order.paymentConfirmedAt === null ||
+        own.body.data.order.paymentConfirmedAt === undefined ||
+        typeof own.body.data.order.paymentConfirmedAt === "string",
+      "lifecycle stamps are exposed on the owner detail"
+    );
+  });
+
+  test("by-ref lookup returns the same owner detail keyed by order number", async () => {
+    const { accessToken } = await registerActiveCustomer("10");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    assert.equal(placed.status, 201);
+    const { id, orderNumber } = placed.body.data.order;
+
+    const byRef = await request(app)
+      .get(`${ORDERS}/by-ref/${orderNumber}`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(byRef.status, 200, JSON.stringify(byRef.body));
+    assert.equal(byRef.body.data.order.id, id);
+    assert.equal(byRef.body.data.order.orderNumber, orderNumber);
+    assert.ok(byRef.body.data.order.reached?.received);
+    assert.ok(Array.isArray(byRef.body.data.order.trucks));
+
+    // Case-insensitive / trimmed — the same normalisation tracking uses.
+    const mixed = await request(app)
+      .get(`${ORDERS}/by-ref/${orderNumber.toLowerCase()}`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(mixed.status, 200);
+    assert.equal(mixed.body.data.order.id, id);
+
+    // An unknown reference is a flat 404.
+    const missing = await request(app)
+      .get(`${ORDERS}/by-ref/ORD-DOESNOTEXIST`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(missing.status, 404);
+  });
+
+  test("by-ref does not leak another customer's order", async () => {
+    const a = await registerActiveCustomer("11");
+    const b = await registerActiveCustomer("12");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${a.accessToken}`)
+      .send(body());
+    assert.equal(placed.status, 201);
+    const { orderNumber } = placed.body.data.order;
+
+    const peek = await request(app)
+      .get(`${ORDERS}/by-ref/${orderNumber}`)
+      .set("Authorization", `Bearer ${b.accessToken}`);
+    assert.equal(peek.status, 404);
+  });
+
+  test("list accepts status / search / date filters and returns pagination.limit", async () => {
+    const { accessToken } = await registerActiveCustomer("13");
+
+    // One unpaid Pending order.
+    const pending = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    assert.equal(pending.status, 201);
+    const pendingNumber = pending.body.data.order.orderNumber;
+
+    // Fund the wallet and place a second order that settles to Paid.
+    await customerRepo.creditBalance(pending.body.data.order.customerId, TOTAL);
+    const paid = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    assert.equal(paid.status, 201);
+    assert.equal(paid.body.data.order.status, "Paid");
+
+    // Status filter: only Pending.
+    const onlyPending = await request(app)
+      .get(`${ORDERS}?status=Pending`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(onlyPending.status, 200, JSON.stringify(onlyPending.body));
+    assert.ok(onlyPending.body.data.orders.every((o) => o.status === "Pending"));
+    assert.ok(onlyPending.body.data.orders.some((o) => o.orderNumber === pendingNumber));
+    assert.equal(onlyPending.body.data.pagination.limit, 50, "pagination carries the page limit");
+
+    // Search by order number fragment.
+    const fragment = pendingNumber.slice(-6);
+    const searched = await request(app)
+      .get(`${ORDERS}?search=${encodeURIComponent(fragment)}`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(searched.status, 200);
+    assert.ok(
+      searched.body.data.orders.every((o) => o.orderNumber.includes(fragment)),
+      "search narrows to matching order numbers"
+    );
+
+    // Pagination: limit is echoed and hard-capped at 100 by the repository.
+    const paged = await request(app)
+      .get(`${ORDERS}?page=1&limit=1`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(paged.status, 200);
+    assert.equal(paged.body.data.orders.length, 1);
+    assert.equal(paged.body.data.pagination.limit, 1);
+    assert.equal(paged.body.data.pagination.page, 1);
+    assert.ok(paged.body.data.pagination.pages >= 2);
+    assert.ok(paged.body.data.pagination.total >= 2);
+
+    // Date range with no matches in the far past returns an empty page.
+    const empty = await request(app)
+      .get(`${ORDERS}?dateFrom=2000-01-01&dateTo=2000-01-02`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(empty.status, 200);
+    assert.equal(empty.body.data.orders.length, 0);
+    assert.equal(empty.body.data.pagination.total, 0);
   });
 });

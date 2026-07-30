@@ -329,7 +329,8 @@ const linkTargets = (context) => ({
   app: context.appDownloadUrl,
 });
 
-const menuReply = (session, context) => {
+/** Main menu. Optional `body` replaces the usual greeting (e.g. post-signup welcome). */
+const menuReply = (session, context, body) => {
   const name = context.customer ? context.customer.name : null;
   if (depotsOf(context).length === 0) {
     return buttons(copy.noStockAnywhere(), { track: copy.menuButtons().track, help: "Help" });
@@ -354,7 +355,7 @@ const menuReply = (session, context) => {
   for (const key of Object.keys(targets)) {
     if (targets[key]) rows.push({ id: key, ...labels[key] });
   }
-  return list(copy.menuGreeting(name), "Menu", rows);
+  return list(body || copy.menuGreeting(name), "Menu", rows);
 };
 
 // ------------------------------------------------------------------- track
@@ -560,9 +561,11 @@ const reduceInner = (session, inbound, ctx, expired) => {
         cart: emptyCart(),
         failureCount: 0,
       };
-      // context.customer may not be loaded this turn; greet from the payload.
-      const greeting = text(copy.welcome(customer.name || ""));
-      return done(next, [greeting, menuReply(next, { ...ctx, customer })]);
+      // One list: welcome is the body, menu rows attached. context.customer
+      // may not be loaded this turn — greet from the payload.
+      return done(next, [
+        menuReply(next, { ...ctx, customer }, copy.welcome(customer.name || "")),
+      ]);
     }
     case INBOUND.ORDER_CREATED: {
       const order = inbound.order || {};
@@ -1122,7 +1125,8 @@ const handleConfirm = (session, ctx, value) => {
         quantity: t.quantity,
       }));
     } else {
-      payload.address = cart.address;
+      // deliveryAddress — placeOrder's field name, not the cart's "address".
+      payload.deliveryAddress = cart.address;
     }
     const next = { ...session, cart: { ...cart, pendingOrder: true } };
     return done(next, [text(copy.orderPending())], [{ type: EFFECTS.CREATE_ORDER, payload }]);

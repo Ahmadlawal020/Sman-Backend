@@ -59,6 +59,29 @@ const currentStage = (o) => {
   return "received";
 };
 
+/**
+ * Build the `reached` map from an order's lifecycle stamps. Shared by the
+ * public tracking feed and the owner's own detail so both surfaces stamp the
+ * same stages from the same columns. `cancelled` is only set when the order
+ * was cancelled — the public feed never returns cancelled orders, but the
+ * owner's detail does.
+ */
+const buildReached = (row) => {
+  const reached = { received: row.createdAt };
+  if (row.paymentConfirmedAt) {
+    reached.payment_confirmed = row.paymentConfirmedAt;
+    reached.processing = row.paymentConfirmedAt;
+  }
+  if (row.releasedAt) reached.released = row.releasedAt;
+  if (row.loadingStartedAt) reached.loading = row.loadingStartedAt;
+  if (row.completedAt) reached.completed = row.completedAt;
+  if (row.cancelledAt) reached.cancelled = row.cancelledAt;
+  return reached;
+};
+
+/** One-line situation report for the current stage. Needs `depotName` + `trucks`. */
+const stageNote = (stage, row) => (NOTE[stage] ? NOTE[stage](row) : null);
+
 const trackByRef = async (ref) => {
   const normalized = String(ref || "").trim().toUpperCase();
   if (!normalized) return null;
@@ -110,16 +133,9 @@ const trackByRef = async (ref) => {
     statusLabel: TRUCK_STATUS_LABEL[t.status] || t.status,
   }));
 
-  const reached = { received: row.createdAt };
-  if (row.paymentConfirmedAt) {
-    reached.payment_confirmed = row.paymentConfirmedAt;
-    reached.processing = row.paymentConfirmedAt;
-  }
-  if (row.releasedAt) reached.released = row.releasedAt;
-  if (row.loadingStartedAt) reached.loading = row.loadingStartedAt;
-  if (row.completedAt) reached.completed = row.completedAt;
-
   const stage = currentStage(row);
+  // Public feed never returns Cancelled, so cancelled is never set here.
+  const reached = buildReached(row);
 
   return {
     ref: row.orderNumber,
@@ -140,10 +156,10 @@ const trackByRef = async (ref) => {
         : { type: "pickup" },
     stage,
     reached,
-    note: NOTE[stage](row),
+    note: stageNote(stage, row),
     // Present once trucks are assigned at release; empty before then.
     trucks: row.trucks,
   };
 };
 
-module.exports = { trackByRef };
+module.exports = { trackByRef, currentStage, buildReached, stageNote };
