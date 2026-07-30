@@ -234,4 +234,85 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     const reloaded = await orderTruckRepo.findById(load.id);
     assert.equal(reloaded.truckNumber, "PK-SECOND", "the load the ticket points at is the truck that loaded");
   });
+
+  test("a customer can fill in a plate on a pending pickup declaration via the portal", async () => {
+    const { accessToken } = await activeFundedCustomer("8", 30000);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ quantity: 30000, trucks: [{ quantity: 30000 }] }));
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const ref = placed.body.data.order.orderNumber;
+
+    const before = await orderTruckRepo.findByOrder(placed.body.data.order.id);
+    assert.equal(before.length, 1);
+    assert.equal(before[0].truckNumber, null, "plate was left blank at order");
+
+    const res = await request(app)
+      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        trucks: [{ truckNumber: "PK-LATER", quantity: 30000, driverName: "Musa" }],
+      });
+
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.order.trucks[0].plate, "PK-LATER");
+    assert.equal(res.body.data.order.trucks[0].driverName, "Musa");
+    assert.equal(res.body.data.order.trucks[0].status, "pending");
+
+    const after = await orderTruckRepo.findByOrder(placed.body.data.order.id);
+    assert.equal(after.length, 1);
+    assert.equal(after[0].truckNumber, "PK-LATER");
+    assert.equal(after[0].driverName, "Musa");
+  });
+
+  test("a customer can declare trucks later when they skipped them at order (≤60k)", async () => {
+    const { accessToken } = await activeFundedCustomer("9", 30000);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ quantity: 30000 }));
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    assert.equal((await orderTruckRepo.findByOrder(placed.body.data.order.id)).length, 0);
+
+    const ref = placed.body.data.order.orderNumber;
+    const res = await request(app)
+      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ trucks: [{ truckNumber: "PK-NEW", quantity: 30000 }] });
+
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.order.trucks.length, 1);
+    assert.equal(res.body.data.order.trucks[0].plate, "PK-NEW");
+  });
+
+  test("customer truck update is refused once a load has gated in", async () => {
+    const { accessToken } = await activeFundedCustomer("0", 30000);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ quantity: 30000, trucks: [{ truckNumber: "PK-GATE", quantity: 30000 }] }));
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const orderId = placed.body.data.order.id;
+    const ref = placed.body.data.order.orderNumber;
+    const load = (await orderTruckRepo.findByOrder(orderId))[0];
+
+    const releaseRes = await request(app)
+      .post(`/api/orders/${orderId}/release`)
+      .set("Authorization", `Bearer ${release.accessToken}`)
+      .send({});
+    assert.equal(releaseRes.status, 200, JSON.stringify(releaseRes.body));
+
+    const gate = await request(app)
+      .post(`/api/orders/${orderId}/gate-in`)
+      .set("Authorization", `Bearer ${entry.accessToken}`)
+      .send({ loadId: load.id });
+    assert.equal(gate.status, 200, JSON.stringify(gate.body));
+
+    const res = await request(app)
+      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ trucks: [{ truckNumber: "PK-TOO-LATE", quantity: 30000 }] });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+  });
 });

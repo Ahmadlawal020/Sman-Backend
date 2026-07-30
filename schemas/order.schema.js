@@ -103,6 +103,14 @@ const cancelOrder = z.object({
   reason: z.string().trim().max(500, "Reason is too long").optional(),
 });
 
+// Customer portal: replace the pickup truck declaration on an existing order.
+// Same shape as create — plate/driver optional, quantity required per truck.
+// An empty array is allowed for ≤60k pickups (clear declared loads; capture at
+// the gate). Validation of sum / capacity / editable status is in the service.
+const updateMyTrucks = z.object({
+  trucks: z.array(pickupTruck).max(20, "Too many trucks on one order"),
+});
+
 // One truck load in a release allocation. A plate is required — either a fleet
 // vehicle id (its plate is copied from the registry) or a free-form plate for
 // an external haulier. The per-load quantity ≤ one tanker; the cross-load
@@ -182,6 +190,7 @@ module.exports = {
   idParam,
   refParam,
   cancelOrder,
+  updateMyTrucks,
   releaseOrder,
   gateIn,
   loadTruck,

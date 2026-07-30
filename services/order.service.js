@@ -462,4 +462,136 @@ async function cancelOrder({
   });
 }
 
-module.exports = { placeOrder, cancelOrder, httpError };
+/**
+ * Replace the pickup truck declaration on an existing order (customer portal).
+ * Writes to `order_trucks` only — tickets are issued later at load and are
+ * never touched here.
+ *
+ * Editable while the order is Pending / Paid / Released and every existing
+ * load is still `pending`. Once a truck has gated in, the customer can no
+ * longer change the declaration (staff corrects at the gate / ticketing).
+ *
+ * @param {object} input
+ * @param {number} input.orderId
+ * @param {number} input.customerId — ownership check
+ * @param {Array<{truckNumber?: string, quantity: number, driverName?: string, driverPhone?: string}>} input.trucks
+ * @param {{type: "customer"|"staff"|"system", customerId?: number, staffId?: number}} input.actor
+ * @param {string|null} [input.ipAddress]
+ * @param {string|null} [input.userAgent]
+ */
+async function updatePickupTrucks({
+  orderId,
+  customerId,
+  trucks,
+  actor,
+  ipAddress = null,
+  userAgent = null,
+}) {
+  const declared = Array.isArray(trucks) ? trucks : [];
+
+  return db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order || order.customerId !== customerId) {
+      throw httpError(404, "Order not found");
+    }
+    if (order.deliveryType !== "pickup") {
+      throw httpError(400, "Only pickup orders carry customer-declared trucks");
+    }
+
+    const EDITABLE = new Set(["Pending", "Paid", "Released"]);
+    if (!EDITABLE.has(order.status)) {
+      throw httpError(
+        409,
+        `Order is ${order.status}; truck details can only be changed before loading starts`
+      );
+    }
+
+    const existing = await orderTruckRepo.findByOrder(order.id, tx);
+    const locked = existing.find((l) => l.status !== "pending");
+    if (locked) {
+      throw httpError(
+        409,
+        "A truck has already arrived at the depot — truck details can no longer be changed here"
+      );
+    }
+
+    const qty = Number(order.quantity);
+    if (declared.length) {
+      const sum = declared.reduce((s, t) => s + Number(t.quantity), 0);
+      if (sum !== qty) {
+        throw httpError(
+          400,
+          `The truck quantities (${sum.toLocaleString()} L) must sum to the order quantity (${qty.toLocaleString()} L)`
+        );
+      }
+      const tooBig = declared.find((t) => Number(t.quantity) > 60000);
+      if (tooBig) {
+        throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
+      }
+    } else if (qty > 60000) {
+      throw httpError(
+        400,
+        "A pickup over 60,000 L must be split across trucks — declare each truck and its quantity"
+      );
+    }
+
+    await orderTruckRepo.deleteByOrder(order.id, tx);
+
+    const loads = [];
+    for (let i = 0; i < declared.length; i += 1) {
+      const t = declared[i];
+      const load = await orderTruckRepo.create(
+        {
+          orderId: order.id,
+          truckIndex: i + 1,
+          truckId: null,
+          truckNumber: t.truckNumber || null,
+          quantity: String(t.quantity),
+          driverName: t.driverName || null,
+          driverPhone: t.driverPhone || null,
+          status: "pending",
+        },
+        tx
+      );
+      await auditLogRepo.record(
+        {
+          entityType: "order_truck",
+          entityId: load.id,
+          action: "order_truck.allocated",
+          actor,
+          metadata: {
+            orderId: order.id,
+            truckIndex: i + 1,
+            truckNumber: load.truckNumber,
+            quantity: String(t.quantity),
+            via: "customer-update",
+          },
+          ipAddress,
+          userAgent,
+        },
+        tx
+      );
+      loads.push(load);
+    }
+
+    await auditLogRepo.record(
+      {
+        entityType: "order",
+        entityId: order.id,
+        action: "order.trucks_updated",
+        actor,
+        metadata: {
+          truckCount: loads.length,
+          replaced: existing.length,
+        },
+        ipAddress,
+        userAgent,
+      },
+      tx
+    );
+
+    return { order, trucks: loads };
+  });
+}
+
+module.exports = { placeOrder, cancelOrder, updatePickupTrucks, httpError };
