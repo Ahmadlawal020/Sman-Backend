@@ -768,11 +768,11 @@ const handleAwaitPayment = (session, ctx, value) => {
   // Dev-only: the "I've paid" button simulates the transfer landing. The
   // confirmation itself arrives through the REAL settlement → push path.
   if (value === "devpaid" && ctx.devSimulatePayment && session.lastOrderId) {
-    return done(
-      session,
-      [text(copy.devSimulating())],
-      [{ type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } }]
-    );
+    // No "Simulating…" reply here — the effect sends it on the wire BEFORE
+    // settlement, so the async payment-confirmed push cannot arrive first.
+    return done(session, [], [
+      { type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } },
+    ]);
   }
   // Cancelling an unpaid order: confirm first, then a real effect.
   if (value === "cancelorder" && session.lastOrderId) {

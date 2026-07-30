@@ -956,6 +956,7 @@ describe("order outcomes", () => {
     const dev = reduce(s, btn("devpaid"), baseCtx({ devSimulatePayment: true }));
     assert.deepEqual(effectTypes(dev), [EFFECTS.DEV_SIMULATE_PAYMENT]);
     assert.equal(dev.effects[0].payload.orderId, 501);
+    assert.deepEqual(dev.replies, [], "Simulating… is sent by the effect before settlement");
 
     const prod = reduce(s, btn("devpaid"), baseCtx());
     assert.deepEqual(prod.effects, [], "a stale dev button does nothing in production");
