@@ -128,7 +128,7 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.ok(customer.phoneVerifiedAt, "phone verified by the channel itself");
     assert.equal(session.customerId, customer.id);
     assert.equal(session.state, "MENU");
-    assert.ok(outbound.length >= 1, "welcome + menu went out");
+    assert.ok(outbound.length >= 1, "welcome menu went out");
   });
 
   test("order → depot → product → quantity → collect → plate lands on CONFIRM", async () => {

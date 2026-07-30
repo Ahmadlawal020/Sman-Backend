@@ -196,7 +196,10 @@ describe("IDENTIFY", () => {
     );
     assert.equal(r.session.state, STATES.MENU);
     assert.equal(r.session.customerId, 41);
-    assert.ok(kinds(r).includes(REPLY.LIST));
+    // Single list: welcome is the body — no separate text then "Hello" menu.
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
+    assert.match(r.replies[0].body, /account has been set up/i);
+    assert.ok(!/Hello Ada Obi/i.test(r.replies[0].body));
   });
 });
 
