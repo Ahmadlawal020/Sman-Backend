@@ -75,7 +75,27 @@ const createMyOrder = z.object({
   trucks: z.array(pickupTruck).max(20, "Too many trucks on one order").optional(),
 });
 
-const listMyOrders = pagination;
+// The customer portal's own-order list filters — the admin listOrders set
+// minus `customer` (the id is forced from the token, never accepted from the
+// query). Search matches the order number; status/date narrow the history.
+const listMyOrders = pagination.extend({
+  search: searchTerm,
+  status: enumOf("Status", [
+    "Pending",
+    "Paid",
+    "Released",
+    "Loading",
+    "Completed",
+    "Cancelled",
+  ]).optional(),
+  dateFrom: z.string().trim().max(40, "Start date is too long").optional(),
+  dateTo: z.string().trim().max(40, "End date is too long").optional(),
+});
+
+// A by-reference lookup param: the order number the customer holds. Bounded;
+// the controller scopes the result to the signed-in customer, so an unknown or
+// someone else's reference reads as 404.
+const refParam = z.object({ ref: requiredString("Order reference", 60) });
 
 // Cancel captures an optional human reason; it lands in cancellationReason and
 // the audit row's metadata.
@@ -160,6 +180,7 @@ module.exports = {
   listMyOrders,
   listOrders,
   idParam,
+  refParam,
   cancelOrder,
   releaseOrder,
   gateIn,
