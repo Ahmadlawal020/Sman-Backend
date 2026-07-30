@@ -8,6 +8,7 @@ const {
   createMyOrder,
   listMyOrders,
   getMyOrder,
+  getMyOrderByRef,
   simulateMyPayment,
 } = require("../../controllers/portal/order.controller");
 
@@ -29,6 +30,16 @@ router.get(
   authenticateCustomer,
   validate({ query: orderSchemas.listMyOrders }),
   listMyOrders
+);
+
+// By-reference lookup. Registered before "/:id" so the two-segment path is
+// matched here rather than being mistaken for a numeric id; order numbers are
+// the reference customers actually hold (invoice, SMS, dashboard).
+router.get(
+  "/by-ref/:ref",
+  authenticateCustomer,
+  validate({ params: orderSchemas.refParam }),
+  getMyOrderByRef
 );
 
 router.get(
