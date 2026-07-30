@@ -1,7 +1,7 @@
 const { reduce } = require("./engine");
 const { normalizeInbound } = require("./normalize");
 const { loadContext } = require("./context");
-const { EFFECTS, INBOUND } = require("./constants");
+const { EFFECTS, INBOUND, REPLY } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
 const { placeOrder, cancelOrder } = require("../services/order.service");
@@ -9,6 +9,7 @@ const walletService = require("../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../services/payment.service");
 const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
+const copy = require("./copy");
 
 /**
  * One conversation turn, end to end: load → reduce → perform effects →
@@ -26,8 +27,32 @@ const STALE_OUTBOUND_MS = 10 * 60 * 1000;
 // engine path emits chains longer than this, so more means a logic bug.
 const MAX_TURNS = 4;
 
+/** Record + send one outbound immediately (await Cloud API). Used when a
+ * message must land before an effect that can enqueue competing pushes. */
+const sendNow = async ({ waPhone, sessionId = null, customerId = null, payload, inReplyTo = null }) => {
+  const outbound = await waMessageRepo.createOutbound({
+    waPhone,
+    sessionId,
+    customerId,
+    payload,
+    inReplyTo,
+  });
+  try {
+    const result = await sendReply(waPhone, outbound.payload);
+    if (result.skipped) {
+      await waMessageRepo.markSkipped(outbound.id, result.reason);
+      return outbound;
+    }
+    await waMessageRepo.markSent(outbound.id, result.wamid);
+  } catch (err) {
+    await waMessageRepo.markFailed(outbound.id, err.message);
+    // Still return — the ledger row exists; caller decides whether to proceed.
+  }
+  return outbound;
+};
+
 /** Perform one engine effect; return the inbound that re-enters the loop. */
-const performEffect = async (effect, { wamid, waPhone }) => {
+const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }) => {
   switch (effect.type) {
     case EFFECTS.CREATE_CUSTOMER: {
       // Find-or-create: a pg-boss retry (or a very fast double text) may have
@@ -100,6 +125,15 @@ const performEffect = async (effect, { wamid, waPhone }) => {
       }
       const order = await orderRepo.findById(effect.payload.orderId);
       if (!order || order.paymentStatus === "Paid") return null;
+      // Announce on the wire BEFORE settlement. Settlement enqueues a
+      // wa-events job that pushes "payment received"; if we only queued
+      // "Simulating…" afterward, that push won the race (observed in UAT).
+      await sendNow({
+        waPhone,
+        customerId: order.customerId,
+        payload: { kind: REPLY.TEXT, body: copy.devSimulating() },
+        inReplyTo: inboundMessageId,
+      });
       // Same as scripts/dev-simulate-payment.js: credit the wallet ledger
       // (idempotent by reference), then run the REAL settlement — which
       // drives Pending→Paid and enqueues the payment push. The confirmation
@@ -147,10 +181,9 @@ const processInbound = async ({ waMessageId }) => {
   // reply that never reached a send attempt, finish the bookkeeping, done.
   const priorReplies = await waMessageRepo.findRepliesTo(message.id);
   if (priorReplies.length > 0) {
-    for (const reply of priorReplies) {
-      if (reply.status === "queued") {
-        await enqueue(QUEUES.WA_SEND, { waMessageId: reply.id });
-      }
+    const queuedIds = priorReplies.filter((r) => r.status === "queued").map((r) => r.id);
+    if (queuedIds.length > 0) {
+      await enqueue(QUEUES.WA_SEND, { waMessageIds: queuedIds });
     }
     await waMessageRepo.markProcessed(message.id, {
       sessionId: priorReplies[0].sessionId,
@@ -192,7 +225,11 @@ const processInbound = async ({ waMessageId }) => {
 
     inbound = null;
     for (const effect of result.effects) {
-      inbound = await performEffect(effect, { wamid: message.wamid, waPhone });
+      inbound = await performEffect(effect, {
+        wamid: message.wamid,
+        waPhone,
+        inboundMessageId: message.id,
+      });
       if (inbound?.type === INBOUND.CUSTOMER_CREATED) {
         customer = inbound.customer; // the next context load must know them
       }
@@ -214,8 +251,15 @@ const processInbound = async ({ waMessageId }) => {
  * trail instead of silence. `inReplyTo` links conversational replies to the
  * inbound that caused them — the retry guard and the send-side staleness rule
  * both key off it; event pushes pass null and stay durable.
+ *
+ * One WA_SEND job carries the whole batch and processSend delivers them in
+ * array order, awaiting each Cloud API call. Separate jobs per reply let
+ * concurrent workers (or multi-instance deploys) deliver out of order —
+ * "Test mode" before "order created", etc.
  */
 const dispatchReplies = async (waPhone, sessionId, customerId, replies, inReplyTo = null) => {
+  if (!replies.length) return;
+  const waMessageIds = [];
   for (const reply of replies) {
     const outbound = await waMessageRepo.createOutbound({
       waPhone,
@@ -224,8 +268,9 @@ const dispatchReplies = async (waPhone, sessionId, customerId, replies, inReplyT
       payload: reply,
       inReplyTo,
     });
-    await enqueue(QUEUES.WA_SEND, { waMessageId: outbound.id });
+    waMessageIds.push(outbound.id);
   }
+  await enqueue(QUEUES.WA_SEND, { waMessageIds });
 };
 
 /**
@@ -262,12 +307,8 @@ const processEvent = async ({ type, orderId }) => {
   await dispatchReplies(waPhone, saved.id, customer.id, result.replies);
 };
 
-/**
- * Send one queued outbound row. Job handler for the wa-send queue. Failed
- * rows stay retryable — pg-boss backs off and eventually dead-letters, and
- * every outcome lands on the row.
- */
-const processSend = async ({ waMessageId }) => {
+/** Send one queued outbound row; shared by single-id and batch jobs. */
+const sendOne = async (waMessageId) => {
   const row = await waMessageRepo.findById(waMessageId);
   if (!row || row.direction !== "outbound") return;
   if (!["queued", "failed"].includes(row.status)) return; // sent already — a stale retry
@@ -293,6 +334,24 @@ const processSend = async ({ waMessageId }) => {
   } catch (err) {
     await waMessageRepo.markFailed(row.id, err.message);
     throw err; // pg-boss owns the retry/backoff/dead-letter from here
+  }
+};
+
+/**
+ * Send queued outbound row(s). Job handler for the wa-send queue. Accepts a
+ * batch (`waMessageIds`) so a turn's replies stay in order, or a legacy
+ * single `waMessageId`. Failed rows stay retryable — pg-boss backs off and
+ * eventually dead-letters, and every outcome lands on the row.
+ */
+const processSend = async (data) => {
+  const ids =
+    Array.isArray(data.waMessageIds) && data.waMessageIds.length
+      ? data.waMessageIds
+      : data.waMessageId != null
+        ? [data.waMessageId]
+        : [];
+  for (const waMessageId of ids) {
+    await sendOne(waMessageId);
   }
 };
 

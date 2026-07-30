@@ -23,7 +23,8 @@ const QUEUES = Object.freeze({
   WA_INBOUND: "wa-inbound",
   // Outbound Cloud API sends: more retries, spaced out — Meta hiccups and
   // rate limits are transient; a still-failing send lands in the dead-letter
-  // queue where it is a queryable row, not a lost message.
+  // queue where it is a queryable row, not a lost message. A turn's replies
+  // share one job (waMessageIds) so delivery stays in order.
   WA_SEND: "wa-send",
   // Business events entering a conversation from the OUTSIDE — a payment
   // confirmed by the settlement sweep re-enters the customer's session here.
@@ -119,9 +120,9 @@ const startQueue = async () => {
 };
 
 /** Enqueue a job. The queue's retry policy applies; data must be jsonb-safe. */
-const enqueue = async (queue, data) => {
+const enqueue = async (queue, data, options = {}) => {
   const b = await startQueue();
-  return b.send(queue, data);
+  return b.send(queue, data, options);
 };
 
 /**
