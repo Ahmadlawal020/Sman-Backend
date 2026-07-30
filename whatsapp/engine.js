@@ -1125,7 +1125,8 @@ const handleConfirm = (session, ctx, value) => {
         quantity: t.quantity,
       }));
     } else {
-      payload.address = cart.address;
+      // deliveryAddress — placeOrder's field name, not the cart's "address".
+      payload.deliveryAddress = cart.address;
     }
     const next = { ...session, cart: { ...cart, pendingOrder: true } };
     return done(next, [text(copy.orderPending())], [{ type: EFFECTS.CREATE_ORDER, payload }]);

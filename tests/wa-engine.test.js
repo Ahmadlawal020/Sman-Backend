@@ -782,7 +782,7 @@ describe("CONFIRM", () => {
   it("a delivery confirm carries the address instead of trucks", () => {
     const cart = { depotId: 1, productId: 10, quantity: 30000, deliveryType: "delivery", address: "14 Airport Road, Warri" };
     const r = reduce(mkSession(STATES.CONFIRM, cart), btn("confirm"), baseCtx());
-    assert.equal(r.effects[0].payload.address, "14 Airport Road, Warri");
+    assert.equal(r.effects[0].payload.deliveryAddress, "14 Airport Road, Warri");
     assert.equal(r.effects[0].payload.trucks, undefined);
   });
 
