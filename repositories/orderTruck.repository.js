@@ -54,11 +54,16 @@ const countByOrder = async (orderId, tx = db) => {
   return Number(row?.n || 0);
 };
 
+const deleteByOrder = async (orderId, tx = db) => {
+  await tx.delete(orderTrucks).where(eq(orderTrucks.orderId, orderId));
+};
+
 module.exports = {
   create,
   findById,
   findByOrder,
   update,
+  deleteByOrder,
   countByOrderAndStatus,
   countByOrder,
 };

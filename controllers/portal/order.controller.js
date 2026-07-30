@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
-const { placeOrder } = require("../../services/order.service");
+const { placeOrder, updatePickupTrucks } = require("../../services/order.service");
 const walletService = require("../../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 const {
@@ -195,10 +195,40 @@ const simulateMyPayment = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Simulated payment applied." });
 });
 
+/**
+ * PATCH /api/customer/orders/by-ref/:ref/trucks — replace the pickup truck
+ * declaration on the caller's own order. Plate/driver may be blank (filled at
+ * the gate); quantities must still sum to the order. Refuses once any load
+ * has gated in, or if the order has moved past Released.
+ */
+const updateMyOrderTrucks = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findByNumberFull(req.params.ref);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  await updatePickupTrucks({
+    orderId: order.id,
+    customerId: req.customer.id,
+    trucks: req.body.trucks,
+    actor: { type: "customer", customerId: req.customer.id },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  const fresh = await orderRepo.findByNumberFull(req.params.ref);
+  res.json({
+    success: true,
+    message: "Truck details saved",
+    data: { order: await withOwnerDetail(fresh) },
+  });
+});
+
 module.exports = {
   createMyOrder,
   listMyOrders,
   getMyOrder,
   getMyOrderByRef,
   simulateMyPayment,
+  updateMyOrderTrucks,
 };

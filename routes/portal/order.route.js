@@ -10,6 +10,7 @@ const {
   getMyOrder,
   getMyOrderByRef,
   simulateMyPayment,
+  updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
 // Every route here is the signed-in customer acting on their OWN orders.
@@ -40,6 +41,16 @@ router.get(
   authenticateCustomer,
   validate({ params: orderSchemas.refParam }),
   getMyOrderByRef
+);
+
+// Replace pickup truck declaration — same by-ref key the dashboard already uses.
+router.patch(
+  "/by-ref/:ref/trucks",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.refParam, body: orderSchemas.updateMyTrucks }),
+  updateMyOrderTrucks
 );
 
 router.get(
