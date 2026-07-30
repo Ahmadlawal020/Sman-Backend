@@ -94,7 +94,19 @@ const getBoss = () => {
     // phone numbers, assertions racing a foreign worker.
     const schema =
       process.env.PGBOSS_SCHEMA || (process.env.NODE_ENV === "test" ? "pgboss_test" : "pgboss");
-    boss = new PgBoss({ connectionString, schema });
+    boss = new PgBoss({
+      connectionString,
+      schema,
+      // pg-boss v12 passes these directly to the underlying pg.Pool.
+      // Neon's pooler kills idle connections aggressively; TCP keepalive
+      // nudges the socket so the load balancer knows it is alive, and the
+      // short idle/connection timeouts mirror db/index.js.
+      max: 3,                              // pg-boss needs very few connections
+      idleTimeoutMillis: 20_000,           // release idle connections after 20 s
+      connectionTimeoutMillis: 10_000,     // give up connecting after 10 s
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
+    });
     boss.on("error", (err) => logQueueError(err));
   }
   return boss;

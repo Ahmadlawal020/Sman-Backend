@@ -91,7 +91,12 @@ testConnection()
     if (process.env.WHATSAPP_ENABLED === "true") {
       require("./whatsapp/worker")
         .startWhatsApp()
-        .catch((err) => console.error("Fatal for WhatsApp (dashboard unaffected):", err.message));
+        .catch((err) =>
+          console.error(
+            "Fatal for WhatsApp (dashboard unaffected):",
+            err.message,
+          ),
+        );
     }
   })
   .catch(() => {

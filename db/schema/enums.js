@@ -233,6 +233,11 @@ const waTemplateStatusEnum = pgEnum("wa_template_status", [
   "paused",
 ]);
 
+const commissionStatusEnum = pgEnum("commission_status", [
+  "pending",
+  "paid",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -267,4 +272,5 @@ module.exports = {
   waMessageDirectionEnum,
   waMessageStatusEnum,
   waTemplateStatusEnum,
+  commissionStatusEnum,
 };

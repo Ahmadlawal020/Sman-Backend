@@ -24,7 +24,10 @@ module.exports = {
   dailyReportRepo: require("./dailyReport.repository"),
   incidentRecordRepo: require("./incidentRecord.repository"),
   offlineSaleRepo: require("./offlineSale.repository"),
+  dangoteProductRepo: require("./dangoteProduct.repository"),
+  dangoteOrderRequestRepo: require("./dangoteOrderRequest.repository"),
   waSessionRepo: require("./waSession.repository"),
   waMessageRepo: require("./waMessage.repository"),
   bankAccountRepo: require("./bankAccount.repository"),
+  commissionRepo: require("./commission.repository"),
 };

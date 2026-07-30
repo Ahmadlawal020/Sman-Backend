@@ -16,18 +16,29 @@ const findBySku = async (sku) => {
   return row || null;
 };
 
-const findAll = async ({ search, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ search, productType, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
-  const whereClause = search
-    ? or(
-        ilike(products.name, `%${search}%`),
-        ilike(products.sku, `%${search}%`),
-        ilike(products.category, `%${search}%`)
+  const conditions = [];
+
+  if (productType) {
+    conditions.push(eq(products.productType, productType));
+  }
+
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(products.name, pattern),
+        ilike(products.sku, pattern),
+        ilike(products.category, pattern)
       )
-    : undefined;
+    );
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db

@@ -31,10 +31,14 @@ const fleetLedgerSchema = require("./fleetLedgerEntry");
 const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
+const dangoteProductSchema = require("./dangoteProduct");
+const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
 const waSessionSchema = require("./waSession");
 const waMessageSchema = require("./waMessage");
 const waTemplateSchema = require("./waTemplate");
 const bankAccountSchema = require("./bankAccount");
+const depotProductCommissionSchema = require("./depotProductCommission");
+const commissionSchema = require("./commission");
 
 module.exports = {
   ...enums,
@@ -70,8 +74,12 @@ module.exports = {
   ...dailyReportSchema,
   ...incidentRecordSchema,
   ...offlineSaleSchema,
+  ...dangoteProductSchema,
+  ...dangoteOrderRequestSchema,
   ...waSessionSchema,
   ...waMessageSchema,
   ...waTemplateSchema,
   ...bankAccountSchema,
+  ...depotProductCommissionSchema,
+  ...commissionSchema,
 };

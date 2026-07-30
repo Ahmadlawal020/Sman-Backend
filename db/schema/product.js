@@ -6,6 +6,7 @@ const {
   integer,
   timestamp,
   uniqueIndex,
+  index,
 } = require("drizzle-orm/pg-core");
 
 const products = pgTable(
@@ -15,6 +16,7 @@ const products = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     sku: varchar("sku", { length: 50 }).notNull(),
     category: varchar("category", { length: 100 }).notNull(),
+    productType: varchar("product_type", { length: 50 }).default("soroman").notNull(),
     gradeClass: varchar("grade_class", { length: 100 }).default(""),
     description: text("description").default(""),
     density: varchar("density", { length: 50 }).default(""),
@@ -29,6 +31,7 @@ const products = pgTable(
   },
   (table) => [
     uniqueIndex("products_sku_idx").on(table.sku),
+    index("products_type_idx").on(table.productType),
   ]
 );
 

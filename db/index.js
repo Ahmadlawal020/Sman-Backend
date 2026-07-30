@@ -66,7 +66,15 @@ if (isTest && !process.env.TEST_DATABASE_URL && process.env.ALLOW_TESTS_ON_DEV_D
   }
 }
 
-const client = postgres(connectionString);
+const client = postgres(connectionString, {
+  // Neon's pooler kills idle connections aggressively (often ~5 min on free
+  // tier, configurable on paid). Recycle ours well before that threshold so
+  // queries never hit a server-closed socket.
+  idle_timeout: 20,        // seconds — release idle connections after 20 s
+  connect_timeout: 10,     // seconds — give up connecting after 10 s
+  max: 10,                 // connection-pool ceiling
+  max_lifetime: 60 * 30,   // seconds — hard recycle every 30 min
+});
 
 const db = drizzle(client, {
   schema: {

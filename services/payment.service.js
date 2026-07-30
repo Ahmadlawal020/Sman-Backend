@@ -12,6 +12,7 @@ const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
 const { QUEUES, enqueue } = require("../config/queue");
+const commissionService = require("./commission.service");
 
 /**
  * Push "payment received" into the customer's WhatsApp conversation. Only the
@@ -346,10 +347,17 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
 
     // Generate loading ticket so order automatically passes through
     try {
-      await generateTicketForOrder(order.id);
+      await generateTicketForOrder(order.orderNumber);
       console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
     } catch (tktErr) {
       console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
+    }
+
+    // Auto-create commission record for the paid order
+    try {
+      await commissionService.createForOrder(order.id);
+    } catch (commErr) {
+      console.error(`Failed to create commission for order ${order.orderNumber}:`, commErr.message);
     }
 
     processedOrders.push(order);

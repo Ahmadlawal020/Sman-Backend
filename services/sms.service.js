@@ -84,9 +84,34 @@ const sendTicketSummarySMS = async (phone, ticketData) => {
   return { success: false, message: "All Termii channels failed for ticket SMS" };
 };
 
-// sendSMSTermii was previously not exported, while otp.service.js imported it
-// by name — so it resolved to undefined. With the dev bypass off (i.e. in
-// production) the call threw, issueAndSend swallowed it as "send_failed", and
-// the endpoint still answered 200 because it is deliberately enumeration-safe.
-// Customer OTP delivery would have been silently dead on arrival.
-module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, CHANNELS };
+const sendDangoteDeliveryOrderSMS = async (phone, orderData) => {
+  const { requestNumber, customerName, product, quantity, quantityUnit, totalAmount, accountNumber, bankName, accountName } = orderData;
+
+  const formattedAmount = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 0,
+  }).format(totalAmount);
+
+  const customerInitials = getCustomerInitials(customerName);
+  const formattedAccountName = accountName || `SOROMANNIGERI/ ${customerInitials}`;
+
+  const sms = `Hi ${customerName}, your Dangote delivery order ${requestNumber} for ${quantity?.toLocaleString()} ${quantityUnit} of ${product} (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
+
+  for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
+    try {
+      const result = await sendSMSTermii(phone, sms, channel);
+      if (result.success) {
+        return { success: true, message: "Dangote delivery order SMS sent successfully" };
+      }
+      console.warn(`Termii ${channel} channel failed:`, result.message);
+    } catch (error) {
+      const errMsg = error.response?.data?.message || error.message || "Termii SMS error";
+      console.warn(`Termii ${channel} channel error:`, errMsg);
+    }
+  }
+
+  return { success: false, message: "All Termii channels failed" };
+};
+
+module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, CHANNELS };

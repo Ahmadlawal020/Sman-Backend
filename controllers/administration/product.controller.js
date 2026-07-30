@@ -5,9 +5,9 @@ const { pfis, orders, depotProductCapacities } = require("../../db/schema");
 const { eq, count } = require("drizzle-orm");
 
 const getProducts = asyncHandler(async (req, res) => {
-  const { search, page = 1, limit = 50 } = req.query;
+  const { search, productType, page = 1, limit = 50 } = req.query;
 
-  const result = await productRepo.findAll({ search, page, limit });
+  const result = await productRepo.findAll({ search, productType, page, limit });
 
   res.json({ success: true, data: result });
 });
@@ -23,7 +23,7 @@ const getProductById = asyncHandler(async (req, res) => {
 });
 
 const createProduct = asyncHandler(async (req, res) => {
-  const { name, sku, category, gradeClass, description, density, flashPoint, unNumber, hazardClass, stockLevel, unit, supplier } = req.body;
+  const { name, sku, category, productType, gradeClass, description, density, flashPoint, unNumber, hazardClass, stockLevel, unit, supplier } = req.body;
 
   if (!name || !sku || !category) {
     return res.status(400).json({
@@ -44,6 +44,7 @@ const createProduct = asyncHandler(async (req, res) => {
     name,
     sku,
     category,
+    productType: productType || "soroman",
     gradeClass: gradeClass || "",
     description: description || "",
     density: density || "",
@@ -70,7 +71,7 @@ const updateProduct = asyncHandler(async (req, res) => {
   }
 
   const allowedFields = [
-    "name", "sku", "category", "gradeClass", "description", "density",
+    "name", "sku", "category", "productType", "gradeClass", "description", "density",
     "flashPoint", "unNumber", "hazardClass", "stockLevel", "unit", "supplier",
   ];
 

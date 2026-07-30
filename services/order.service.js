@@ -16,6 +16,7 @@ const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
 const { getCustomerInitials } = require("../utils/helpers");
+const commissionService = require("./commission.service");
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -355,6 +356,12 @@ async function placeOrder({
       await generateTicketForOrder(order.id);
     } catch (ticketErr) {
       console.error("Failed to generate ticket on instant wallet payment:", ticketErr.message);
+    }
+    // Auto-create commission record for the paid order
+    try {
+      await commissionService.createForOrder(order.id);
+    } catch (commErr) {
+      console.error("Failed to create commission for order:", commErr.message);
     }
   }
 

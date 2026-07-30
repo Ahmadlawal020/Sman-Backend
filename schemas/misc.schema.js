@@ -34,9 +34,12 @@ const productBase = {
   unit: optionalString("Unit", 50),
   supplier: optionalString("Supplier", 255),
 };
-const createProduct = z.object({ ...productBase, name: requiredString("Name", 255) });
+const createProduct = z.object({ ...productBase, name: requiredString("Name", 255), productType: z.string().trim().max(50).optional() });
 const updateProduct = z.object(productBase).partial();
-const listProducts = pagination.extend({ search: searchTerm });
+const listProducts = pagination.extend({
+  search: searchTerm,
+  productType: z.string().trim().max(50).optional(),
+});
 
 // --- trucks ---------------------------------------------------------------
 
