@@ -16,7 +16,7 @@ const findBySku = async (sku) => {
   return row || null;
 };
 
-const findAll = async ({ search, productType, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ search, productType, status, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -25,6 +25,10 @@ const findAll = async ({ search, productType, page = 1, limit = 50 } = {}) => {
 
   if (productType) {
     conditions.push(eq(products.productType, productType));
+  }
+
+  if (status) {
+    conditions.push(eq(products.status, status));
   }
 
   if (search) {

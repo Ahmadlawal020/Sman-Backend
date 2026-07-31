@@ -8,6 +8,7 @@ const {
   uniqueIndex,
   index,
 } = require("drizzle-orm/pg-core");
+const { productTypeEnum, productStatusEnum } = require("./enums");
 
 const products = pgTable(
   "products",
@@ -16,7 +17,7 @@ const products = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     sku: varchar("sku", { length: 50 }).notNull(),
     category: varchar("category", { length: 100 }).notNull(),
-    productType: varchar("product_type", { length: 50 }).default("soroman").notNull(),
+    productType: productTypeEnum("product_type").default("soroman").notNull(),
     gradeClass: varchar("grade_class", { length: 100 }).default(""),
     description: text("description").default(""),
     density: varchar("density", { length: 50 }).default(""),
@@ -25,6 +26,7 @@ const products = pgTable(
     hazardClass: varchar("hazard_class", { length: 50 }).default("None"),
     stockLevel: integer("stock_level").default(0),
     unit: varchar("unit", { length: 30 }).default("Liters"),
+    status: productStatusEnum("status").default("Active").notNull(),
     supplier: varchar("supplier", { length: 255 }).default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

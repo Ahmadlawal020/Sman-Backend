@@ -238,6 +238,14 @@ const commissionStatusEnum = pgEnum("commission_status", [
   "paid",
 ]);
 
+// Which sales pipeline a product belongs to. Soroman products move through
+// depots / PFIs / capacity; dangote products are refinery-sourced and only
+// ever referenced by Dangote delivery orders. Depot-facing queries filter on
+// this — the two catalogs must never mix.
+const productTypeEnum = pgEnum("product_type", ["soroman", "dangote"]);
+
+const productStatusEnum = pgEnum("product_status", ["Active", "Inactive"]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -273,4 +281,6 @@ module.exports = {
   waMessageStatusEnum,
   waTemplateStatusEnum,
   commissionStatusEnum,
+  productTypeEnum,
+  productStatusEnum,
 };

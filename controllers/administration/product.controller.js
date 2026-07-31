@@ -5,9 +5,13 @@ const { pfis, orders, depotProductCapacities } = require("../../db/schema");
 const { eq, count } = require("drizzle-orm");
 
 const getProducts = asyncHandler(async (req, res) => {
-  const { search, productType, page = 1, limit = 50 } = req.query;
+  const { search, productType, status, page = 1, limit = 50 } = req.query;
 
-  const result = await productRepo.findAll({ search, productType, page, limit });
+  // Depot-facing admin screens must not silently mix Dangote delivery SKUs
+  // into the Soroman catalog: default to soroman, "all" lifts the filter.
+  const typeFilter = productType === "all" ? undefined : productType || "soroman";
+
+  const result = await productRepo.findAll({ search, productType: typeFilter, status, page, limit });
 
   res.json({ success: true, data: result });
 });
@@ -23,12 +27,26 @@ const getProductById = asyncHandler(async (req, res) => {
 });
 
 const createProduct = asyncHandler(async (req, res) => {
-  const { name, sku, category, productType, gradeClass, description, density, flashPoint, unNumber, hazardClass, stockLevel, unit, supplier } = req.body;
+  const { name, sku, category, productType, gradeClass, description, density, flashPoint, unNumber, hazardClass, stockLevel, unit, supplier, status } = req.body;
 
   if (!name || !sku || !category) {
     return res.status(400).json({
       success: false,
       message: "Name, SKU, and category are required",
+    });
+  }
+
+  if (status !== undefined && !["Active", "Inactive"].includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Status must be Active or Inactive",
+    });
+  }
+
+  if (productType !== undefined && !["soroman", "dangote"].includes(productType)) {
+    return res.status(400).json({
+      success: false,
+      message: "Product type must be soroman or dangote",
     });
   }
 
@@ -54,6 +72,7 @@ const createProduct = asyncHandler(async (req, res) => {
     stockLevel: stockLevel ?? 0,
     unit: unit || "Liters",
     supplier: supplier || "",
+    status: status || "Active",
   });
 
   res.status(201).json({
@@ -72,7 +91,7 @@ const updateProduct = asyncHandler(async (req, res) => {
 
   const allowedFields = [
     "name", "sku", "category", "productType", "gradeClass", "description", "density",
-    "flashPoint", "unNumber", "hazardClass", "stockLevel", "unit", "supplier",
+    "flashPoint", "unNumber", "hazardClass", "stockLevel", "unit", "supplier", "status",
   ];
 
   const updateData = {};
@@ -80,6 +99,20 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (req.body[field] !== undefined) {
       updateData[field] = req.body[field];
     }
+  }
+
+  if (updateData.status !== undefined && !["Active", "Inactive"].includes(updateData.status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Status must be Active or Inactive",
+    });
+  }
+
+  if (updateData.productType !== undefined && !["soroman", "dangote"].includes(updateData.productType)) {
+    return res.status(400).json({
+      success: false,
+      message: "Product type must be soroman or dangote",
+    });
   }
 
   const updated = await productRepo.update(product.id, updateData);

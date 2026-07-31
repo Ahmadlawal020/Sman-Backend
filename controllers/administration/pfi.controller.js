@@ -77,6 +77,12 @@ const createPfi = asyncHandler(async (req, res) => {
   if (product_id) {
     const prod = await productRepo.findById(product_id);
     if (prod) {
+      if (prod.productType !== "soroman") {
+        return res.status(400).json({
+          success: false,
+          message: "PFIs can only be raised for Soroman depot products",
+        });
+      }
       product_name = prod.name;
       product_unit = prod.unit || "Litres";
     }
@@ -180,6 +186,12 @@ const updatePfi = asyncHandler(async (req, res) => {
       updateData.productId = parsedProd;
       const prod = await productRepo.findById(parsedProd);
       if (prod) {
+        if (prod.productType !== "soroman") {
+          return res.status(400).json({
+            success: false,
+            message: "PFIs can only be raised for Soroman depot products",
+          });
+        }
         updateData.productName = prod.name;
         if (!customUnit) {
           updateData.productUnit = prod.unit || "Litres";
