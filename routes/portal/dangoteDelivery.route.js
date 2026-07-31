@@ -4,13 +4,35 @@ const router = express.Router();
 const { authenticateCustomer, requireActiveCustomer } = require("../../middleware/verifyCustomer");
 const { requireCsrfForCookieAuth } = require("../../middleware/csrf");
 const generateLimiter = require("../../middleware/generateLimiter");
+const validate = require("../../middleware/validate");
+const schemas = require("../../schemas/dangoteDelivery.schema");
 const { DOCUMENT_MAX_BYTES } = require("../../services/dangoteDelivery/documents");
 const {
   uploadMyDocument,
   listMyDocuments,
   removeMyDocument,
   downloadMyDocument,
+  createMyDraft,
+  listMyOrders,
+  getMyOrder,
+  updateMyDetails,
+  setMyCompany,
+  findMyReusableCompany,
+  reuseMyDocuments,
+  submitMyDocuments,
+  getTerms,
+  acceptMyTerms,
+  submitMyRequest,
+  reopenMyOrder,
+  cancelMyOrder,
 } = require("../../controllers/portal/dangoteDelivery.controller");
+
+// The full customer auth stack for anything that mutates.
+const mutate = [
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+];
 
 // Customer-scoped Dangote delivery orders. This router carries the document
 // endpoints (B3); the draft/submit wizard endpoints land in B5 alongside it.
@@ -41,11 +63,31 @@ const handleMulterErrors = (err, req, res, next) => {
   next(err);
 };
 
+// Static paths BEFORE "/:id" so they are never mistaken for order ids.
+router.get("/terms", authenticateCustomer, getTerms);
+router.get(
+  "/reusable-company",
+  authenticateCustomer,
+  validate({ query: schemas.reusableCompanyQuery }),
+  findMyReusableCompany
+);
+
+// Wizard lifecycle
+router.post("/", ...mutate, validate({ body: schemas.orderDetails }), createMyDraft);
+router.get("/", authenticateCustomer, listMyOrders);
+router.get("/:id", authenticateCustomer, getMyOrder);
+router.patch("/:id", ...mutate, validate({ body: schemas.orderDetails }), updateMyDetails);
+router.put("/:id/company", ...mutate, validate({ body: schemas.companyInfo }), setMyCompany);
+router.post("/:id/documents/submit", ...mutate, submitMyDocuments);
+router.post("/:id/agreement", ...mutate, validate({ body: schemas.acceptTerms }), acceptMyTerms);
+router.post("/:id/submit", ...mutate, submitMyRequest);
+router.post("/:id/reopen", ...mutate, reopenMyOrder);
+router.post("/:id/cancel", ...mutate, cancelMyOrder);
+
+// Documents
 router.post(
   "/:id/documents",
-  authenticateCustomer,
-  requireActiveCustomer,
-  requireCsrfForCookieAuth("customer"),
+  ...mutate,
   uploadLimiter,
   upload.single("file"),
   handleMulterErrors,
@@ -54,13 +96,14 @@ router.post(
 
 router.get("/:id/documents", authenticateCustomer, listMyDocuments);
 
-router.delete(
-  "/:id/documents/:docId",
-  authenticateCustomer,
-  requireActiveCustomer,
-  requireCsrfForCookieAuth("customer"),
-  removeMyDocument
+router.post(
+  "/:id/documents/reuse",
+  ...mutate,
+  validate({ body: schemas.reuseDocuments }),
+  reuseMyDocuments
 );
+
+router.delete("/:id/documents/:docId", ...mutate, removeMyDocument);
 
 router.get("/:id/documents/:docId/download", authenticateCustomer, downloadMyDocument);
 

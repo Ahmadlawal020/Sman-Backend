@@ -2,14 +2,122 @@ const asyncHandler = require("express-async-handler");
 const {
   dangoteDeliveryOrderRepo,
   dangoteDeliveryDocumentRepo,
+  dangoteDeliveryAgreementRepo,
+  productRepo,
 } = require("../../repositories");
 const storage = require("../../services/storage");
 const {
   DocumentError,
   uploadDocument,
   removeDocument,
+  reuseDocuments,
   toPublic,
 } = require("../../services/dangoteDelivery/documents");
+const {
+  DangoteOrderError,
+  normalizeCompanyName,
+  detailColumns,
+  submitDocuments,
+  acceptTerms,
+  submitRequest,
+  reopenForChanges,
+} = require("../../services/dangoteDelivery/orders");
+const {
+  TERMS_VERSION,
+  TERMS_TITLE,
+  TERMS_EFFECTIVE,
+  TERMS_SECTIONS,
+} = require("../../services/dangoteDelivery/terms");
+const {
+  transition,
+  recordEvent,
+  TransitionError,
+} = require("../../services/dangoteDelivery/transitions");
+
+// Frontend CANCELLABLE_STATUSES, verbatim.
+const CANCELLABLE_STATUSES = [
+  "DRAFT",
+  "DOCUMENTS_SUBMITTED",
+  "AGREEMENT_ACCEPTED",
+  "UNDER_REVIEW",
+  "NEEDS_CHANGES",
+  "APPROVED",
+  "PAYMENT_PENDING",
+];
+
+const handleDomainErrors = (err, res) => {
+  if (err instanceof DangoteOrderError || err instanceof DocumentError || err instanceof TransitionError) {
+    res.status(err.statusCode || 409).json({ success: false, message: err.message });
+    return true;
+  }
+  return false;
+};
+
+// What the portal exposes of an order row — staff-only fields stay behind.
+const orderToPublic = (order) => ({
+  id: order.id,
+  requestNumber: order.requestNumber,
+  product: order.productCode,
+  productName: order.productName,
+  quantity: order.quantity,
+  quantityUnit: order.quantityUnit,
+  deliveryAddress: order.deliveryAddress,
+  deliveryState: order.deliveryState,
+  contactPerson: order.contactPerson,
+  contactPhone: order.contactPhone,
+  companyName: order.companyName,
+  companyNameNormalized: order.companyNameNormalized,
+  status: order.status,
+  unitPrice: order.unitPrice,
+  totalAmount: order.totalAmount,
+  virtualAccountNumber: order.virtualAccountNumber,
+  virtualAccountBank: order.virtualAccountBank,
+  virtualAccountName: order.virtualAccountName,
+  submittedAt: order.submittedAt,
+  approvedAt: order.approvedAt,
+  quotedAt: order.quotedAt,
+  paidAt: order.paidAt,
+  scheduledAt: order.scheduledAt,
+  dispatchedAt: order.dispatchedAt,
+  completedAt: order.completedAt,
+  cancelledAt: order.cancelledAt,
+  createdAt: order.createdAt,
+  updatedAt: order.updatedAt,
+});
+
+const agreementToPublic = (agreement) =>
+  agreement && {
+    id: agreement.id,
+    customerName: agreement.customerName,
+    companyName: agreement.companyName,
+    deliveryAddress: agreement.deliveryAddress,
+    deliveryState: agreement.deliveryState,
+    productCode: agreement.productCode,
+    productName: agreement.productName,
+    quantity: agreement.quantity,
+    quantityUnit: agreement.quantityUnit,
+    signature: {
+      fullName: agreement.signatureFullName,
+      initials: agreement.signatureInitials || undefined,
+      signedAt: agreement.signedAt,
+      termsVersion: agreement.termsVersion,
+    },
+    createdAt: agreement.createdAt,
+  };
+
+const orderWithChildren = async (order) => {
+  const [documents, agreement, events] = await Promise.all([
+    dangoteDeliveryDocumentRepo.findByOrder(order.id),
+    dangoteDeliveryAgreementRepo.findByOrder(order.id),
+    dangoteDeliveryOrderRepo.findEventsByOrder(order.id),
+  ]);
+  return {
+    ...orderToPublic(order),
+    documents: documents.map(toPublic),
+    agreement: agreementToPublic(agreement),
+    events,
+  };
+};
 
 // Every handler is the signed-in customer acting on their OWN Dangote
 // delivery order. Ownership failures are 404s, not 403s — the existence of
@@ -121,9 +229,285 @@ const downloadMyDocument = asyncHandler(async (req, res) => {
   stream.pipe(res);
 });
 
+// ── Wizard lifecycle (B5) ─────────────────────────────────────────────────
+
+const createMyDraft = asyncHandler(async (req, res) => {
+  try {
+    const columns = await detailColumns(productRepo, req.body);
+    const requestNumber = await dangoteDeliveryOrderRepo.generateRequestNumber();
+    const order = await dangoteDeliveryOrderRepo.create({
+      ...columns,
+      requestNumber,
+      customerId: req.customer.id,
+      status: "DRAFT",
+    });
+    await recordEvent(order.id, "DRAFT", {
+      actorType: "customer",
+      actorId: req.customer.id,
+      note: "Draft created",
+    });
+    res.status(201).json({ success: true, data: { order: await orderWithChildren(order) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const listMyOrders = asyncHandler(async (req, res) => {
+  const { requests } = await dangoteDeliveryOrderRepo.findAll({
+    customerId: req.customer.id,
+    limit: 100,
+  });
+  // List rows come from the summary projection; they already omit staff-only
+  // fields, so pass them through with the frontend's field names.
+  res.json({
+    success: true,
+    data: {
+      orders: requests.map((r) => ({
+        id: r.id,
+        requestNumber: r.requestNumber,
+        product: r.productCode,
+        productName: r.product,
+        quantity: r.quantity,
+        quantityUnit: r.quantityUnit,
+        companyName: r.companyName,
+        deliveryAddress: r.deliveryAddress,
+        deliveryState: r.deliveryState,
+        status: r.status,
+        unitPrice: r.unitPrice,
+        totalAmount: r.totalAmount,
+        submittedAt: r.submittedAt,
+        createdAt: r.createdAt,
+      })),
+    },
+  });
+});
+
+const getMyOrder = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+  res.json({ success: true, data: { order: await orderWithChildren(order) } });
+});
+
+const updateMyDetails = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  if (order.status !== "DRAFT") {
+    return res.status(409).json({
+      success: false,
+      message: "Details can only be changed while the request is a draft",
+    });
+  }
+
+  try {
+    const columns = await detailColumns(productRepo, req.body);
+    const updated = await dangoteDeliveryOrderRepo.update(order.id, columns);
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const setMyCompany = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  if (order.status !== "DRAFT") {
+    return res.status(409).json({
+      success: false,
+      message: "Company information can only be changed while the request is a draft",
+    });
+  }
+
+  const companyName = req.body.companyName.trim();
+  const updated = await dangoteDeliveryOrderRepo.update(order.id, {
+    companyName,
+    companyNameNormalized: normalizeCompanyName(companyName),
+  });
+  res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+});
+
+// The one-tap reuse offer: this customer's verified, unexpired documents for
+// the same normalized company name.
+const findMyReusableCompany = asyncHandler(async (req, res) => {
+  const normalized = normalizeCompanyName(req.query.name);
+  const docs = await dangoteDeliveryDocumentRepo.findReusable(req.customer.id, normalized);
+  if (docs.length === 0) {
+    return res.json({ success: true, data: { company: null } });
+  }
+  res.json({
+    success: true,
+    data: {
+      company: {
+        companyName: req.query.name,
+        documents: docs.map(toPublic),
+      },
+    },
+  });
+});
+
+const reuseMyDocuments = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  if (order.status !== "DRAFT") {
+    return res.status(409).json({
+      success: false,
+      message: "Documents can only be changed while the request is a draft",
+    });
+  }
+
+  // Every requested document must be one this customer could legitimately
+  // reuse for this order's company: theirs, VERIFIED, unexpired, same
+  // normalized company. The reusable query is the single source of that rule.
+  const reusable = await dangoteDeliveryDocumentRepo.findReusable(
+    req.customer.id,
+    order.companyNameNormalized
+  );
+  const allowed = new Map(reusable.map((d) => [d.id, d]));
+  const chosen = [];
+  for (const docId of req.body.documentIds) {
+    const doc = allowed.get(docId);
+    if (!doc) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more documents are not available for reuse",
+      });
+    }
+    chosen.push(doc);
+  }
+
+  const copies = await reuseDocuments(dangoteDeliveryDocumentRepo, {
+    order,
+    documents: chosen,
+    actor: { type: "customer", id: req.customer.id },
+  });
+
+  res.json({ success: true, data: { documents: copies.map(toPublic) } });
+});
+
+const submitMyDocuments = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  try {
+    const documents = await dangoteDeliveryDocumentRepo.findByOrder(order.id);
+    const updated = await submitDocuments({
+      order,
+      documents,
+      actor: { type: "customer", id: req.customer.id },
+    });
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const getTerms = asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      version: TERMS_VERSION,
+      title: TERMS_TITLE,
+      effective: TERMS_EFFECTIVE,
+      sections: TERMS_SECTIONS,
+    },
+  });
+});
+
+const acceptMyTerms = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  try {
+    const { order: updated } = await acceptTerms(dangoteDeliveryAgreementRepo, {
+      order,
+      customer: req.customer,
+      signature: { fullName: req.body.fullName.trim(), initials: (req.body.initials || "").trim() },
+      userAgent: req.headers["user-agent"] || "",
+      actor: { type: "customer", id: req.customer.id },
+    });
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const submitMyRequest = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  try {
+    const updated = await submitRequest({
+      order,
+      actor: { type: "customer", id: req.customer.id },
+    });
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const reopenMyOrder = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  try {
+    const updated = await reopenForChanges(dangoteDeliveryAgreementRepo, {
+      order,
+      actor: { type: "customer", id: req.customer.id },
+    });
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
+const cancelMyOrder = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  if (!CANCELLABLE_STATUSES.includes(order.status)) {
+    return res.status(409).json({
+      success: false,
+      message: "Paid orders can no longer be cancelled",
+    });
+  }
+
+  try {
+    const updated = await transition(order, "CANCELLED", {
+      actorType: "customer",
+      actorId: req.customer.id,
+    });
+    res.json({ success: true, data: { order: await orderWithChildren(updated) } });
+  } catch (err) {
+    if (handleDomainErrors(err, res)) return;
+    throw err;
+  }
+});
+
 module.exports = {
   uploadMyDocument,
   listMyDocuments,
   removeMyDocument,
   downloadMyDocument,
+  createMyDraft,
+  listMyOrders,
+  getMyOrder,
+  updateMyDetails,
+  setMyCompany,
+  findMyReusableCompany,
+  reuseMyDocuments,
+  submitMyDocuments,
+  getTerms,
+  acceptMyTerms,
+  submitMyRequest,
+  reopenMyOrder,
+  cancelMyOrder,
 };
