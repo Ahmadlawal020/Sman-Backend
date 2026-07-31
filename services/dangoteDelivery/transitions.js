@@ -11,8 +11,11 @@ const { emitEvent } = require("../events");
 
 const TRANSITIONS = {
   DRAFT: ["DOCUMENTS_SUBMITTED", "CANCELLED"],
-  DOCUMENTS_SUBMITTED: ["AGREEMENT_ACCEPTED", "DRAFT", "CANCELLED"],
-  AGREEMENT_ACCEPTED: ["UNDER_REVIEW", "DRAFT", "CANCELLED"],
+  DOCUMENTS_SUBMITTED: ["AGREEMENT_ACCEPTED", "CANCELLED"],
+  AGREEMENT_ACCEPTED: ["UNDER_REVIEW", "CANCELLED"],
+  // CANCELLED here deviates from the mock's map on purpose: the frontend's
+  // CANCELLABLE_STATUSES includes UNDER_REVIEW but its map forgot the edge
+  // (cancel would throw). The backend follows the declared cancellable set.
   UNDER_REVIEW: ["APPROVED", "REJECTED", "NEEDS_CHANGES", "CANCELLED"],
   NEEDS_CHANGES: ["DRAFT", "CANCELLED"],
   APPROVED: ["PAYMENT_PENDING", "CANCELLED", "DOCUMENTS_EXPIRED"],

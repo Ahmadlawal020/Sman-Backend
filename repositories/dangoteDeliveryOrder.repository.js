@@ -1,6 +1,11 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, asc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { dangoteDeliveryOrders, customers, staff } = require("../db/schema");
+const {
+  dangoteDeliveryOrders,
+  dangoteDeliveryEvents,
+  customers,
+  staff,
+} = require("../db/schema");
 
 // Legacy admin screens still render paymentStatus / collectionStatus; derive
 // them from the status machine until B6 replaces those screens.
@@ -167,6 +172,20 @@ const update = async (id, data) => {
   return row || null;
 };
 
+// Chronological timeline for the customer tracker (note carries staff
+// send-back reasons).
+const findEventsByOrder = async (orderId) => {
+  return db
+    .select({
+      event: dangoteDeliveryEvents.event,
+      note: dangoteDeliveryEvents.note,
+      at: dangoteDeliveryEvents.createdAt,
+    })
+    .from(dangoteDeliveryEvents)
+    .where(eq(dangoteDeliveryEvents.orderId, orderId))
+    .orderBy(asc(dangoteDeliveryEvents.createdAt), asc(dangoteDeliveryEvents.id));
+};
+
 // Sequence-backed: concurrency-safe, and the unique index on request_number
 // is the backstop. Replaces the racy COUNT(*)+1 generator.
 const generateRequestNumber = async () => {
@@ -183,6 +202,7 @@ module.exports = {
   findById,
   findByIdFull,
   findAll,
+  findEventsByOrder,
   create,
   update,
   generateRequestNumber,
