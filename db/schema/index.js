@@ -32,7 +32,10 @@ const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
 const dangoteProductSchema = require("./dangoteProduct");
-const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
+const dangoteDeliveryOrderSchema = require("./dangoteDeliveryOrder");
+const dangoteDeliveryDocumentSchema = require("./dangoteDeliveryDocument");
+const dangoteDeliveryAgreementSchema = require("./dangoteDeliveryAgreement");
+const dangoteDeliveryEventSchema = require("./dangoteDeliveryEvent");
 const waSessionSchema = require("./waSession");
 const waMessageSchema = require("./waMessage");
 const waTemplateSchema = require("./waTemplate");
@@ -75,7 +78,10 @@ module.exports = {
   ...incidentRecordSchema,
   ...offlineSaleSchema,
   ...dangoteProductSchema,
-  ...dangoteOrderRequestSchema,
+  ...dangoteDeliveryOrderSchema,
+  ...dangoteDeliveryDocumentSchema,
+  ...dangoteDeliveryAgreementSchema,
+  ...dangoteDeliveryEventSchema,
   ...waSessionSchema,
   ...waMessageSchema,
   ...waTemplateSchema,

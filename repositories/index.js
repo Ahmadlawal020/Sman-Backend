@@ -25,7 +25,7 @@ module.exports = {
   incidentRecordRepo: require("./incidentRecord.repository"),
   offlineSaleRepo: require("./offlineSale.repository"),
   dangoteProductRepo: require("./dangoteProduct.repository"),
-  dangoteOrderRequestRepo: require("./dangoteOrderRequest.repository"),
+  dangoteDeliveryOrderRepo: require("./dangoteDeliveryOrder.repository"),
   waSessionRepo: require("./waSession.repository"),
   waMessageRepo: require("./waMessage.repository"),
   bankAccountRepo: require("./bankAccount.repository"),

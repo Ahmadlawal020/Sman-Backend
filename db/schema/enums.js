@@ -246,6 +246,35 @@ const productTypeEnum = pgEnum("product_type", ["soroman", "dangote"]);
 
 const productStatusEnum = pgEnum("product_status", ["Active", "Inactive"]);
 
+// The Dangote delivery lifecycle, verbatim from the frontend contract
+// (soroman_frontend_new types.ts). One machine on one record: quote request
+// (DRAFT → UNDER_REVIEW), staff verdict (APPROVED/REJECTED/NEEDS_CHANGES),
+// then payment and staff-advanced fulfilment. "Submitted" is not a status —
+// it's the AGREEMENT_ACCEPTED → UNDER_REVIEW transition, stamped on
+// submitted_at. Only the transition service may write this column.
+const dangoteDeliveryStatusEnum = pgEnum("dangote_delivery_status", [
+  "DRAFT",
+  "DOCUMENTS_SUBMITTED",
+  "AGREEMENT_ACCEPTED",
+  "UNDER_REVIEW",
+  "NEEDS_CHANGES",
+  "APPROVED",
+  "PAYMENT_PENDING",
+  "PAID",
+  "SCHEDULED",
+  "DISPATCHED",
+  "COMPLETED",
+  "CANCELLED",
+  "REJECTED",
+  "DOCUMENTS_EXPIRED",
+]);
+
+const dangoteDocumentStatusEnum = pgEnum("dangote_document_status", [
+  "PENDING",
+  "VERIFIED",
+  "REJECTED",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -283,4 +312,6 @@ module.exports = {
   commissionStatusEnum,
   productTypeEnum,
   productStatusEnum,
+  dangoteDeliveryStatusEnum,
+  dangoteDocumentStatusEnum,
 };

@@ -134,6 +134,20 @@
       "when": 1785477510382,
       "tag": "0018_mushy_anthem",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785484562067,
+      "tag": "0019_yummy_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785484562595,
+      "tag": "0020_charming_night_thrasher",
+      "breakpoints": true
     }
   ]
 }
