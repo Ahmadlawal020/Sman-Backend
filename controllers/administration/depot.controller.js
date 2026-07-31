@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const { depotRepo, pfiRepo, orderRepo } = require("../../repositories");
+const { depotRepo, pfiRepo, orderRepo, productRepo } = require("../../repositories");
 const { getMultiDepotCapacities, getDepotCapacities } = require("../../services/pfi.service");
 
 const getDepots = asyncHandler(async (req, res) => {
@@ -233,6 +233,17 @@ const updateProductPrice = asyncHandler(async (req, res) => {
   const depot = await depotRepo.findById(req.params.id);
   if (!depot) {
     return res.status(404).json({ success: false, message: "Depot not found" });
+  }
+
+  const product = await productRepo.findById(productId);
+  if (!product) {
+    return res.status(404).json({ success: false, message: "Product not found" });
+  }
+  if (product.productType !== "soroman") {
+    return res.status(400).json({
+      success: false,
+      message: "Only Soroman depot products can be priced at a depot",
+    });
   }
 
   await depotRepo.upsertProductPrice(depot.id, productId, numericPrice);

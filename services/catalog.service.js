@@ -1,4 +1,4 @@
-const { sql, eq, gt } = require("drizzle-orm");
+const { sql, eq, gt, and } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
 
@@ -27,7 +27,9 @@ const loadCatalog = async () => {
       })
       .from(depotProductPrices)
       .innerJoin(products, eq(products.id, depotProductPrices.productId))
-      .where(gt(depotProductPrices.currentPrice, "0")),
+      // Dangote delivery SKUs never carry depot prices, but the depot catalog
+      // is depot-sourced by definition — keep the type filter explicit.
+      .where(and(gt(depotProductPrices.currentPrice, "0"), eq(products.productType, "soroman"))),
     // Sellable stock = active PFIs' remaining litres, per depot × product —
     // the same pool placeOrder reserves from.
     db

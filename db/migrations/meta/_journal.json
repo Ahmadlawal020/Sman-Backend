@@ -127,6 +127,13 @@
       "when": 1785432842104,
       "tag": "0017_bizarre_cloak",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785477510382,
+      "tag": "0018_mushy_anthem",
+      "breakpoints": true
     }
   ]
 }
