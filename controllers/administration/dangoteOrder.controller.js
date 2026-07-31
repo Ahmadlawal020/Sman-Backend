@@ -1,9 +1,14 @@
 const asyncHandler = require("express-async-handler");
 const {
   dangoteProductRepo,
-  dangoteOrderRequestRepo,
+  dangoteDeliveryOrderRepo,
   customerRepo,
 } = require("../../repositories");
+const {
+  transition,
+  recordEvent,
+  TransitionError,
+} = require("../../services/dangoteDelivery/transitions");
 const {
   sendDangoteRequestReceivedEmail,
   sendDangoteOrderConfirmedEmail,
@@ -77,12 +82,12 @@ const updateDangoteProduct = asyncHandler(async (req, res) => {
 
 const getDangoteOrderRequests = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 50 } = req.query;
-  const result = await dangoteOrderRequestRepo.findAll({ search, status, page, limit });
+  const result = await dangoteDeliveryOrderRepo.findAll({ search, status, page, limit });
   res.json({ success: true, data: result });
 });
 
 const getDangoteOrderRequestById = asyncHandler(async (req, res) => {
-  const request = await dangoteOrderRequestRepo.findByIdFull(Number(req.params.id));
+  const request = await dangoteDeliveryOrderRepo.findByIdFull(Number(req.params.id));
   if (!request) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
@@ -108,20 +113,29 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Customer not found" });
   }
 
-  const requestNumber = await dangoteOrderRequestRepo.generateRequestNumber();
+  const requestNumber = await dangoteDeliveryOrderRepo.generateRequestNumber();
 
-  const request = await dangoteOrderRequestRepo.create({
+  // Staff-created requests skip the customer wizard stages and land directly
+  // under review; the customer portal flow (B5) starts at DRAFT instead.
+  const request = await dangoteDeliveryOrderRepo.create({
     requestNumber,
     customerId: customer.id,
-    product,
+    productName: product,
     quantity: Number(quantity),
     quantityUnit: quantityUnit || "Tons",
     deliveryAddress,
     deliveryState: deliveryState || "",
     deliveryLga: deliveryLga || "",
-    status: "Pending Review",
+    status: "UNDER_REVIEW",
+    submittedAt: new Date(),
     paymentReference: paymentReference || "",
     paymentMode: paymentMode || "",
+  });
+
+  await recordEvent(request.id, "UNDER_REVIEW", {
+    actorType: "staff",
+    actorId: req.user.id,
+    note: "Created by staff",
   });
 
   // Send "under review" email to customer
@@ -141,7 +155,7 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     }
   }
 
-  const fullRequest = await dangoteOrderRequestRepo.findByIdFull(request.id);
+  const fullRequest = await dangoteDeliveryOrderRepo.findByIdFull(request.id);
 
   res.status(201).json({
     success: true,
@@ -154,12 +168,12 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const { pricePerUnit, deliveryPrice, expectedArrivalDate, action } = req.body;
 
-  const existing = await dangoteOrderRequestRepo.findById(id);
+  const existing = await dangoteDeliveryOrderRepo.findById(id);
   if (!existing) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
 
-  if (existing.status !== "Pending Review") {
+  if (existing.status !== "UNDER_REVIEW") {
     return res.status(409).json({
       success: false,
       message: `Request is already ${existing.status}`,
@@ -167,12 +181,12 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   }
 
   if (action === "reject") {
-    const updated = await dangoteOrderRequestRepo.update(id, {
-      status: "Rejected",
-      reviewedBy: req.user.id,
-      reviewedAt: new Date(),
+    const updated = await transition(existing, "REJECTED", {
+      actorType: "staff",
+      actorId: req.user.id,
+      set: { reviewedBy: req.user.id, reviewedAt: new Date() },
     });
-    const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
+    const fullRequest = await dangoteDeliveryOrderRepo.findByIdFull(updated.id);
     return res.json({
       success: true,
       message: "Order request rejected",
@@ -190,14 +204,19 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
 
   const totalAmount = (Number(pricePerUnit) * existing.quantity) + Number(deliveryPrice || 0);
 
-  const updated = await dangoteOrderRequestRepo.update(id, {
-    status: "Approved",
-    pricePerUnit: String(pricePerUnit),
-    deliveryPrice: String(deliveryPrice || 0),
-    totalAmount: String(totalAmount),
-    expectedArrivalDate: expectedArrivalDate || "",
-    reviewedBy: req.user.id,
-    reviewedAt: new Date(),
+  const updated = await transition(existing, "APPROVED", {
+    actorType: "staff",
+    actorId: req.user.id,
+    set: {
+      unitPrice: String(pricePerUnit),
+      deliveryPrice: String(deliveryPrice || 0),
+      totalAmount: String(totalAmount),
+      expectedArrivalDate: expectedArrivalDate || "",
+      quotedBy: req.user.id,
+      quotedAt: new Date(),
+      reviewedBy: req.user.id,
+      reviewedAt: new Date(),
+    },
   });
 
   // Fetch full customer record for DVA check
@@ -238,13 +257,13 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   }
 
   // Store DVA on the request record
-  await dangoteOrderRequestRepo.update(id, {
+  await dangoteDeliveryOrderRepo.update(id, {
     virtualAccountNumber,
     virtualAccountBank,
     virtualAccountName,
   });
 
-  const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
+  const fullRequest = await dangoteDeliveryOrderRepo.findByIdFull(updated.id);
 
   // Send confirmation email with DVA payment details
   if (fullRequest.customerEmail) {
@@ -252,7 +271,7 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       await sendDangoteOrderConfirmedEmail(fullRequest.customerEmail, {
         requestNumber: fullRequest.requestNumber,
         customerName: fullRequest.customerName,
-        companyName: fullRequest.companyName,
+        companyName: fullRequest.companyName || fullRequest.customerCompanyName || "",
         customerPhone: fullRequest.customerPhone,
         product: fullRequest.product,
         quantity: fullRequest.quantity,
@@ -309,17 +328,44 @@ const updateDangoteOrderPaymentStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  const existing = await dangoteOrderRequestRepo.findById(id);
+  const existing = await dangoteDeliveryOrderRepo.findById(id);
   if (!existing) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
 
-  const updated = await dangoteOrderRequestRepo.update(id, { paymentStatus });
-  const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
+  if (paymentStatus === "Unpaid") {
+    return res.status(409).json({
+      success: false,
+      message: "A payment cannot be reversed; use the review flow instead",
+    });
+  }
+
+  try {
+    // Legacy manual toggle walks the machine: APPROVED → PAYMENT_PENDING → PAID.
+    let order = existing;
+    if (order.status === "APPROVED") {
+      order = await transition(order, "PAYMENT_PENDING", {
+        actorType: "staff",
+        actorId: req.user.id,
+      });
+    }
+    await transition(order, "PAID", {
+      actorType: "staff",
+      actorId: req.user.id,
+      note: "Payment confirmed manually by staff",
+    });
+  } catch (err) {
+    if (err instanceof TransitionError) {
+      return res.status(409).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
+
+  const fullRequest = await dangoteDeliveryOrderRepo.findByIdFull(id);
 
   res.json({
     success: true,
-    message: `Payment status updated to ${paymentStatus}`,
+    message: "Payment status updated to Paid",
     data: { request: fullRequest },
   });
 });
@@ -328,20 +374,47 @@ const updateDangoteOrderCollectionStatus = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const { collectionStatus } = req.body;
 
-  if (!collectionStatus || !["Pending", "Dispatched", "Collected"].includes(collectionStatus)) {
+  if (!collectionStatus || !["Dispatched", "Collected"].includes(collectionStatus)) {
     return res.status(400).json({
       success: false,
-      message: "Valid collection status is required (Pending, Dispatched, or Collected)",
+      message: "Valid collection status is required (Dispatched or Collected)",
     });
   }
 
-  const existing = await dangoteOrderRequestRepo.findById(id);
+  const existing = await dangoteDeliveryOrderRepo.findById(id);
   if (!existing) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
 
-  const updated = await dangoteOrderRequestRepo.update(id, { collectionStatus });
-  const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
+  try {
+    // Legacy manual toggle walks the machine to the requested stage:
+    // PAID → SCHEDULED → DISPATCHED (→ COMPLETED for "Collected").
+    const target = collectionStatus === "Collected" ? "COMPLETED" : "DISPATCHED";
+    const path = { PAID: ["SCHEDULED"], SCHEDULED: [], DISPATCHED: [] };
+    let order = existing;
+    for (const step of path[order.status] || []) {
+      order = await transition(order, step, { actorType: "staff", actorId: req.user.id });
+    }
+    if (order.status === "SCHEDULED") {
+      order = await transition(order, "DISPATCHED", { actorType: "staff", actorId: req.user.id });
+    }
+    if (target === "COMPLETED" && order.status === "DISPATCHED") {
+      order = await transition(order, "COMPLETED", { actorType: "staff", actorId: req.user.id });
+    }
+    if (order.status !== target) {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot move a ${existing.status} order to ${target}`,
+      });
+    }
+  } catch (err) {
+    if (err instanceof TransitionError) {
+      return res.status(409).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
+
+  const fullRequest = await dangoteDeliveryOrderRepo.findByIdFull(id);
 
   res.json({
     success: true,
