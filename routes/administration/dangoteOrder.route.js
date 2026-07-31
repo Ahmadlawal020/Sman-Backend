@@ -14,6 +14,10 @@ const {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
+  getDangoteOrderDocuments,
+  verifyDangoteOrderDocument,
+  rejectDangoteOrderDocument,
+  downloadDangoteOrderDocument,
 } = require("../../controllers/administration/dangoteOrder.controller");
 
 // Dangote Products
@@ -35,5 +39,26 @@ router.put(
 );
 router.put("/dangote-order-requests/:id/payment-status", verifyStaff, updateDangoteOrderPaymentStatus);
 router.put("/dangote-order-requests/:id/collection-status", verifyStaff, updateDangoteOrderCollectionStatus);
+
+// Documents — verify/reject are review actions, so they carry the same role
+// gate as the review endpoint itself.
+router.get("/dangote-order-requests/:id/documents", verifyStaff, getDangoteOrderDocuments);
+router.post(
+  "/dangote-order-requests/:id/documents/:docId/verify",
+  authenticateStaff,
+  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  verifyDangoteOrderDocument
+);
+router.post(
+  "/dangote-order-requests/:id/documents/:docId/reject",
+  authenticateStaff,
+  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  rejectDangoteOrderDocument
+);
+router.get(
+  "/dangote-order-requests/:id/documents/:docId/download",
+  verifyStaff,
+  downloadDangoteOrderDocument
+);
 
 module.exports = router;

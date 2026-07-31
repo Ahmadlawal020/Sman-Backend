@@ -1,0 +1,4 @@
+# Local-disk storage driver target (dev/test only; production uses S3).
+# Everything in here is user-uploaded content and must never be committed.
+*
+!.gitignore

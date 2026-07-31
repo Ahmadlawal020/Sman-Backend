@@ -2,8 +2,17 @@ const asyncHandler = require("express-async-handler");
 const {
   dangoteProductRepo,
   dangoteDeliveryOrderRepo,
+  dangoteDeliveryDocumentRepo,
   customerRepo,
 } = require("../../repositories");
+const storage = require("../../services/storage");
+const {
+  DocumentError,
+  verifyDocument,
+  rejectDocument,
+  toPublic: documentToPublic,
+} = require("../../services/dangoteDelivery/documents");
+const { emitEvent } = require("../../services/events");
 const {
   transition,
   recordEvent,
@@ -423,6 +432,89 @@ const updateDangoteOrderCollectionStatus = asyncHandler(async (req, res) => {
   });
 });
 
+// ── Documents (staff review side) ─────────────────────────────────────────
+
+const loadOrderDocument = async (req, res) => {
+  const order = await dangoteDeliveryOrderRepo.findById(Number(req.params.id));
+  if (!order) {
+    res.status(404).json({ success: false, message: "Order request not found" });
+    return null;
+  }
+  const doc = await dangoteDeliveryDocumentRepo.findById(Number(req.params.docId));
+  if (!doc || doc.orderId !== order.id) {
+    res.status(404).json({ success: false, message: "Document not found" });
+    return null;
+  }
+  return { order, doc };
+};
+
+const getDangoteOrderDocuments = asyncHandler(async (req, res) => {
+  const order = await dangoteDeliveryOrderRepo.findById(Number(req.params.id));
+  if (!order) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+  const docs = await dangoteDeliveryDocumentRepo.findByOrder(order.id);
+  res.json({ success: true, data: { documents: docs.map(documentToPublic) } });
+});
+
+const verifyDangoteOrderDocument = asyncHandler(async (req, res) => {
+  const loaded = await loadOrderDocument(req, res);
+  if (!loaded) return;
+
+  try {
+    const updated = await verifyDocument(dangoteDeliveryDocumentRepo, {
+      document: loaded.doc,
+      staffId: req.user.id,
+      expiryDate: req.body.expiryDate,
+    });
+    res.json({ success: true, message: "Document verified", data: { document: documentToPublic(updated) } });
+  } catch (err) {
+    if (err instanceof DocumentError) {
+      return res.status(err.statusCode).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
+});
+
+const rejectDangoteOrderDocument = asyncHandler(async (req, res) => {
+  const loaded = await loadOrderDocument(req, res);
+  if (!loaded) return;
+
+  const updated = await rejectDocument(dangoteDeliveryDocumentRepo, {
+    document: loaded.doc,
+    staffId: req.user.id,
+    note: req.body.note || "",
+  });
+  res.json({ success: true, message: "Document rejected", data: { document: documentToPublic(updated) } });
+});
+
+const downloadDangoteOrderDocument = asyncHandler(async (req, res) => {
+  const loaded = await loadOrderDocument(req, res);
+  if (!loaded) return;
+  const { doc } = loaded;
+
+  // Staff access to customer compliance documents is always audited.
+  emitEvent("dangote_delivery.document_downloaded", {
+    orderId: doc.orderId,
+    documentId: doc.id,
+    staffId: req.user.id,
+  });
+
+  const url = await storage.presignGet(doc.storageKey, 300);
+  if (url) {
+    return res.redirect(302, url);
+  }
+
+  const { stream, contentLength } = await storage.getStream(doc.storageKey);
+  res.setHeader("Content-Type", doc.mimeType);
+  if (contentLength) res.setHeader("Content-Length", contentLength);
+  res.setHeader(
+    "Content-Disposition",
+    `inline; filename="${doc.fileName.replace(/[^\w.\- ]/g, "_")}"`
+  );
+  stream.pipe(res);
+});
+
 module.exports = {
   getDangoteProducts,
   getDangoteProductsActive,
@@ -435,4 +527,8 @@ module.exports = {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
+  getDangoteOrderDocuments,
+  verifyDangoteOrderDocument,
+  rejectDangoteOrderDocument,
+  downloadDangoteOrderDocument,
 };
