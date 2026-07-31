@@ -88,6 +88,16 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.ok(!("reviewedBy" in order), "staff-only fields must not leak");
   });
 
+  test("the request number works as the order id (the portal's reference)", async () => {
+    const created = await request(app).get(`${DD}/${orderId}`).set(auth(me.token));
+    const ref = created.body.data.order.requestNumber;
+    const byRef = await request(app).get(`${DD}/${ref.toLowerCase()}`).set(auth(me.token));
+    assert.equal(byRef.status, 200, JSON.stringify(byRef.body));
+    assert.equal(byRef.body.data.order.id, orderId);
+    const bogus = await request(app).get(`${DD}/DNG-9999-99999`).set(auth(me.token));
+    assert.equal(bogus.status, 404);
+  });
+
   test("a stranger cannot see or touch the order", async () => {
     const res = await request(app).get(`${DD}/${orderId}`).set(auth(stranger.token));
     assert.equal(res.status, 404);
