@@ -132,6 +132,53 @@ describe("dangote delivery — staff quote desk", () => {
     assert.equal(Number(req1.totalAmount), 900 * DETAILS.quantity + 50000);
     assert.ok(req1.quotedAt, "quote timestamp must be stamped");
 
+    // Frontend (api.ts) wire contract — asserted here on the already-built
+    // APPROVED state (verified doc + signed agreement + quote) rather than in
+    // a separate heavy e2e. The customer's PORTAL view is what api.ts's
+    // toOrder / toDocument / toAgreement read; a rename here breaks the swap.
+    const portal = await request(app).get(`${DD}/${id}`).set(auth(me.token));
+    assert.equal(portal.status, 200, JSON.stringify(portal.body));
+    const o = portal.body.data.order;
+    for (const f of [
+      "id", "requestNumber", "product", "productName", "quantity", "quantityUnit",
+      "deliveryAddress", "deliveryState", "contactPerson", "contactPhone", "companyName",
+      "companyNameNormalized", "status", "unitPrice", "totalAmount", "submittedAt",
+      "approvedAt", "quotedAt", "paidAt", "createdAt", "updatedAt", "documents",
+      "agreement", "events",
+    ]) {
+      assert.ok(f in o, `portal order missing "${f}" — api.ts reads it`);
+    }
+    assert.match(o.requestNumber, /^DNG-\d{4}-\d{5}$/);
+    assert.ok(o.unitPrice != null && o.totalAmount != null, "quote fields populated at APPROVED");
+
+    const pdoc = o.documents[0];
+    assert.ok(pdoc, "a verified document should be present");
+    for (const f of [
+      "id", "documentType", "fileName", "fileSize", "mimeType", "status",
+      "verifiedAt", "expiryDate", "createdAt",
+    ]) {
+      assert.ok(f in pdoc, `portal document missing "${f}"`);
+    }
+    assert.ok(!("storageKey" in pdoc), "storage keys must never reach the client");
+
+    const ag = o.agreement;
+    assert.ok(ag, "a signed agreement should be present");
+    for (const f of [
+      "id", "customerName", "companyName", "deliveryAddress", "deliveryState",
+      "productCode", "productName", "quantity", "signature", "createdAt",
+    ]) {
+      assert.ok(f in ag, `portal agreement missing "${f}"`);
+    }
+    // initials is optional (SignatureRecord.initials?) — the wire omits it
+    // when unset, which the frontend handles; only these are mandatory.
+    for (const f of ["fullName", "signedAt", "termsVersion"]) {
+      assert.ok(f in ag.signature, `signature missing "${f}"`);
+    }
+    assert.ok(!("unitPrice" in ag) && !("totalAmount" in ag), "agreement carries no money");
+    for (const e of o.events) {
+      assert.ok("event" in e && "at" in e, `event row missing fields: ${JSON.stringify(e)}`);
+    }
+
     // Manual payment, then staff-advanced fulfilment
     const paid = await request(app).post(`${STAFF}/${id}/mark-paid`).set(auth(token));
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
