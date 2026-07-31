@@ -124,12 +124,15 @@ const orderWithChildren = async (order) => {
 // someone else's order is not information a customer should receive.
 
 const loadOwnOrder = async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    res.status(404).json({ success: false, message: "Order not found" });
-    return null;
+  // The id param accepts either the row id or the customer-facing request
+  // number (DNG-YYYY-NNNNN) — the portal uses the reference as its order id.
+  const param = String(req.params.id || "");
+  let order = null;
+  if (/^\d+$/.test(param)) {
+    order = await dangoteDeliveryOrderRepo.findById(Number(param));
+  } else if (/^DNG-/i.test(param)) {
+    order = await dangoteDeliveryOrderRepo.findByRequestNumber(param.toUpperCase());
   }
-  const order = await dangoteDeliveryOrderRepo.findById(id);
   if (!order || order.customerId !== req.customer.id) {
     res.status(404).json({ success: false, message: "Order not found" });
     return null;

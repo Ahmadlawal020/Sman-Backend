@@ -26,6 +26,17 @@ const findById = async (id) => {
   return row || null;
 };
 
+// The request number doubles as the customer-facing reference (and the
+// portal's order id), so lookups accept it interchangeably with the row id.
+const findByRequestNumber = async (requestNumber) => {
+  const [row] = await db
+    .select()
+    .from(dangoteDeliveryOrders)
+    .where(eq(dangoteDeliveryOrders.requestNumber, requestNumber))
+    .limit(1);
+  return row || null;
+};
+
 const findByIdFull = async (id) => {
   const [row] = await db
     .select({
@@ -133,6 +144,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
         virtualAccountBank: dangoteDeliveryOrders.virtualAccountBank,
         submittedAt: dangoteDeliveryOrders.submittedAt,
         createdAt: dangoteDeliveryOrders.createdAt,
+        updatedAt: dangoteDeliveryOrders.updatedAt,
       })
       .from(dangoteDeliveryOrders)
       .leftJoin(customers, eq(dangoteDeliveryOrders.customerId, customers.id))
@@ -200,6 +212,7 @@ const generateRequestNumber = async () => {
 
 module.exports = {
   findById,
+  findByRequestNumber,
   findByIdFull,
   findAll,
   findEventsByOrder,
