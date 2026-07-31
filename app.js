@@ -59,6 +59,8 @@ app.use("/api/incidents", require("./routes/administration/incident.route"));
 app.use("/api/offline-sales", require("./routes/administration/offlineSale.route"));
 app.use("/api/reports", require("./routes/administration/reporting.route"));
 app.use("/api/commissions", require("./routes/administration/commission.route"));
+app.use("/api/customer-licenses", require("./routes/administration/customerLicense.route"));
+app.use("/api/uploads", require("./routes/administration/upload.route"));
 
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));

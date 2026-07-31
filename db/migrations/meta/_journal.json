@@ -127,6 +127,34 @@
       "when": 1785432842104,
       "tag": "0017_bizarre_cloak",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785491029419,
+      "tag": "0018_gigantic_mariko_yashida",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785493604545,
+      "tag": "0019_wild_salo",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785497356871,
+      "tag": "0020_tidy_forgotten_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785499384380,
+      "tag": "0021_sleepy_bullseye",
+      "breakpoints": true
     }
   ]
 }

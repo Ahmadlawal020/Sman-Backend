@@ -22,6 +22,7 @@ const {
   deliveryNotes,
   deliveryInventory,
   deliverySales,
+  customerLicenses,
 } = require("./schema");
 
 // ─── Admin Relations ─────────────────────────────────────────────────────────
@@ -45,6 +46,14 @@ const staffRelations = relations(staff, ({ many }) => ({
 const customersRelations = relations(customers, ({ many }) => ({
   orders: many(orders),
   deposits: many(deposits),
+  licenses: many(customerLicenses),
+}));
+
+const customerLicensesRelations = relations(customerLicenses, ({ one }) => ({
+  customer: one(customers, {
+    fields: [customerLicenses.customerId],
+    references: [customers.id],
+  }),
 }));
 
 // ─── Truck Relations ─────────────────────────────────────────────────────────
@@ -354,4 +363,5 @@ module.exports = {
   deliveryNotesRelations,
   deliveryInventoryRelations,
   deliverySalesRelations,
+  customerLicensesRelations,
 };

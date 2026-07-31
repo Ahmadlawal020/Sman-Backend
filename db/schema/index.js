@@ -39,6 +39,7 @@ const waTemplateSchema = require("./waTemplate");
 const bankAccountSchema = require("./bankAccount");
 const depotProductCommissionSchema = require("./depotProductCommission");
 const commissionSchema = require("./commission");
+const customerLicenseSchema = require("./companyLicense");
 
 module.exports = {
   ...enums,
@@ -82,4 +83,5 @@ module.exports = {
   ...bankAccountSchema,
   ...depotProductCommissionSchema,
   ...commissionSchema,
+  ...customerLicenseSchema,
 };

@@ -30,4 +30,5 @@ module.exports = {
   waMessageRepo: require("./waMessage.repository"),
   bankAccountRepo: require("./bankAccount.repository"),
   commissionRepo: require("./commission.repository"),
+  customerLicenseRepo: require("./customerLicense.repository"),
 };

@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { dangoteOrderRequests, customers, staff } = require("../db/schema");
+const { dangoteOrderRequests, customers, staff, customerLicenses } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(dangoteOrderRequests).where(eq(dangoteOrderRequests.id, id)).limit(1);
@@ -17,6 +17,10 @@ const findByIdFull = async (id) => {
       customerEmail: customers.email,
       customerPhone: customers.phone,
       companyName: customers.companyName,
+      licenseId: dangoteOrderRequests.licenseId,
+      licenseCompanyName: dangoteOrderRequests.companyName,
+      licenseStatus: customerLicenses.status,
+      licenseUrl: customerLicenses.licenseUrl,
       product: dangoteOrderRequests.product,
       quantity: dangoteOrderRequests.quantity,
       quantityUnit: dangoteOrderRequests.quantityUnit,
@@ -45,6 +49,7 @@ const findByIdFull = async (id) => {
     .from(dangoteOrderRequests)
     .leftJoin(customers, eq(dangoteOrderRequests.customerId, customers.id))
     .leftJoin(staff, eq(dangoteOrderRequests.reviewedBy, staff.id))
+    .leftJoin(customerLicenses, eq(dangoteOrderRequests.licenseId, customerLicenses.id))
     .where(eq(dangoteOrderRequests.id, id))
     .limit(1);
   return row || null;

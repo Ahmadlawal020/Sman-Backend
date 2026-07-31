@@ -9,6 +9,7 @@ const {
   index,
 } = require("drizzle-orm/pg-core");
 const { customers } = require("./customer");
+const { customerLicenses } = require("./companyLicense");
 const { staff } = require("./staff");
 
 const dangoteOrderRequests = pgTable(
@@ -19,6 +20,8 @@ const dangoteOrderRequests = pgTable(
     customerId: integer("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "restrict" }),
+    companyName: varchar("company_name", { length: 255 }).default(""),
+    licenseId: integer("license_id").references(() => customerLicenses.id, { onDelete: "set null" }),
     product: varchar("product", { length: 255 }).notNull(),
     quantity: integer("quantity").notNull(),
     quantityUnit: varchar("quantity_unit", { length: 20 }).default("Tons").notNull(),

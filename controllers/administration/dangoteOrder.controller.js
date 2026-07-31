@@ -3,6 +3,7 @@ const {
   dangoteProductRepo,
   dangoteOrderRequestRepo,
   customerRepo,
+  customerLicenseRepo,
 } = require("../../repositories");
 const {
   sendDangoteRequestReceivedEmail,
@@ -94,6 +95,7 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     customerId, product, quantity, quantityUnit,
     deliveryAddress, deliveryState, deliveryLga,
     paymentReference, paymentMode,
+    companyName, licenseId,
   } = req.body;
 
   if (!customerId || !product || !quantity || !deliveryAddress) {
@@ -113,6 +115,8 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
   const request = await dangoteOrderRequestRepo.create({
     requestNumber,
     customerId: customer.id,
+    companyName: companyName || "",
+    licenseId: licenseId ? Number(licenseId) : null,
     product,
     quantity: Number(quantity),
     quantityUnit: quantityUnit || "Tons",
@@ -186,6 +190,17 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       success: false,
       message: "Price per unit is required for approval",
     });
+  }
+
+  // Check licence status before allowing approval
+  if (existing.licenseId) {
+    const license = await customerLicenseRepo.findById(existing.licenseId);
+    if (license && license.status !== "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot approve order: the associated licence must be approved first",
+      });
+    }
   }
 
   const totalAmount = (Number(pricePerUnit) * existing.quantity) + Number(deliveryPrice || 0);

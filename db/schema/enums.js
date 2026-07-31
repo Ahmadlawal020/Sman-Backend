@@ -238,6 +238,12 @@ const commissionStatusEnum = pgEnum("commission_status", [
   "paid",
 ]);
 
+const licenseVerificationStatusEnum = pgEnum("license_verification_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -273,4 +279,5 @@ module.exports = {
   waMessageStatusEnum,
   waTemplateStatusEnum,
   commissionStatusEnum,
+  licenseVerificationStatusEnum,
 };
