@@ -62,6 +62,7 @@ app.use("/api/commissions", require("./routes/administration/commission.route"))
 
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));
+app.use("/api", require("./routes/administration/dangoteDelivery.route"));
 
 // Event consumers: audit writes every business event; notifications react to
 // the ones customers and staff should hear about. Registered once, here,
