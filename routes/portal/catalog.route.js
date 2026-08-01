@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const generateLimiter = require("../../middleware/generateLimiter");
-const { getCatalog } = require("../../controllers/portal/catalog.controller");
+const { getCatalog, getDangoteProducts } = require("../../controllers/portal/catalog.controller");
 
 // Unauthenticated and read-only, so the limiter is the only gate. The budget
 // is sized for humans browsing (a page load costs one call), not scrapers
@@ -13,5 +13,6 @@ const catalogLimiter = generateLimiter({
 });
 
 router.get("/", catalogLimiter, getCatalog);
+router.get("/dangote-products", catalogLimiter, getDangoteProducts);
 
 module.exports = router;
