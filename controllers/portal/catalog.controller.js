@@ -1,7 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { publicCatalog } = require("../../services/catalog.service");
 const { productRepo } = require("../../repositories");
-const { PRODUCT_UNITS } = require("../../services/dangoteDelivery/orders");
 
 /**
  * GET /api/catalog — the orderable depots with priced products, public.
@@ -28,7 +27,7 @@ const getDangoteProducts = asyncHandler(async (req, res) => {
     id: p.id,
     code: p.category, // trade code (PMS/AGO/LPG), by app convention
     name: p.name,
-    unit: PRODUCT_UNITS[p.category] || "litre",
+    unit: p.unit, // straight from the catalog column — the source of truth
   }));
   res.json({ success: true, data: { products } });
 });
