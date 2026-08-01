@@ -85,6 +85,10 @@ const transition = async (order, next, { actorType = "system", actorId = null, n
   });
 
   emitEvent("dangote_delivery.status_changed", {
+    // Structured fields the audit consumer records (entity + actor columns).
+    entityType: "dangote_delivery_order",
+    entityId: order.id,
+    actor: { type: actorType, id: actorId },
     orderId: order.id,
     requestNumber: updated.requestNumber,
     customerId: updated.customerId,

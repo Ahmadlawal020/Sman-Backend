@@ -29,9 +29,6 @@ const {
   recordEvent,
   TransitionError,
 } = require("../../services/dangoteDelivery/transitions");
-const {
-  sendDangoteRequestReceivedEmail,
-} = require("../../services/email.service");
 const { emitEvent } = require("../../services/events");
 
 // The staff quote desk. Replaces the legacy /dangote-order-requests
@@ -114,22 +111,20 @@ const createOrder = asyncHandler(async (req, res) => {
       actorId: req.user.id,
       note: "Created by staff",
     });
-
-    if (customer.email) {
-      try {
-        await sendDangoteRequestReceivedEmail(customer.email, {
-          requestNumber,
-          customerName: customer.name,
-          product: order.productName,
-          quantity: order.quantity,
-          quantityUnit: order.quantityUnit,
-          deliveryAddress: order.deliveryAddress,
-          deliveryState: order.deliveryState,
-        });
-      } catch (emailErr) {
-        console.error("Failed to send Dangote request email:", emailErr.message);
-      }
-    }
+    // A staff-created request lands directly UNDER_REVIEW without a transition;
+    // emit the same event so the notification consumer sends the "received"
+    // notice and the audit consumer records it.
+    emitEvent("dangote_delivery.status_changed", {
+      entityType: "dangote_delivery_order",
+      entityId: order.id,
+      actor: { type: "staff", id: req.user.id },
+      orderId: order.id,
+      requestNumber,
+      customerId: customer.id,
+      from: null,
+      to: "UNDER_REVIEW",
+      note: "Created by staff",
+    });
 
     res.status(201).json({ success: true, data: { request: await fullOrder(order.id) } });
   } catch (err) {
@@ -298,6 +293,9 @@ const downloadOrderDocument = asyncHandler(async (req, res) => {
 
   // Staff access to customer compliance documents is always audited.
   emitEvent("dangote_delivery.document_downloaded", {
+    entityType: "dangote_delivery_document",
+    entityId: doc.id,
+    actor: { type: "staff", id: req.user.id },
     orderId: doc.orderId,
     documentId: doc.id,
     staffId: req.user.id,
