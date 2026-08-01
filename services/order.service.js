@@ -1,5 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
+const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
+const { orders } = require("../db/schema");
 const {
   orderRepo,
   customerRepo,
@@ -17,6 +19,14 @@ const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
 const { getCustomerInitials } = require("../utils/helpers");
 const commissionService = require("./commission.service");
+const { QUEUES, enqueue } = require("../config/queue");
+
+const notifyWhatsAppPaymentConfirmed = (orderId) => {
+  if (process.env.WHATSAPP_ENABLED !== "true") return;
+  enqueue(QUEUES.WA_EVENTS, { type: "payment_confirmed", orderId }).catch((err) =>
+    console.error("[wa] payment-confirmed enqueue failed:", err.message)
+  );
+};
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -205,14 +215,14 @@ async function placeOrder({
 
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
-  // --- Atomic order creation (AUDIT H2) --------------------------------------
-  // Stock reservation, the order row, the wallet HOLD, the capacity change, the
-  // declared pickup loads and the Pending→Paid transition are ONE unit: a
-  // failure anywhere rolls all of it back. A guarded write returning null
-  // (stock claimed) is a lost race → a { status: 400 } that rolls back.
-  let order, isPaidWithWallet;
+  // --- Atomic order creation -------------------------------------------------
+  // Stock reservation, the order row, the capacity change and the declared
+  // pickup loads are ONE unit: a failure anywhere rolls all of it back. Orders
+  // are always created Unpaid — payment happens later via a manual "Pay Now"
+  // action (staff or customer) that places a wallet hold.
+  let order;
   try {
-    ({ order, isPaidWithWallet } = await db.transaction(async (tx) => {
+    ({ order } = await db.transaction(async (tx) => {
     const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
     if (!updatedPfi) {
       throw httpError(
@@ -222,8 +232,6 @@ async function placeOrder({
     }
     await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
 
-    // The order is created first (the hold needs its id), Unpaid — its payment
-    // status becomes true only if the hold below actually funds it.
     const created = await orderRepo.create(
       {
         orderNumber,
@@ -250,9 +258,6 @@ async function placeOrder({
       tx
     );
 
-    // Every order gets a creation entry in the audit trail — not only its later
-    // state transitions. A Pending, never-funded order still has a record of who
-    // placed it, when, and for how much.
     await auditLogRepo.record(
       {
         entityType: "order",
@@ -269,23 +274,6 @@ async function placeOrder({
       tx
     );
 
-    // Commit the wallet funds as a HOLD, inside this same transaction (the tx is
-    // threaded through placeHold). The hold reserves the money without spending
-    // it: convertHold books the debit ledger row when the order completes;
-    // releaseHold returns it on cancel. placeHold's guarded debit is the
-    // sufficiency check — it fails cleanly if the balance can't cover it, and
-    // the order simply stays Unpaid to be funded later by Paystack.
-    const holdResult = await walletService.placeHold(
-      {
-        customerId,
-        orderId: created.id,
-        amount: totalAmount,
-        description: `Payment hold for Order ${orderNumber} (Wallet Balance)`,
-      },
-      tx
-    );
-    const paid = holdResult.success;
-
     await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
 
     // Pickup: materialise the customer's declared trucks as pending loads now,
@@ -300,8 +288,6 @@ async function placeOrder({
           orderId: created.id,
           truckIndex: i + 1,
           truckId: null,
-          // optionalString yields "" for an omitted plate/driver — store null so
-          // an undeclared plate is a clean "to be captured at the gate".
           truckNumber: t.truckNumber || null,
           quantity: String(t.quantity),
           driverName: t.driverName || null,
@@ -322,47 +308,14 @@ async function placeOrder({
       );
     }
 
-    // A funded hold confirms the order NOW — drive Pending→Paid through the
-    // state machine (system actor), stamping paymentStatus in the same update so
-    // there is no window where status and paymentStatus disagree. The spend is
-    // not booked yet; convertHold does that when the order completes.
-    let orderRow = created;
-    if (paid) {
-      orderRow = await orderStatus.transition(created.id, "Paid", {
-        tx,
-        actor: { type: "system" },
-        action: "order.paid",
-        set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
-        metadata: { via: "wallet", amount: String(totalAmount) },
-      });
-    }
-
-    return { order: orderRow, isPaidWithWallet: paid };
+    return { order: created };
     }));
   } catch (err) {
-    // Two same-key requests racing: the loser's insert hits the partial unique
-    // index and its whole transaction rolls back (no stock burnt, no hold).
-    // Answer with the winner's order — same as the early replay check.
     if (idempotencyKey && isIdempotencyConflict(err)) {
       const existing = await orderRepo.findByIdempotencyKey(idempotencyKey);
       if (existing) return replayResult(existing.id);
     }
     throw err;
-  }
-
-  // --- Post-commit side effects. The order is durable; these are best-effort.
-  if (isPaidWithWallet) {
-    try {
-      await generateTicketForOrder(order.id);
-    } catch (ticketErr) {
-      console.error("Failed to generate ticket on instant wallet payment:", ticketErr.message);
-    }
-    // Auto-create commission record for the paid order
-    try {
-      await commissionService.createForOrder(order.id);
-    } catch (commErr) {
-      console.error("Failed to create commission for order:", commErr.message);
-    }
   }
 
   const fullOrder = await orderRepo.findByIdFull(order.id);
@@ -415,7 +368,7 @@ async function placeOrder({
 
   return {
     order: fullOrder,
-    isPaidWithWallet,
+    isPaidWithWallet: false,
     payment: {
       accountNumber: virtualAccountNumber,
       bankName: virtualAccountBank,
@@ -601,4 +554,83 @@ async function updatePickupTrucks({
   });
 }
 
-module.exports = { placeOrder, cancelOrder, updatePickupTrucks, httpError };
+/**
+ * Pay an unpaid order from the customer's wallet balance.
+ *
+ * Staff-triggered: places a wallet hold, transitions Pending→Paid, generates
+ * a loading ticket, and creates a commission record — all in one transaction.
+ *
+ * @param {object} opts
+ * @param {number} opts.orderId
+ * @param {{ type: string, staffId?: number }} opts.actor
+ * @returns {object} the updated order
+ */
+async function payOrder({ orderId, actor }) {
+  return db.transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .for("update")
+      .limit(1);
+
+    if (!order) throw httpError(404, "Order not found");
+    if (order.paymentStatus === "Paid") throw httpError(409, "Order is already paid");
+    if (order.status !== "Pending") throw httpError(409, `Cannot pay an order in ${order.status} status`);
+
+    const customer = await customerRepo.findById(order.customerId);
+    if (!customer) throw httpError(404, "Customer not found");
+
+    const orderTotal = Number(order.totalAmount);
+    if (orderTotal <= 0) throw httpError(400, "Order total is invalid");
+
+    const holdResult = await walletService.placeHold(
+      {
+        customerId: customer.id,
+        orderId: order.id,
+        amount: orderTotal,
+        description: `Payment for Order ${order.orderNumber} (Wallet Balance)`,
+      },
+      tx
+    );
+
+    if (!holdResult.success) {
+      if (holdResult.insufficient) {
+        throw httpError(400, `Insufficient wallet balance. Required: ₦${orderTotal.toLocaleString()}, Available: ₦${Number(customer.balance).toLocaleString()}`);
+      }
+      if (holdResult.alreadyHeld) {
+        throw httpError(409, "A payment hold already exists for this order");
+      }
+      throw httpError(400, holdResult.message || "Payment failed");
+    }
+
+    await orderStatus.transition(order.id, "Paid", {
+      tx,
+      actor,
+      action: "order.paid",
+      set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
+      metadata: { via: "wallet", amount: String(orderTotal) },
+    });
+
+    return order;
+  }).then(async (order) => {
+    // Post-commit side effects (best-effort, outside transaction)
+    try {
+      await generateTicketForOrder(order.orderNumber);
+    } catch (ticketErr) {
+      console.error("Failed to generate ticket for paid order:", ticketErr.message);
+    }
+    try {
+      await commissionService.createForOrder(order.id);
+    } catch (commErr) {
+      console.error("Failed to create commission for paid order:", commErr.message);
+    }
+
+    notifyWhatsAppPaymentConfirmed(order.id);
+
+    const fullOrder = await orderRepo.findByIdFull(order.id);
+    return fullOrder;
+  });
+}
+
+module.exports = { placeOrder, cancelOrder, updatePickupTrucks, payOrder, httpError };

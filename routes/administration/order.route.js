@@ -13,7 +13,12 @@ const {
   gateInTruck,
   markTruckLoaded,
   gateOutTruck,
+  getPayableOrders,
+  payOrder,
 } = require("../../controllers/administration/order.controller");
+
+// Payable orders (must be before /:id to avoid param conflict)
+router.get("/payable", verifyStaff, getPayableOrders);
 
 // Reads and creation stay behind the admin gate (verifyStaff).
 router.get("/", verifyStaff, validate({ query: orderSchemas.listOrders }), getOrders);
@@ -38,6 +43,14 @@ router.post(
   requireRole("finance", "super_admin", { message: "Finance access required to cancel" }),
   validate({ params: orderSchemas.idParam, body: orderSchemas.cancelOrder }),
   cancelOrder
+);
+
+router.post(
+  "/:id/pay",
+  authenticateStaff,
+  requireRole("finance", "super_admin", { message: "Finance access required to pay" }),
+  validate({ params: orderSchemas.idParam }),
+  payOrder
 );
 
 // The truck gate flow — each checkpoint gated to its security/ticketing post.

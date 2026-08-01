@@ -270,9 +270,6 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
       };
     }
 
-    // Automatically process unpaid orders using updated wallet balance
-    const autoPaidOrders = await processUnpaidOrdersForCustomer(customer.id);
-
     return {
       success: true,
       customerType: "customer",
@@ -280,7 +277,6 @@ const processPaystackPayment = async (paystackData, rawEventName = "manual_sync"
       deposit: creditResult.deposit,
       amount: amount,
       reference: reference,
-      autoPaidOrdersCount: autoPaidOrders.length,
     };
   } else {
     return {
