@@ -70,6 +70,15 @@ const findAll = async ({ search, productType, status, page = 1, limit = 50 } = {
 
 // Wizard products are looked up by trade code (PMS/AGO/LPG), which the
 // catalog stores in `category` by app-wide convention.
+// All active Dangote delivery products (PMS/AGO/LPG), ordered by trade code.
+const findActiveDangote = async () => {
+  return db
+    .select()
+    .from(products)
+    .where(and(eq(products.productType, "dangote"), eq(products.status, "Active")))
+    .orderBy(products.category);
+};
+
 const findActiveDangoteByCode = async (code) => {
   const [row] = await db
     .select()
@@ -119,6 +128,7 @@ module.exports = {
   findById,
   findBySku,
   findAll,
+  findActiveDangote,
   findActiveDangoteByCode,
   create,
   update,

@@ -1,5 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { publicCatalog } = require("../../services/catalog.service");
+const { productRepo } = require("../../repositories");
+const { PRODUCT_UNITS } = require("../../services/dangoteDelivery/orders");
 
 /**
  * GET /api/catalog — the orderable depots with priced products, public.
@@ -14,4 +16,21 @@ const getCatalog = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { depots } });
 });
 
-module.exports = { getCatalog };
+/**
+ * GET /api/catalog/dangote-products — the active Dangote delivery products
+ * (PMS/AGO/LPG), public. The wizard loads its product tiles from here so the
+ * catalog is the source of truth for what's orderable; the frontend keeps its
+ * own display strings keyed by code.
+ */
+const getDangoteProducts = asyncHandler(async (req, res) => {
+  const rows = await productRepo.findActiveDangote();
+  const products = rows.map((p) => ({
+    id: p.id,
+    code: p.category, // trade code (PMS/AGO/LPG), by app convention
+    name: p.name,
+    unit: PRODUCT_UNITS[p.category] || "litre",
+  }));
+  res.json({ success: true, data: { products } });
+});
+
+module.exports = { getCatalog, getDangoteProducts };
