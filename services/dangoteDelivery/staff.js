@@ -1,10 +1,6 @@
 const { transition } = require("./transitions");
 const { DangoteOrderError } = require("./orders");
 const { createDedicatedAccount } = require("../payment.service");
-const {
-  sendDangoteOrderConfirmedEmail,
-} = require("../email.service");
-const { sendDangoteDeliveryOrderSMS } = require("../sms.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 
 // Staff-side (quote desk) business rules. The invariant that matters most:
@@ -88,7 +84,12 @@ const quoteAndApprove = async (
   const delivery = Number(deliveryPrice || 0);
   const totalAmount = price * order.quantity + delivery;
 
-  const updated = await transition(order, "APPROVED", {
+  // Ensure + snapshot the DVA BEFORE the transition, so the APPROVED event
+  // (and the notification consumer reacting to it) sees the payment account.
+  const customer = await customerRepo.findById(order.customerId);
+  await ensureDvaSnapshot(customerRepo, orderRepo, { order, customer });
+
+  await transition(order, "APPROVED", {
     actorType: "staff",
     actorId: staffId,
     set: {
@@ -103,52 +104,8 @@ const quoteAndApprove = async (
     },
   });
 
-  const customer = await customerRepo.findById(order.customerId);
-  const dva = await ensureDvaSnapshot(customerRepo, orderRepo, { order: updated, customer });
-
-  // Quote-ready notifications; failures logged, never fatal.
-  if (customer?.email) {
-    try {
-      await sendDangoteOrderConfirmedEmail(customer.email, {
-        requestNumber: updated.requestNumber,
-        customerName: customer.name,
-        companyName: updated.companyName || customer.companyName || "",
-        customerPhone: customer.phone,
-        product: updated.productName,
-        quantity: updated.quantity,
-        quantityUnit: updated.quantityUnit,
-        pricePerUnit: price,
-        deliveryPrice: delivery,
-        totalAmount,
-        deliveryAddress: updated.deliveryAddress,
-        deliveryState: updated.deliveryState,
-        expectedArrivalDate: expectedArrivalDate || "",
-        accountNumber: dva.virtualAccountNumber,
-        bankName: dva.virtualAccountBank,
-        accountName: dva.virtualAccountName,
-      });
-    } catch (emailErr) {
-      console.error("Failed to send Dangote quote email:", emailErr.message);
-    }
-  }
-  if (customer?.phone) {
-    try {
-      await sendDangoteDeliveryOrderSMS(customer.phone, {
-        requestNumber: updated.requestNumber,
-        customerName: customer.name,
-        product: updated.productName,
-        quantity: updated.quantity,
-        quantityUnit: updated.quantityUnit,
-        totalAmount,
-        accountNumber: dva.virtualAccountNumber,
-        bankName: dva.virtualAccountBank,
-        accountName: dva.virtualAccountName,
-      });
-    } catch (smsErr) {
-      console.error("Failed to send Dangote quote SMS:", smsErr.message);
-    }
-  }
-
+  // The quote-ready email + SMS are sent by the notification consumer off the
+  // dangote_delivery.status_changed event — no send calls in the desk logic.
   return orderRepo.findById(order.id);
 };
 

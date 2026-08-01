@@ -46,6 +46,9 @@ const verifyLicense = asyncHandler(async (req, res) => {
       expiryDate: req.body.expiryDate,
     });
     emitEvent("customer_license.verified", {
+      entityType: "customer_license",
+      entityId: license.id,
+      actor: { type: "staff", id: req.user.id },
       licenseId: license.id,
       customerId: license.customerId,
       staffId: req.user.id,
@@ -68,6 +71,9 @@ const rejectLicense = asyncHandler(async (req, res) => {
     comment: req.body.comment || "",
   });
   emitEvent("customer_license.rejected", {
+    entityType: "customer_license",
+    entityId: license.id,
+    actor: { type: "staff", id: req.user.id },
     licenseId: license.id,
     customerId: license.customerId,
     staffId: req.user.id,
@@ -79,7 +85,13 @@ const rejectLicense = asyncHandler(async (req, res) => {
 const download = asyncHandler(async (req, res) => {
   const license = await load(req, res);
   if (!license) return;
-  emitEvent("customer_license.downloaded", { licenseId: license.id, staffId: req.user.id });
+  emitEvent("customer_license.downloaded", {
+    entityType: "customer_license",
+    entityId: license.id,
+    actor: { type: "staff", id: req.user.id },
+    licenseId: license.id,
+    staffId: req.user.id,
+  });
   const url = await storage.presignGet(license.storageKey, 300, {
     resourceType: license.storageResourceType || undefined,
   });
