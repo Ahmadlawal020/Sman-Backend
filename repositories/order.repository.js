@@ -317,6 +317,38 @@ const countByPfi = async (pfiId) => {
   return total;
 };
 
+const findPayableOrders = async () => {
+  return db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      customerId: orders.customerId,
+      customerName: customers.name,
+      companyName: customers.companyName,
+      customerBalance: customers.balance,
+      status: orders.status,
+      paymentStatus: orders.paymentStatus,
+      quantity: orders.quantity,
+      totalAmount: orders.totalAmount,
+      deliveryType: orders.deliveryType,
+      createdAt: orders.createdAt,
+      depotName: depots.name,
+      productName: products.name,
+    })
+    .from(orders)
+    .innerJoin(customers, eq(orders.customerId, customers.id))
+    .leftJoin(depots, eq(orders.depotId, depots.id))
+    .leftJoin(products, eq(orders.productId, products.id))
+    .where(
+      and(
+        eq(orders.paymentStatus, "Unpaid"),
+        eq(orders.status, "Pending"),
+        sql`${customers.balance} >= ${orders.totalAmount}`
+      )
+    )
+    .orderBy(asc(orders.createdAt));
+};
+
 module.exports = {
   findById,
   lockById,
@@ -331,4 +363,5 @@ module.exports = {
   findUnpaidByCustomer,
   findOpenByCustomer,
   countByPfi,
+  findPayableOrders,
 };

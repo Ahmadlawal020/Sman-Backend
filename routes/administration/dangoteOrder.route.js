@@ -14,6 +14,8 @@ const {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
+  getPayableDangoteOrders,
+  payDangoteOrder,
 } = require("../../controllers/administration/dangoteOrder.controller");
 
 // Dangote Products
@@ -24,6 +26,7 @@ router.post("/dangote-products", verifyStaff, createDangoteProduct);
 router.put("/dangote-products/:id", verifyStaff, updateDangoteProduct);
 
 // Dangote Order Requests
+router.get("/dangote-order-requests/payable", verifyStaff, getPayableDangoteOrders);
 router.get("/dangote-order-requests", verifyStaff, getDangoteOrderRequests);
 router.get("/dangote-order-requests/:id", verifyStaff, getDangoteOrderRequestById);
 router.post("/dangote-order-requests", verifyStaff, createDangoteOrderRequest);
@@ -32,6 +35,12 @@ router.put(
   authenticateStaff,
   requireRole("orders", "super_admin", { message: "Order review access required" }),
   reviewDangoteOrderRequest
+);
+router.put(
+  "/dangote-order-requests/:id/pay",
+  authenticateStaff,
+  requireRole("finance", "super_admin", { message: "Finance access required to pay" }),
+  payDangoteOrder
 );
 router.put("/dangote-order-requests/:id/payment-status", verifyStaff, updateDangoteOrderPaymentStatus);
 router.put("/dangote-order-requests/:id/collection-status", verifyStaff, updateDangoteOrderCollectionStatus);

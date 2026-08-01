@@ -476,6 +476,23 @@ const gateOutTruck = asyncHandler(async (req, res) => {
   });
 });
 
+const getPayableOrders = asyncHandler(async (req, res) => {
+  const orders = await orderRepo.findPayableOrders();
+  res.json({ success: true, data: { orders } });
+});
+
+const payOrder = asyncHandler(async (req, res) => {
+  const order = await orderService.payOrder({
+    orderId: Number(req.params.id),
+    actor: { type: "staff", staffId: req.user.id },
+  });
+  res.json({
+    success: true,
+    message: `Order ${order.orderNumber} paid successfully from wallet`,
+    data: { order },
+  });
+});
+
 module.exports = {
   getOrders,
   getOrderById,
@@ -485,4 +502,6 @@ module.exports = {
   gateInTruck,
   markTruckLoaded,
   gateOutTruck,
+  getPayableOrders,
+  payOrder,
 };
