@@ -60,7 +60,7 @@ const ensureDvaSnapshot = async (customerRepo, orderRepo, { order, customer }) =
  * the quote fields, then DVA snapshot + notifications.
  */
 const quoteAndApprove = async (
-  { customerRepo, orderRepo, documentRepo },
+  { customerRepo, orderRepo, licenseRepo },
   { order, staffId, unitPrice, deliveryPrice, expectedArrivalDate }
 ) => {
   if (order.status !== "UNDER_REVIEW") {
@@ -72,16 +72,17 @@ const quoteAndApprove = async (
     throw new DangoteOrderError("Unit price must be a positive amount");
   }
 
-  const documents = await documentRepo.findByOrder(order.id);
-  if (documents.length === 0) {
-    throw new DangoteOrderError("Cannot approve: no documents on the request", 409);
+  // Compliance gate: the order's linked customer license must be VERIFIED and
+  // unexpired. Verified once on the license, reused across the customer's orders.
+  if (!order.licenseId) {
+    throw new DangoteOrderError("Cannot approve: no license is attached to this request", 409);
   }
-  const unverified = documents.filter((d) => d.status !== "VERIFIED");
-  if (unverified.length > 0) {
-    throw new DangoteOrderError(
-      "Cannot approve: every document must be verified first",
-      409
-    );
+  const license = await licenseRepo.findById(order.licenseId);
+  if (!license || license.status !== "VERIFIED") {
+    throw new DangoteOrderError("Cannot approve: the attached license must be verified first", 409);
+  }
+  if (license.expiryDate && new Date(license.expiryDate) < new Date(new Date().toDateString())) {
+    throw new DangoteOrderError("Cannot approve: the attached license has expired", 409);
   }
 
   const delivery = Number(deliveryPrice || 0);

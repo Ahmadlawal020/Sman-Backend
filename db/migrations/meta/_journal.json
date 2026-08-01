@@ -148,6 +148,13 @@
       "when": 1785484562595,
       "tag": "0020_charming_night_thrasher",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785526323219,
+      "tag": "0021_careful_ikaris",
+      "breakpoints": true
     }
   ]
 }

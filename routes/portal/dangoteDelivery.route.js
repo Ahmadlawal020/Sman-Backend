@@ -20,6 +20,7 @@ const {
   findMyReusableCompany,
   reuseMyDocuments,
   submitMyDocuments,
+  linkMyLicense,
   getTerms,
   acceptMyTerms,
   submitMyRequest,
@@ -78,6 +79,12 @@ router.get("/", authenticateCustomer, listMyOrders);
 router.get("/:id", authenticateCustomer, getMyOrder);
 router.patch("/:id", ...mutate, validate({ body: schemas.orderDetails }), updateMyDetails);
 router.put("/:id/company", ...mutate, validate({ body: schemas.companyInfo }), setMyCompany);
+router.post(
+  "/:id/license",
+  ...mutate,
+  validate({ body: require("../../schemas/customerLicense.schema").linkLicense }),
+  linkMyLicense
+);
 router.post("/:id/documents/submit", ...mutate, submitMyDocuments);
 router.post("/:id/agreement", ...mutate, validate({ body: schemas.acceptTerms }), acceptMyTerms);
 router.post("/:id/submit", ...mutate, submitMyRequest);

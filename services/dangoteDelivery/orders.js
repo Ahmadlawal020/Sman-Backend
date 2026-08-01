@@ -62,13 +62,14 @@ const detailColumns = async (productRepo, details) => {
  * DRAFT → DOCUMENTS_SUBMITTED. Requires the license uploaded and the company
  * step completed; the wizard calls this together with acceptTerms at signing.
  */
-const submitDocuments = async ({ order, documents, actor }) => {
+// DRAFT → DOCUMENTS_SUBMITTED. Requires a linked customer license (verified
+// once at the customer level, reused across orders) and the company step done.
+const submitDocuments = async ({ order, actor }) => {
   if (order.status !== "DRAFT") {
     throw new DangoteOrderError(`Cannot submit documents for a ${order.status} order`, 409);
   }
-  const hasLicense = documents.some((d) => d.documentType === "DPR_NUPRC_LICENSE");
-  if (!hasLicense) {
-    throw new DangoteOrderError("Upload the DPR/NUPRC license before continuing");
+  if (!order.licenseId) {
+    throw new DangoteOrderError("Attach your DPR/NUPRC license before continuing");
   }
   if (!order.companyName) {
     throw new DangoteOrderError("Company information is required before continuing");

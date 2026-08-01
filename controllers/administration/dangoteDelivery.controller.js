@@ -3,6 +3,7 @@ const {
   dangoteDeliveryOrderRepo,
   dangoteDeliveryDocumentRepo,
   dangoteDeliveryAgreementRepo,
+  customerLicenseRepo,
   customerRepo,
   productRepo,
 } = require("../../repositories");
@@ -137,7 +138,7 @@ const approveOrder = asyncHandler(async (req, res) => {
       {
         customerRepo,
         orderRepo: dangoteDeliveryOrderRepo,
-        documentRepo: dangoteDeliveryDocumentRepo,
+        licenseRepo: customerLicenseRepo,
       },
       {
         order,
