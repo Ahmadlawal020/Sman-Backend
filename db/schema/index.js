@@ -37,6 +37,7 @@ const waSessionSchema = require("./waSession");
 const waMessageSchema = require("./waMessage");
 const waTemplateSchema = require("./waTemplate");
 const bankAccountSchema = require("./bankAccount");
+const bankStatementSchema = require("./bankStatement");
 const depotProductCommissionSchema = require("./depotProductCommission");
 const commissionSchema = require("./commission");
 const customerLicenseSchema = require("./companyLicense");
@@ -81,6 +82,7 @@ module.exports = {
   ...waMessageSchema,
   ...waTemplateSchema,
   ...bankAccountSchema,
+  ...bankStatementSchema,
   ...depotProductCommissionSchema,
   ...commissionSchema,
   ...customerLicenseSchema,
