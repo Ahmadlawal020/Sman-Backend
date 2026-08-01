@@ -14,6 +14,7 @@ const { sql } = require("drizzle-orm");
 const { customers } = require("./customer");
 const { staff } = require("./staff");
 const { products } = require("./product");
+const { customerLicenses } = require("./customerLicense");
 const { dangoteDeliveryStatusEnum } = require("./enums");
 
 // Refinery-sourced deliveries — deliberately NOT the depot `orders` table.
@@ -76,6 +77,13 @@ const dangoteDeliveryOrders = pgTable(
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+
+    // The customer-level compliance license this order relies on. Verified
+    // once on the license (customer_licenses), reused across orders; approval
+    // is gated on it being VERIFIED and unexpired.
+    licenseId: integer("license_id").references(() => customerLicenses.id, {
+      onDelete: "set null",
+    }),
 
     reviewedBy: integer("reviewed_by").references(() => staff.id, { onDelete: "set null" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),

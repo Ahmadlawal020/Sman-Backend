@@ -63,6 +63,7 @@ app.use("/api/commissions", require("./routes/administration/commission.route"))
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));
 app.use("/api", require("./routes/administration/dangoteDelivery.route"));
+app.use("/api/customer-licenses", require("./routes/administration/customerLicense.route"));
 
 // Event consumers: audit writes every business event; notifications react to
 // the ones customers and staff should hear about. Registered once, here,
@@ -81,6 +82,7 @@ app.use("/api/customer/orders", require("./routes/portal/order.route"));
 app.use("/api/customer/profile", require("./routes/portal/profile.route"));
 app.use("/api/customer/dashboard", require("./routes/portal/dashboard.route"));
 app.use("/api/customer/dangote-delivery-orders", require("./routes/portal/dangoteDelivery.route"));
+app.use("/api/customer/licenses", require("./routes/portal/customerLicense.route"));
 // Public: live depot prices for the marketing site and the portal's order
 // form — no account needed to see what's on sale, exactly as on WhatsApp.
 app.use("/api/catalog", require("./routes/portal/catalog.route"));

@@ -3,6 +3,7 @@ const {
   dangoteDeliveryOrderRepo,
   dangoteDeliveryDocumentRepo,
   dangoteDeliveryAgreementRepo,
+  customerLicenseRepo,
   productRepo,
 } = require("../../repositories");
 const storage = require("../../services/storage");
@@ -13,6 +14,7 @@ const {
   reuseDocuments,
   toPublic,
 } = require("../../services/dangoteDelivery/documents");
+const { toPublic: licenseToPublic } = require("../../services/customerLicense.service");
 const {
   DangoteOrderError,
   normalizeCompanyName,
@@ -68,6 +70,7 @@ const orderToPublic = (order) => ({
   companyName: order.companyName,
   companyNameNormalized: order.companyNameNormalized,
   status: order.status,
+  licenseId: order.licenseId ?? null,
   unitPrice: order.unitPrice,
   totalAmount: order.totalAmount,
   virtualAccountNumber: order.virtualAccountNumber,
@@ -106,14 +109,14 @@ const agreementToPublic = (agreement) =>
   };
 
 const orderWithChildren = async (order) => {
-  const [documents, agreement, events] = await Promise.all([
-    dangoteDeliveryDocumentRepo.findByOrder(order.id),
+  const [agreement, events, license] = await Promise.all([
     dangoteDeliveryAgreementRepo.findByOrder(order.id),
     dangoteDeliveryOrderRepo.findEventsByOrder(order.id),
+    order.licenseId ? customerLicenseRepo.findById(order.licenseId) : Promise.resolve(null),
   ]);
   return {
     ...orderToPublic(order),
-    documents: documents.map(toPublic),
+    license: license ? licenseToPublic(license) : null,
     agreement: agreementToPublic(agreement),
     events,
   };
@@ -396,10 +399,8 @@ const submitMyDocuments = asyncHandler(async (req, res) => {
   if (!order) return;
 
   try {
-    const documents = await dangoteDeliveryDocumentRepo.findByOrder(order.id);
     const updated = await submitDocuments({
       order,
-      documents,
       actor: { type: "customer", id: req.customer.id },
     });
     res.json({ success: true, data: { order: await orderWithChildren(updated) } });
@@ -407,6 +408,39 @@ const submitMyDocuments = asyncHandler(async (req, res) => {
     if (handleDomainErrors(err, res)) return;
     throw err;
   }
+});
+
+// Link one of the customer's licenses to this order. The license must be
+// theirs and for the same (normalized) company as the order. Verified-once,
+// reused-across-orders: the license's own verification is what the approval
+// gate checks.
+const linkMyLicense = asyncHandler(async (req, res) => {
+  const order = await loadOwnOrder(req, res);
+  if (!order) return;
+
+  if (order.status !== "DRAFT") {
+    return res.status(409).json({
+      success: false,
+      message: "A license can only be attached while the request is a draft",
+    });
+  }
+  if (!order.companyNameNormalized) {
+    return res.status(400).json({ success: false, message: "Set the company name first" });
+  }
+
+  const license = await customerLicenseRepo.findById(Number(req.body.licenseId));
+  if (!license || license.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "License not found" });
+  }
+  if (license.companyNameNormalized !== order.companyNameNormalized) {
+    return res.status(400).json({
+      success: false,
+      message: "That license is for a different company",
+    });
+  }
+
+  const updated = await dangoteDeliveryOrderRepo.update(order.id, { licenseId: license.id });
+  res.json({ success: true, data: { order: await orderWithChildren(updated) } });
 });
 
 const getTerms = asyncHandler(async (req, res) => {
@@ -508,6 +542,7 @@ module.exports = {
   findMyReusableCompany,
   reuseMyDocuments,
   submitMyDocuments,
+  linkMyLicense,
   getTerms,
   acceptMyTerms,
   submitMyRequest,

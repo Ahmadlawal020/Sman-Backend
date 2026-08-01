@@ -12,6 +12,8 @@ const { NATIVE_TRANSPORT, staffToken, closeDb } = require("./helpers");
 const PORTAL_AUTH = "/api/customer/auth";
 const DD = "/api/customer/dangote-delivery-orders";
 const STAFF = "/api/dangote-delivery-orders";
+const LICENSES = "/api/customer/licenses";
+const STAFF_LICENSES = "/api/customer-licenses";
 const DEV_CODE = process.env.OTP_DEV_CODE || "000000";
 const RUN = Date.now();
 
@@ -50,28 +52,35 @@ async function registerActiveCustomer(tag) {
 }
 
 /** Walk a customer order to UNDER_REVIEW via the portal API. */
-async function submittedOrder(customer) {
+const COMPANY = `Staff Flow Co ${RUN}`;
+
+// Create a customer license (backend-upload mode) for the shared company.
+async function createLicense(customer) {
+  const res = await request(app)
+    .post(LICENSES)
+    .set(auth(customer.token))
+    .field("companyName", COMPANY)
+    .attach("file", pdf(), { filename: "license.pdf", contentType: "application/pdf" });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  return res.body.data.license.id;
+}
+
+// Walk an order to UNDER_REVIEW: details → company → link license → submit
+// documents → sign → submit.
+async function submittedOrder(customer, licenseId) {
   const created = await request(app).post(DD).set(auth(customer.token)).send(DETAILS);
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const id = created.body.data.order.id;
-  await request(app)
-    .put(`${DD}/${id}/company`)
-    .set(auth(customer.token))
-    .send({ companyName: `Staff Flow Co ${RUN}` });
-  const up = await request(app)
-    .post(`${DD}/${id}/documents`)
-    .set(auth(customer.token))
-    .attach("file", pdf(), { filename: "license.pdf", contentType: "application/pdf" });
-  assert.equal(up.status, 201, JSON.stringify(up.body));
-  await request(app).post(`${DD}/${id}/documents/submit`).set(auth(customer.token));
-  await request(app)
-    .post(`${DD}/${id}/agreement`)
-    .set(auth(customer.token))
-    .send({ fullName: "Bola Ade" });
+  await request(app).put(`${DD}/${id}/company`).set(auth(customer.token)).send({ companyName: COMPANY });
+  const link = await request(app).post(`${DD}/${id}/license`).set(auth(customer.token)).send({ licenseId });
+  assert.equal(link.status, 200, JSON.stringify(link.body));
+  const sd = await request(app).post(`${DD}/${id}/documents/submit`).set(auth(customer.token));
+  assert.equal(sd.status, 200, JSON.stringify(sd.body));
+  await request(app).post(`${DD}/${id}/agreement`).set(auth(customer.token)).send({ fullName: "Bola Ade" });
   const sub = await request(app).post(`${DD}/${id}/submit`).set(auth(customer.token));
   assert.equal(sub.status, 200, JSON.stringify(sub.body));
   assert.equal(sub.body.data.order.status, "UNDER_REVIEW");
-  return { id, documentId: up.body.data.document.id };
+  return { id };
 }
 
 describe("dangote delivery — staff quote desk", () => {
@@ -88,7 +97,8 @@ describe("dangote delivery — staff quote desk", () => {
   });
 
   test("full desk flow: verify → quote → paid → fulfilment", async () => {
-    const { id, documentId } = await submittedOrder(me);
+    const licenseId = await createLicense(me);
+    const { id } = await submittedOrder(me, licenseId);
 
     // Listed for the desk
     const list = await request(app)
@@ -98,16 +108,16 @@ describe("dangote delivery — staff quote desk", () => {
     assert.equal(list.status, 200, JSON.stringify(list.body));
     assert.ok(list.body.data.requests.some((r) => r.id === id));
 
-    // Approval is blocked until every document is verified
+    // Approval is blocked until the linked license is verified
     const early = await request(app)
       .post(`${STAFF}/${id}/approve`)
       .set(auth(token))
       .send({ unitPrice: 900 });
     assert.equal(early.status, 409, JSON.stringify(early.body));
 
-    // Verification requires the printed expiry date
+    // License verification requires the printed expiry date
     const noExpiry = await request(app)
-      .post(`${STAFF}/${id}/documents/${documentId}/verify`)
+      .post(`${STAFF_LICENSES}/${licenseId}/verify`)
       .set(auth(token))
       .send({});
     assert.equal(noExpiry.status, 400);
@@ -115,11 +125,11 @@ describe("dangote delivery — staff quote desk", () => {
     const expiry = new Date();
     expiry.setFullYear(expiry.getFullYear() + 1);
     const verified = await request(app)
-      .post(`${STAFF}/${id}/documents/${documentId}/verify`)
+      .post(`${STAFF_LICENSES}/${licenseId}/verify`)
       .set(auth(token))
       .send({ expiryDate: expiry.toISOString().slice(0, 10) });
     assert.equal(verified.status, 200, JSON.stringify(verified.body));
-    assert.equal(verified.body.data.document.status, "VERIFIED");
+    assert.equal(verified.body.data.license.status, "VERIFIED");
 
     // Quote: total = qty × unit price (+ delivery)
     const approved = await request(app)
@@ -143,23 +153,24 @@ describe("dangote delivery — staff quote desk", () => {
       "id", "requestNumber", "product", "productName", "quantity", "quantityUnit",
       "deliveryAddress", "deliveryState", "contactPerson", "contactPhone", "companyName",
       "companyNameNormalized", "status", "unitPrice", "totalAmount", "submittedAt",
-      "approvedAt", "quotedAt", "paidAt", "createdAt", "updatedAt", "documents",
-      "agreement", "events",
+      "approvedAt", "quotedAt", "paidAt", "createdAt", "updatedAt", "licenseId",
+      "license", "agreement", "events",
     ]) {
       assert.ok(f in o, `portal order missing "${f}" — api.ts reads it`);
     }
     assert.match(o.requestNumber, /^DNG-\d{4}-\d{5}$/);
     assert.ok(o.unitPrice != null && o.totalAmount != null, "quote fields populated at APPROVED");
 
-    const pdoc = o.documents[0];
-    assert.ok(pdoc, "a verified document should be present");
+    const lic = o.license;
+    assert.ok(lic, "the linked, verified license should be embedded");
+    assert.equal(lic.status, "VERIFIED");
     for (const f of [
-      "id", "documentType", "fileName", "fileSize", "mimeType", "status",
-      "verifiedAt", "expiryDate", "createdAt",
+      "id", "companyName", "fileName", "fileSize", "mimeType", "status",
+      "expiryDate", "verifiedAt", "createdAt",
     ]) {
-      assert.ok(f in pdoc, `portal document missing "${f}"`);
+      assert.ok(f in lic, `portal license missing "${f}"`);
     }
-    assert.ok(!("storageKey" in pdoc), "storage keys must never reach the client");
+    assert.ok(!("storageKey" in lic), "storage keys must never reach the client");
 
     const ag = o.agreement;
     assert.ok(ag, "a signed agreement should be present");
@@ -200,7 +211,7 @@ describe("dangote delivery — staff quote desk", () => {
   });
 
   test("request-changes loop reaches the customer with the note", async () => {
-    const { id } = await submittedOrder(me);
+    const { id } = await submittedOrder(me, await createLicense(me));
 
     const missingNote = await request(app)
       .post(`${STAFF}/${id}/request-changes`)
@@ -228,7 +239,7 @@ describe("dangote delivery — staff quote desk", () => {
   });
 
   test("reject is terminal and requires a reason", async () => {
-    const { id } = await submittedOrder(me);
+    const { id } = await submittedOrder(me, await createLicense(me));
 
     const missing = await request(app).post(`${STAFF}/${id}/reject`).set(auth(token)).send({});
     assert.equal(missing.status, 400);
