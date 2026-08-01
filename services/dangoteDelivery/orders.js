@@ -5,14 +5,6 @@ const { TERMS_VERSION } = require("./terms");
 // handlers stay thin; everything that must be true regardless of endpoint
 // lives here.
 
-// Same map as the frontend's PRODUCT_META — the unit is derived from the
-// product code at the API boundary, never taken from the client.
-const PRODUCT_UNITS = {
-  PMS: "litre",
-  AGO: "litre",
-  LPG: "kg",
-};
-
 class DangoteOrderError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -32,15 +24,12 @@ const normalizeCompanyName = (name) =>
 
 /** Resolve a wizard product code (PMS/AGO/LPG) to the catalog row. */
 const resolveProduct = async (productRepo, code) => {
-  const unit = PRODUCT_UNITS[code];
-  if (!unit) {
-    throw new DangoteOrderError(`Unknown product: ${code}`);
-  }
   const product = await productRepo.findActiveDangoteByCode(code);
   if (!product) {
     throw new DangoteOrderError(`${code} is not currently available`, 409);
   }
-  return { product, unit };
+  // The unit is the catalog row's own unit — the DB is the source of truth.
+  return { product, unit: product.unit };
 };
 
 const detailColumns = async (productRepo, details) => {
@@ -150,7 +139,6 @@ const reopenForChanges = async (agreementRepo, { order, actor }) => {
 };
 
 module.exports = {
-  PRODUCT_UNITS,
   DangoteOrderError,
   normalizeCompanyName,
   resolveProduct,

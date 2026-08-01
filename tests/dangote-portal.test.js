@@ -11,10 +11,7 @@ const { customerLicenses } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const { customerRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
-const {
-  normalizeCompanyName,
-  PRODUCT_UNITS,
-} = require("../services/dangoteDelivery/orders");
+const { normalizeCompanyName } = require("../services/dangoteDelivery/orders");
 
 const PORTAL_AUTH = "/api/customer/auth";
 const DD = "/api/customer/dangote-delivery-orders";
@@ -56,10 +53,6 @@ describe("dangote delivery — company name normalization parity", () => {
     assert.equal(normalizeCompanyName("Émile-Fuels   NIGERIA"), "émilefuels nigeria");
     // "Ltd" vs "Limited" intentionally do NOT match
     assert.notEqual(normalizeCompanyName("Obi Ltd"), normalizeCompanyName("Obi Limited"));
-  });
-
-  test("unit map mirrors the frontend PRODUCT_META", () => {
-    assert.deepEqual(PRODUCT_UNITS, { PMS: "litre", AGO: "litre", LPG: "kg" });
   });
 });
 
