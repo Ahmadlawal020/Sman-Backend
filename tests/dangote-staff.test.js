@@ -263,6 +263,25 @@ describe("dangote delivery — staff quote desk", () => {
     assert.equal(res.status, 404);
   });
 
+  test("staff endpoints resolve an order by its DNG reference, not only the id", async () => {
+    const { id } = await submittedOrder(me, await createLicense(me));
+
+    // Numeric id works (as before) and gives us the reference.
+    const byId = await request(app).get(`${STAFF}/${id}`).set(auth(token));
+    assert.equal(byId.status, 200, JSON.stringify(byId.body));
+    const ref = byId.body.data.request.requestNumber;
+    assert.match(ref, /^DNG-\d{4}-\d{5}$/);
+
+    // The reference resolves the same order (case-insensitive).
+    const byRef = await request(app).get(`${STAFF}/${ref.toLowerCase()}`).set(auth(token));
+    assert.equal(byRef.status, 200, JSON.stringify(byRef.body));
+    assert.equal(byRef.body.data.request.id, id);
+
+    // An unknown reference is a clean 404, not a 400 cast error.
+    const bogus = await request(app).get(`${STAFF}/DNG-9999-99999`).set(auth(token));
+    assert.equal(bogus.status, 404);
+  });
+
   test("customers cannot reach the staff desk", async () => {
     const res = await request(app).get(STAFF).set(auth(me.token));
     assert.ok([401, 403].includes(res.status), `expected auth failure, got ${res.status}`);

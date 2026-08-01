@@ -47,7 +47,16 @@ const handleDomainErrors = (err, res) => {
 };
 
 const loadOrder = async (req, res) => {
-  const order = await dangoteDeliveryOrderRepo.findById(Number(req.params.id));
+  // Accept either the numeric row id or the customer-facing reference
+  // (DNG-YYYY-NNNNN) — the reference is what staff see and what a customer
+  // quotes, so the desk resolves it the same way the portal does.
+  const param = String(req.params.id || "");
+  let order = null;
+  if (/^\d+$/.test(param)) {
+    order = await dangoteDeliveryOrderRepo.findById(Number(param));
+  } else if (/^DNG-/i.test(param)) {
+    order = await dangoteDeliveryOrderRepo.findByRequestNumber(param.toUpperCase());
+  }
   if (!order) {
     res.status(404).json({ success: false, message: "Order request not found" });
     return null;
