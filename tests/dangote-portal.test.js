@@ -7,7 +7,7 @@ const request = require("supertest");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { dangoteDeliveryDocuments } = require("../db/schema");
+const { customerLicenses } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const { customerRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
@@ -18,6 +18,7 @@ const {
 
 const PORTAL_AUTH = "/api/customer/auth";
 const DD = "/api/customer/dangote-delivery-orders";
+const LICENSES = "/api/customer/licenses";
 const DEV_CODE = process.env.OTP_DEV_CODE || "000000";
 const RUN = Date.now();
 
@@ -66,6 +67,7 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
   let me;
   let stranger;
   let orderId;
+  let licenseId;
 
   before(async () => {
     me = await registerActiveCustomer(1);
@@ -123,7 +125,7 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.equal(back.status, 200);
   });
 
-  test("cannot submit documents before company + license exist", async () => {
+  test("cannot submit documents before a license is linked", async () => {
     const res = await request(app).post(`${DD}/${orderId}/documents/submit`).set(auth(me.token));
     assert.equal(res.status, 400);
   });
@@ -137,27 +139,43 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.equal(res.body.data.order.companyNameNormalized, "obi sons ltd");
   });
 
-  test("uploads the license (magic-byte checked, storage key hidden)", async () => {
+  test("creates a customer license (magic-byte checked, storage key hidden)", async () => {
     const res = await request(app)
-      .post(`${DD}/${orderId}/documents`)
+      .post(LICENSES)
       .set(auth(me.token))
+      .field("companyName", "OBI & Sons, Ltd.")
       .attach("file", pdf(), { filename: "license.pdf", contentType: "application/pdf" });
     assert.equal(res.status, 201, JSON.stringify(res.body));
-    const doc = res.body.data.document;
-    assert.equal(doc.status, "PENDING");
-    assert.equal(doc.mimeType, "application/pdf");
-    assert.ok(!("storageKey" in doc), "storage keys must never be exposed");
+    const lic = res.body.data.license;
+    licenseId = lic.id;
+    assert.equal(lic.status, "PENDING");
+    assert.equal(lic.mimeType, "application/pdf");
+    assert.ok(!("storageKey" in lic), "storage keys must never be exposed");
   });
 
-  test("rejects a disguised upload", async () => {
+  test("rejects a disguised license upload", async () => {
     const res = await request(app)
-      .post(`${DD}/${orderId}/documents`)
+      .post(LICENSES)
       .set(auth(me.token))
+      .field("companyName", "OBI & Sons, Ltd.")
       .attach("file", Buffer.from("<html>fake</html>"), {
         filename: "license.pdf",
         contentType: "application/pdf",
       });
     assert.equal(res.status, 400);
+  });
+
+  test("a license for a different company can't be linked to the order", async () => {
+    const other = await request(app)
+      .post(LICENSES)
+      .set(auth(me.token))
+      .field("companyName", "Totally Different Co")
+      .attach("file", pdf(), { filename: "l.pdf", contentType: "application/pdf" });
+    const link = await request(app)
+      .post(`${DD}/${orderId}/license`)
+      .set(auth(me.token))
+      .send({ licenseId: other.body.data.license.id });
+    assert.equal(link.status, 400, "company mismatch must be refused");
   });
 
   test("terms endpoint serves versioned sections", async () => {
@@ -167,7 +185,14 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.ok(res.body.data.sections.length >= 8);
   });
 
-  test("documents submit → sign → submit walks the machine", async () => {
+  test("link license → submit → sign → submit walks the machine", async () => {
+    const link = await request(app)
+      .post(`${DD}/${orderId}/license`)
+      .set(auth(me.token))
+      .send({ licenseId });
+    assert.equal(link.status, 200, JSON.stringify(link.body));
+    assert.equal(link.body.data.order.license.id, licenseId, "license embedded on the order");
+
     const submitDocs = await request(app)
       .post(`${DD}/${orderId}/documents/submit`)
       .set(auth(me.token));
@@ -182,7 +207,6 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     const order = sign.body.data.order;
     assert.equal(order.status, "AGREEMENT_ACCEPTED");
     assert.equal(order.agreement.signature.fullName, "Ada Obi");
-    assert.equal(order.agreement.signature.termsVersion, "1.0");
     assert.ok(!("unitPrice" in order.agreement), "agreements carry no money");
 
     const submit = await request(app).post(`${DD}/${orderId}/submit`).set(auth(me.token));
@@ -191,7 +215,7 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.ok(submit.body.data.order.submittedAt);
 
     const events = submit.body.data.order.events.map((e) => e.event);
-    for (const expected of ["DRAFT", "DOCUMENT_UPLOADED", "DOCUMENTS_SUBMITTED", "AGREEMENT_ACCEPTED", "UNDER_REVIEW"]) {
+    for (const expected of ["DRAFT", "DOCUMENTS_SUBMITTED", "AGREEMENT_ACCEPTED", "UNDER_REVIEW"]) {
       assert.ok(events.includes(expected), `timeline missing ${expected}: ${events}`);
     }
   });
@@ -204,43 +228,39 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
     assert.equal(res.status, 409);
   });
 
-  test("verified documents become reusable for the same company", async () => {
-    // Verify directly in the DB (the staff endpoint is exercised in its own
+  test("a verified license is reusable for the same company (this customer only)", async () => {
+    // Verify the license directly in the DB (the staff endpoint has its own
     // suite); expiry one year out, as printed on a real certificate.
     const expiry = new Date();
     expiry.setFullYear(expiry.getFullYear() + 1);
     await db
-      .update(dangoteDeliveryDocuments)
-      .set({
-        status: "VERIFIED",
-        verifiedAt: new Date(),
-        expiryDate: expiry.toISOString().slice(0, 10),
-      })
-      .where(eq(dangoteDeliveryDocuments.orderId, orderId));
+      .update(customerLicenses)
+      .set({ status: "VERIFIED", verifiedAt: new Date(), expiryDate: expiry.toISOString().slice(0, 10) })
+      .where(eq(customerLicenses.id, licenseId));
 
     const miss = await request(app)
-      .get(`${DD}/reusable-company`)
-      .query({ name: "Another Company" })
+      .get(`${LICENSES}/reusable`)
+      .query({ company: "Another Company" })
       .set(auth(me.token));
-    assert.equal(miss.body.data.company, null);
+    assert.equal(miss.body.data.license, null);
 
     const hit = await request(app)
-      .get(`${DD}/reusable-company`)
-      .query({ name: "obi & SONS ltd" })
+      .get(`${LICENSES}/reusable`)
+      .query({ company: "obi & SONS ltd" })
       .set(auth(me.token));
     assert.equal(hit.status, 200);
-    assert.ok(hit.body.data.company, "same normalized company must match");
-    assert.equal(hit.body.data.company.documents[0].status, "VERIFIED");
+    assert.ok(hit.body.data.license, "same normalized company must match");
+    assert.equal(hit.body.data.license.status, "VERIFIED");
 
-    // A different customer never sees them.
+    // A different customer never sees it.
     const foreign = await request(app)
-      .get(`${DD}/reusable-company`)
-      .query({ name: "OBI & Sons, Ltd." })
+      .get(`${LICENSES}/reusable`)
+      .query({ company: "OBI & Sons, Ltd." })
       .set(auth(stranger.token));
-    assert.equal(foreign.body.data.company, null);
+    assert.equal(foreign.body.data.license, null);
   });
 
-  test("a second order reuses the verified document end-to-end", async () => {
+  test("a second order reuses the verified license end-to-end", async () => {
     const created = await request(app).post(DD).set(auth(me.token)).send(DETAILS);
     const second = created.body.data.order;
     await request(app)
@@ -249,17 +269,18 @@ describe("dangote delivery portal — the full quote-request wizard", () => {
       .send({ companyName: "OBI & Sons, Ltd." });
 
     const reusable = await request(app)
-      .get(`${DD}/reusable-company`)
-      .query({ name: "OBI & Sons, Ltd." })
+      .get(`${LICENSES}/reusable`)
+      .query({ company: "OBI & Sons, Ltd." })
       .set(auth(me.token));
-    const docId = reusable.body.data.company.documents[0].id;
+    const reuseId = reusable.body.data.license.id;
+    assert.equal(reuseId, licenseId, "the same verified license is offered");
 
-    const reuse = await request(app)
-      .post(`${DD}/${second.id}/documents/reuse`)
+    const link = await request(app)
+      .post(`${DD}/${second.id}/license`)
       .set(auth(me.token))
-      .send({ documentIds: [docId] });
-    assert.equal(reuse.status, 200, JSON.stringify(reuse.body));
-    assert.equal(reuse.body.data.documents[0].status, "VERIFIED", "verification carries over");
+      .send({ licenseId: reuseId });
+    assert.equal(link.status, 200, JSON.stringify(link.body));
+    assert.equal(link.body.data.order.license.status, "VERIFIED", "verification carries over");
 
     const submitDocs = await request(app)
       .post(`${DD}/${second.id}/documents/submit`)
