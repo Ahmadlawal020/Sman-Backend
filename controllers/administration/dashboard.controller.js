@@ -1,12 +1,25 @@
 const asyncHandler = require("express-async-handler");
 const { db } = require("../../config/db");
-const { trucks, drivers, depots, products } = require("../../db/schema");
-const { eq, count, sql } = require("drizzle-orm");
+const { fleetTrucks: trucks, drivers, depots, products } = require("../../db/schema");
+
+/*
+ * The truck registry is fleet_trucks now. It has no operational status column
+ * — the old table's "In Transit" / "Idle" / "Maintenance" does not exist here.
+ * What it does have is `isActive` and a condition rating packed into
+ * `truckStatus` ("Fair — worn tyres"), so the buckets below are derived from
+ * condition rather than invented.
+ */
+const { eq, and, not, count, sql } = require("drizzle-orm");
+
+const NEEDS_ATTENTION = sql`(${trucks.truckStatus} ILIKE 'Fair%' OR ${trucks.truckStatus} ILIKE 'Bad%')`;
 
 const getStats = asyncHandler(async (req, res) => {
+  // Nothing tracks a truck being on the road, so this stays zero rather than
+  // being derived from something that only looks like movement.
+  const inTransitTrucks = 0
+
   const [
     [{ totalTrucks }],
-    [{ inTransitTrucks }],
     [{ idleTrucks }],
     [{ maintenanceTrucks }],
     [{ totalDrivers }],
@@ -17,10 +30,9 @@ const getStats = asyncHandler(async (req, res) => {
     [{ totalProducts }],
     categoryResult,
   ] = await Promise.all([
-    db.select({ totalTrucks: count() }).from(trucks),
-    db.select({ inTransitTrucks: count() }).from(trucks).where(eq(trucks.status, "In Transit")),
-    db.select({ idleTrucks: count() }).from(trucks).where(eq(trucks.status, "Idle")),
-    db.select({ maintenanceTrucks: count() }).from(trucks).where(eq(trucks.status, "Maintenance")),
+    db.select({ totalTrucks: count() }).from(trucks).where(eq(trucks.isActive, true)),
+    db.select({ idleTrucks: count() }).from(trucks).where(and(eq(trucks.isActive, true), not(NEEDS_ATTENTION))),
+    db.select({ maintenanceTrucks: count() }).from(trucks).where(and(eq(trucks.isActive, true), NEEDS_ATTENTION)),
     db.select({ totalDrivers: count() }).from(drivers),
     db.select({ activeDrivers: count() }).from(drivers).where(eq(drivers.status, "Active")),
     db.select({ onTripDrivers: count() }).from(drivers).where(eq(drivers.status, "On Trip")),
@@ -57,6 +69,10 @@ const getStats = asyncHandler(async (req, res) => {
 });
 
 const getOverview = asyncHandler(async (req, res) => {
+  // Nothing tracks a truck being on the road, so this stays zero rather than
+  // being derived from something that only looks like movement.
+  const inTransitTrucks = 0
+
   const [
     stats,
     recentTrucks,
@@ -64,9 +80,9 @@ const getOverview = asyncHandler(async (req, res) => {
     recentDepots,
   ] = await Promise.all([
     db
-      .select({ status: trucks.status, count: count() })
+      .select({ status: trucks.truckStatus, count: count() })
       .from(trucks)
-      .groupBy(trucks.status),
+      .groupBy(trucks.truckStatus),
     db
       .select({
         id: trucks.id,

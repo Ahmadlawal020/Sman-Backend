@@ -1,6 +1,6 @@
 {
-  "id": "f4789dfd-3dbc-47b8-995c-8a040fba1753",
-  "prevId": "9a62de48-dc2d-49f9-99bc-47f8d96d1a53",
+  "id": "7d963b52-54d2-46cb-ae67-093e49c700d4",
+  "prevId": "f4789dfd-3dbc-47b8-995c-8a040fba1753",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7788,6 +7788,129 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.order_pfi_allocations": {
+      "name": "order_pfi_allocations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pfi_id": {
+          "name": "pfi_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "opa_order_idx": {
+          "name": "opa_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "opa_pfi_idx": {
+          "name": "opa_pfi_idx",
+          "columns": [
+            {
+              "expression": "pfi_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_pfi_allocations_order_pfi_idx": {
+          "name": "order_pfi_allocations_order_pfi_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "pfi_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "order_pfi_allocations_order_id_orders_id_fk": {
+          "name": "order_pfi_allocations_order_id_orders_id_fk",
+          "tableFrom": "order_pfi_allocations",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "order_pfi_allocations_pfi_id_pfis_id_fk": {
+          "name": "order_pfi_allocations_pfi_id_pfis_id_fk",
+          "tableFrom": "order_pfi_allocations",
+          "tableTo": "pfis",
+          "columnsFrom": [
+            "pfi_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },

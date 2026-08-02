@@ -2,7 +2,7 @@ const { relations } = require("drizzle-orm");
 const {
   staff,
   customers,
-  trucks,
+  fleetTrucks: trucks,
   drivers,
   depots,
   products,
@@ -60,7 +60,7 @@ const customerLicensesRelations = relations(customerLicenses, ({ one }) => ({
 
 const trucksRelations = relations(trucks, ({ one, many }) => ({
   currentDriver: one(drivers, {
-    fields: [trucks.currentDriverId],
+    fields: [trucks.driverId],
     references: [drivers.id],
     relationName: "truckCurrentDriver",
   }),

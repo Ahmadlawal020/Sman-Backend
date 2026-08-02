@@ -6,7 +6,7 @@ const {
   index,
 } = require("drizzle-orm/pg-core");
 const { drivers } = require("./driver");
-const { trucks } = require("./truck");
+const { fleetTrucks } = require("./fleetTruck");
 
 const driverTruckHistory = pgTable(
   "driver_truck_history",
@@ -17,7 +17,7 @@ const driverTruckHistory = pgTable(
       .references(() => drivers.id, { onDelete: "cascade" }),
     truckId: integer("truck_id")
       .notNull()
-      .references(() => trucks.id, { onDelete: "cascade" }),
+      .references(() => fleetTrucks.id, { onDelete: "cascade" }),
     assignedAt: timestamp("assigned_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

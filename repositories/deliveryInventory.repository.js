@@ -2,7 +2,7 @@ const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
   deliveryInventory,
-  trucks,
+  fleetTrucks: trucks,
   pfis,
   deliveryCustomers,
 } = require("../db/schema");

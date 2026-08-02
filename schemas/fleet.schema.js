@@ -19,6 +19,8 @@ const createFleetTruckSchema = z.object({
   fuelCapacity: z.coerce.number().positive().optional(),
   avgLitresPerTrip: z.coerce.number().positive().optional(),
   mileage: z.coerce.number().int().nonnegative().optional(),
+  // A real driver record. Nullable — a one-off stand-in is just a name.
+  driverId: z.coerce.number().int().positive().nullable().optional(),
   driverName: z.string().max(255).optional(),
   driverPhone: z.string().max(50).optional(),
   driverAltPhone: z.string().max(50).optional(),
@@ -26,6 +28,14 @@ const createFleetTruckSchema = z.object({
   motorBoyPhone: z.string().max(50).optional(),
   spareDriverName: z.string().max(255).optional(),
   spareDriverPhone: z.string().max(50).optional(),
+  // Vehicle identity, absorbed from the old `trucks` table.
+  vin: z.string().max(50).optional(),
+  year: z.coerce.number().int().min(1950).max(2100).nullable().optional(),
+  model: z.string().max(100).optional(),
+  truckType: z.string().max(100).optional(),
+  fuelLevel: z.coerce.number().int().min(0).max(100).nullable().optional(),
+  registrationExpiry: z.string().date().optional(),
+  nextServiceMileage: z.coerce.number().int().nonnegative().nullable().optional(),
   insuranceExpiry: z.string().date().optional(),
   roadWorthinessExpiry: z.string().date().optional(),
   lastServiceDate: z.string().date().optional(),

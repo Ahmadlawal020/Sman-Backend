@@ -4,35 +4,39 @@ const {
   integer,
   timestamp,
   index,
+  uniqueIndex,
 } = require("drizzle-orm/pg-core");
-const { orders } = require("./order");
 const { pfis } = require("./pfi");
+const { orders } = require("./order");
 
 /**
- * Tracks how much of an order's quantity was drawn from each PFI.
+ * Quantity allocated to a PFI outside the pickup-release path — the delivery
+ * side of the business.
  *
- * An order whose entire quantity fits in a single PFI gets one row. When stock
- * is spread across multiple PFIs the greedy fill creates one row per PFI used.
- * On cancel / expire every row is released individually so no stock is leaked.
+ * This table already existed in production before it existed here: it was
+ * created by a migration that was never committed, so nothing in the schema or
+ * the code knew about it. Declaring it closes that gap, and `pfiFinance` counts
+ * it toward the sold figure alongside the movement ledger, which is what the
+ * stock balance is supposed to mean.
  */
 const orderPfiAllocations = pgTable(
   "order_pfi_allocations",
   {
     id: serial("id").primaryKey(),
-    orderId: integer("order_id")
-      .notNull()
-      .references(() => orders.id, { onDelete: "cascade" }),
-    pfiId: integer("pfi_id")
-      .notNull()
-      .references(() => pfis.id, { onDelete: "restrict" }),
+    // Shapes below mirror what production already has — this table is older
+    // than this file, so the live schema is the authority, not the reverse.
+    orderId: integer("order_id").references(() => orders.id, { onDelete: "cascade" }).notNull(),
+    pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "cascade" }).notNull(),
     quantity: integer("quantity").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("opa_order_idx").on(table.orderId),
     index("opa_pfi_idx").on(table.pfiId),
+    // The one addition: one allocation per order per PFI, the same guard the
+    // movement ledger uses so a retry cannot deduct stock twice. Safe to add —
+    // the table is empty.
+    uniqueIndex("order_pfi_allocations_order_pfi_idx").on(table.orderId, table.pfiId),
   ]
 );
 
