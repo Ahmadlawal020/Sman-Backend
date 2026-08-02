@@ -6,8 +6,10 @@ const {
   orderRepo,
   customerRepo,
   depotRepo,
+  productRepo,
   pfiRepo,
   orderTruckRepo,
+  orderPfiAllocationRepo,
   auditLogRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
@@ -169,6 +171,12 @@ async function placeOrder({
     throw httpError(404, "Depot not found");
   }
 
+  const product = await productRepo.findById(productId);
+  if (!product) {
+    throw httpError(404, "Product not found");
+  }
+  const productUnit = product.unit || "Liters";
+
   // Server-side pricing — the client never supplies price/total.
   const priceEntry = await depotRepo.getProductPrice(depotId, productId);
   if (!priceEntry || Number(priceEntry.currentPrice) <= 0) {
@@ -177,23 +185,15 @@ async function placeOrder({
   const serverPrice = Number(priceEntry.currentPrice);
   const totalAmount = serverPrice * Number(quantity);
 
-  const { selectedPfi: pfiDoc, totalAvailableStock } = await findPfiForOrder(
+  const { allocations, totalAvailableStock } = await findPfiForOrder(
     depotId,
     productId,
     quantity
   );
-  if (!pfiDoc) {
-    if (totalAvailableStock < Number(quantity)) {
-      throw httpError(
-        400,
-        `Insufficient stock in depot. Total active PFI stock: ${totalAvailableStock.toLocaleString()} Litres`
-      );
-    }
+  if (allocations.length === 0) {
     throw httpError(
       400,
-      `Insufficient stock in any single active PFI. Maximum available in a single PFI is less than the requested ${Number(
-        quantity
-      ).toLocaleString()} Litres`
+      `Insufficient stock in depot. Total active PFI stock: ${totalAvailableStock.toLocaleString()} ${productUnit}`
     );
   }
 
@@ -240,14 +240,20 @@ async function placeOrder({
   let order;
   try {
     ({ order } = await db.transaction(async (tx) => {
-    const updatedPfi = await pfiRepo.reserveStock(pfiDoc.id, Number(quantity), tx);
-    if (!updatedPfi) {
-      throw httpError(
-        400,
-        "Insufficient stock in the selected PFI (may have been claimed by another order)"
-      );
+    // Reserve stock from each PFI in the allocation list. If any PFI runs
+    // out concurrently the transaction rolls back — no partial reservations.
+    const reservedPfis = [];
+    for (const alloc of allocations) {
+      const updatedPfi = await pfiRepo.reserveStock(alloc.pfi.id, alloc.quantity, tx);
+      if (!updatedPfi) {
+        throw httpError(
+          400,
+          `Insufficient stock in PFI ${alloc.pfi.pfiNumber || alloc.pfi.id} (may have been claimed by another order)`
+        );
+      }
+      await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
+      reservedPfis.push({ pfiId: updatedPfi.id, quantity: alloc.quantity });
     }
-    await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
 
     const created = await orderRepo.create(
       {
@@ -256,7 +262,7 @@ async function placeOrder({
         state,
         depotId,
         productId,
-        pfiId: updatedPfi.id,
+        pfiId: reservedPfis[0].pfiId,
         quantity: Number(quantity),
         price: String(serverPrice),
         totalAmount: String(totalAmount),
@@ -274,6 +280,11 @@ async function placeOrder({
       },
       tx
     );
+
+    // Record per-PFI allocations so cancel/expire can release correctly.
+    if (reservedPfis.length > 0) {
+      await orderPfiAllocationRepo.create(reservedPfis, created.id, tx);
+    }
 
     await auditLogRepo.record(
       {
@@ -426,7 +437,16 @@ async function cancelOrder({
     });
 
     if (order.pfiId) {
-      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+      const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
+      if (allocations.length > 0) {
+        for (const alloc of allocations) {
+          await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
+        }
+        await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
+      } else {
+        // Fallback for orders created before multi-PFI
+        await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+      }
     }
     await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
 
@@ -457,7 +477,16 @@ async function expireOrder(orderId, { tx } = {}) {
     });
 
     if (order.pfiId) {
-      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+      const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
+      if (allocations.length > 0) {
+        for (const alloc of allocations) {
+          await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
+        }
+        await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
+      } else {
+        // Fallback for orders created before multi-PFI
+        await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+      }
     }
     await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
     // Unpaid orders carry no active hold; this is a defensive no-op.

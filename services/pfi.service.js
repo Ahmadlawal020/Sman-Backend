@@ -72,26 +72,40 @@ async function getMultiDepotCapacities(depotIds) {
   return pfiCapacityMap;
 }
 
+/**
+ * Find one or more PFIs that can collectively fulfil an order.
+ *
+ * When a single PFI has enough stock it is returned alone (backward-compatible
+ * behaviour). When stock is spread across multiple PFIs a greedy fill picks
+ * enough PFIs to cover the requested quantity.
+ *
+ * @returns {{ allocations: Array<{pfi: object, quantity: number}>, totalAvailableStock: number }}
+ *   allocations — PFI + quantity pairs to reserve (empty when stock is short)
+ *   totalAvailableStock — sum of all available PFI stock (for error messages)
+ */
 async function findPfiForOrder(depotId, productId, quantity) {
   const activePfis = await pfiRepo.findActiveByDepotAndProduct(depotId, productId);
 
-  let selectedPfi = null;
+  const needed = Number(quantity);
+  let remaining = needed;
+  const allocations = [];
   let totalAvailableStock = 0;
 
   for (const pfi of activePfis) {
+    if (remaining <= 0) break;
     const available = Math.max(
       0,
       (pfi.startingQtyLitres || 0) - (pfi.soldQtyLitres || 0)
     );
-    if (available > 0) {
-      totalAvailableStock += available;
-      if (!selectedPfi && available >= Number(quantity)) {
-        selectedPfi = pfi;
-      }
-    }
+    if (available <= 0) continue;
+    totalAvailableStock += available;
+
+    const take = Math.min(available, remaining);
+    allocations.push({ pfi, quantity: take });
+    remaining -= take;
   }
 
-  return { selectedPfi, totalAvailableStock };
+  return { allocations, totalAvailableStock };
 }
 
 module.exports = {
