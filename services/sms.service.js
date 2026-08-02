@@ -2,12 +2,9 @@ const axios = require("axios");
 const { getCustomerInitials } = require("../utils/helpers");
 const { toSmsRecipient } = require("../utils/phone");
 
-// Termii v3 API Configuratio
-const TERMII_BASE_URL = process.env.TERMII_BASE_URL || "https://v3.api.termii.com";
-const TERMII_API_KEY = process.env.TERMII_API_KEY;
-const SMS_ENABLED = process.env.SMS_ENABLED !== "false";
-const WHATSAPP_DEVICE_ID = process.env.WHATSAPP_DEVICE_ID || "036ccd6b-c655-4c2e-a47b-903898e55732";
-const WHATSAPP_TEMPLATE_ID = process.env.WHATSAPP_TEMPLATE_ID || "ffb23b37-8475-4571-8e3b-7f55e4bc6d54";
+// Termii v3 API. Config is read at call time inside sendSMSTermii — not frozen
+// at module load — so a deploy or a test can override the key, sender, or
+// enabled flag per-send, and a missing key is caught on each attempt.
 
 // Was a second hand-rolled Nigeria-only normaliser that agreed with
 // utils/helpers by coincidence. Termii wants E.164 digits without the `+`,
@@ -20,27 +17,26 @@ const CHANNELS = {
 };
 
 const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
-  if (!SMS_ENABLED) {
+  if (process.env.SMS_ENABLED === "false") {
     console.log("[SMS] SMS sending is disabled");
     return { success: true };
   }
 
-  if (!TERMII_API_KEY) {
+  const apiKey = process.env.TERMII_API_KEY;
+  if (!apiKey) {
     console.error("[SMS] TERMII_API_KEY is not configured");
     return { success: false, message: "SMS API key not configured" };
   }
 
   const response = await axios.post(
-    `${TERMII_BASE_URL}/sms/send`,
+    `${process.env.TERMII_BASE_URL || "https://v3.api.termii.com"}/sms/send`,
     {
       to: formatPhoneForTermii(phone),
-      // Read at call time so a per-request/test env override is honoured, not
-      // frozen at module load.
       from: process.env.TERMII_SENDER_ID || "Soroman",
       sms,
       type: "plain",
       channel,
-      api_key: TERMII_API_KEY,
+      api_key: apiKey,
     },
     { headers: { "Content-Type": "application/json" } }
   );

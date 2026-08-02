@@ -184,7 +184,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
         virtualAccountBank = accountResult.data.bankName;
         virtualAccountName =
           accountResult.data.accountName ||
-          `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+          `SOROMAN/${getCustomerInitials(customer.name)}`;
         const updateData = {
           virtualAccountNumber,
           virtualAccountBank,
@@ -201,7 +201,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
       console.error("DVA creation error:", dvaErr.message);
     }
   } else if (!virtualAccountName && customer) {
-    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    virtualAccountName = `SOROMAN/${getCustomerInitials(customer.name)}`;
     await customerRepo.update(customer.id, { virtualAccountName });
   }
 

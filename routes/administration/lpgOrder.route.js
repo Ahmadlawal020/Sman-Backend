@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const verifyStaff = require("../../middleware/verifyStaff");
 const { authenticateStaff, requireRole } = verifyStaff;
+const validate = require("../../middleware/validate");
+const lpgOrderSchemas = require("../../schemas/lpgOrderRequest.schema");
 const {
   getLpgOrderRequests,
   getLpgOrderRequestById,
@@ -14,22 +16,49 @@ const {
 } = require("../../controllers/administration/lpgOrder.controller");
 
 router.get("/lpg-order-requests/payable", verifyStaff, getPayableLpgOrders);
-router.get("/lpg-order-requests", verifyStaff, getLpgOrderRequests);
-router.get("/lpg-order-requests/:id", verifyStaff, getLpgOrderRequestById);
-router.post("/lpg-order-requests", verifyStaff, createLpgOrderRequest);
+router.get(
+  "/lpg-order-requests",
+  verifyStaff,
+  validate({ query: lpgOrderSchemas.listLpgOrderRequests }),
+  getLpgOrderRequests
+);
+router.get(
+  "/lpg-order-requests/:id",
+  verifyStaff,
+  validate({ params: lpgOrderSchemas.idParam }),
+  getLpgOrderRequestById
+);
+router.post(
+  "/lpg-order-requests",
+  verifyStaff,
+  validate({ body: lpgOrderSchemas.createLpgOrderRequest }),
+  createLpgOrderRequest
+);
 router.put(
   "/lpg-order-requests/:id/review",
   authenticateStaff,
   requireRole("orders", "super_admin", { message: "Order review access required" }),
+  validate({ params: lpgOrderSchemas.idParam, body: lpgOrderSchemas.reviewLpgOrderRequest }),
   reviewLpgOrderRequest
 );
 router.put(
   "/lpg-order-requests/:id/pay",
   authenticateStaff,
   requireRole("finance", "super_admin", { message: "Finance access required to pay" }),
+  validate({ params: lpgOrderSchemas.idParam }),
   payLpgOrder
 );
-router.put("/lpg-order-requests/:id/payment-status", verifyStaff, updateLpgOrderPaymentStatus);
-router.put("/lpg-order-requests/:id/collection-status", verifyStaff, updateLpgOrderCollectionStatus);
+router.put(
+  "/lpg-order-requests/:id/payment-status",
+  verifyStaff,
+  validate({ params: lpgOrderSchemas.idParam, body: lpgOrderSchemas.updateLpgOrderPaymentStatus }),
+  updateLpgOrderPaymentStatus
+);
+router.put(
+  "/lpg-order-requests/:id/collection-status",
+  verifyStaff,
+  validate({ params: lpgOrderSchemas.idParam, body: lpgOrderSchemas.updateLpgOrderCollectionStatus }),
+  updateLpgOrderCollectionStatus
+);
 
 module.exports = router;
