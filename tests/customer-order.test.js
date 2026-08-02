@@ -434,4 +434,63 @@ describe("customer portal — a customer places their own order", () => {
     const res = await request(app).post(`${ORDERS}/1/pay`).send({});
     assert.equal(res.status, 401);
   });
+
+  // ── Self-service cancel: POST /api/customer/orders/:id/cancel ──────────────
+
+  test("a customer cancels their own unpaid order", async () => {
+    const { accessToken } = await registerActiveCustomer("30");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.order.status, "Cancelled");
+    assert.equal((await orderRepo.findById(orderId)).status, "Cancelled");
+  });
+
+  test("a customer cannot cancel a paid order here (409)", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("31");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+    await orderService.payOrder({ orderId, actor: { type: "system" } });
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(orderId)).status, "Paid", "the paid order is untouched");
+  });
+
+  test("a customer cannot cancel another customer's order — 404", async () => {
+    const owner = await registerActiveCustomer("32");
+    const intruder = await registerActiveCustomer("33");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${intruder.accessToken}`)
+      .send({});
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(orderId)).status, "Pending", "the owner's order is untouched");
+  });
+
+  test("cancelling requires authentication", async () => {
+    const res = await request(app).post(`${ORDERS}/1/cancel`).send({});
+    assert.equal(res.status, 401);
+  });
 });

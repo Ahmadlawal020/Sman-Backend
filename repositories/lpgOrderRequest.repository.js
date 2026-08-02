@@ -192,6 +192,47 @@ const findPayableLpgOrders = async () => {
     .orderBy(lpgOrderRequests.createdAt);
 };
 
+/**
+ * Atomically cancel an order request if it is still cancellable, under a row
+ * lock so two concurrent cancels can't both win (and double-restock). Refuses a
+ * paid order or one already in fulfilment.
+ *
+ * @returns one of:
+ *   { status: "not_found" }
+ *   { status: "paid" }
+ *   { status: "in_fulfilment", collectionStatus }
+ *   { status: "closed", current }         // already Cancelled/Rejected/etc.
+ *   { status: "cancelled", request, wasApproved }
+ */
+const cancelIfCancellable = async (id, actorStaffId = null) => {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(lpgOrderRequests)
+      .where(eq(lpgOrderRequests.id, id))
+      .for("update")
+      .limit(1);
+
+    if (!row) return { status: "not_found" };
+    if (row.paymentStatus === "Paid") return { status: "paid" };
+    if (row.collectionStatus && row.collectionStatus !== "Pending") {
+      return { status: "in_fulfilment", collectionStatus: row.collectionStatus };
+    }
+    if (!["Pending Review", "Approved"].includes(row.status)) {
+      return { status: "closed", current: row.status };
+    }
+
+    const wasApproved = row.status === "Approved";
+    const [updated] = await tx
+      .update(lpgOrderRequests)
+      .set({ status: "Cancelled", reviewedBy: actorStaffId, reviewedAt: new Date(), updatedAt: new Date() })
+      .where(eq(lpgOrderRequests.id, id))
+      .returning();
+
+    return { status: "cancelled", request: updated, wasApproved };
+  });
+};
+
 module.exports = {
   findById,
   findByIdFull,
@@ -200,4 +241,5 @@ module.exports = {
   update,
   generateRequestNumber,
   findPayableLpgOrders,
+  cancelIfCancellable,
 };

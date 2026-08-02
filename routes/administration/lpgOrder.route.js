@@ -13,6 +13,7 @@ const {
   updateLpgOrderCollectionStatus,
   getPayableLpgOrders,
   payLpgOrder,
+  cancelLpgOrderRequest,
 } = require("../../controllers/administration/lpgOrder.controller");
 
 router.get("/lpg-order-requests/payable", verifyStaff, getPayableLpgOrders);
@@ -59,6 +60,13 @@ router.put(
   verifyStaff,
   validate({ params: lpgOrderSchemas.idParam, body: lpgOrderSchemas.updateLpgOrderCollectionStatus }),
   updateLpgOrderCollectionStatus
+);
+router.put(
+  "/lpg-order-requests/:id/cancel",
+  authenticateStaff,
+  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  validate({ params: lpgOrderSchemas.idParam }),
+  cancelLpgOrderRequest
 );
 
 module.exports = router;

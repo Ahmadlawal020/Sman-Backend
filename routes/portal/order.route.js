@@ -11,6 +11,7 @@ const {
   getMyOrderByRef,
   simulateMyPayment,
   payMyOrder,
+  cancelMyOrder,
   updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
@@ -84,6 +85,18 @@ router.post(
   requireCsrfForCookieAuth("customer"),
   validate({ params: orderSchemas.idParam }),
   payMyOrder
+);
+
+// Cancel one of the customer's own still-unpaid orders. Releases reserved stock
+// and capacity via the shared cancelOrder service; CSRF-protected like the
+// other state-changing portal actions.
+router.post(
+  "/:id/cancel",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.idParam }),
+  cancelMyOrder
 );
 
 module.exports = router;

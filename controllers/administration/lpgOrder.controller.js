@@ -373,6 +373,51 @@ const payLpgOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Cancel an order request and, if it had been approved, return its reserved
+ * cylinders to the station's stock — closing the leak where an approved-then-
+ * abandoned order kept inventory decremented forever. Refuses a paid order
+ * (reverse the payment first) or one already in fulfilment.
+ */
+const cancelLpgOrderRequest = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const result = await lpgOrderRequestRepo.cancelIfCancellable(id, req.user.id);
+
+  switch (result.status) {
+    case "not_found":
+      return res.status(404).json({ success: false, message: "Order request not found" });
+    case "paid":
+      return res.status(409).json({
+        success: false,
+        message: "Cannot cancel a paid order — reverse the payment first",
+      });
+    case "in_fulfilment":
+      return res.status(409).json({
+        success: false,
+        message: `Cannot cancel an order already ${result.collectionStatus}`,
+      });
+    case "closed":
+      return res.status(409).json({ success: false, message: `Order is already ${result.current}` });
+  }
+
+  if (result.wasApproved) {
+    await lpgStationRepo.incrementCylinderQuantity(
+      result.request.lpgStationId,
+      result.request.cylinderSizeKg,
+      result.request.cylinderQuantity
+    );
+  }
+
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(id);
+  res.json({
+    success: true,
+    message: result.wasApproved
+      ? "Order request cancelled; reserved cylinders returned to stock"
+      : "Order request cancelled",
+    data: { request: fullRequest },
+  });
+});
+
 module.exports = {
   getLpgOrderRequests,
   getLpgOrderRequestById,
@@ -382,4 +427,5 @@ module.exports = {
   updateLpgOrderCollectionStatus,
   getPayableLpgOrders,
   payLpgOrder,
+  cancelLpgOrderRequest,
 };
