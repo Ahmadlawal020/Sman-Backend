@@ -493,4 +493,42 @@ describe("customer portal — a customer places their own order", () => {
     const res = await request(app).post(`${ORDERS}/1/cancel`).send({});
     assert.equal(res.status, 401);
   });
+
+  // ── Pay an older order by reference: POST /orders/by-ref/:ref/pay ──────────
+
+  test("a customer pays an older order from wallet by its reference", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("34");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const ref = placed.body.data.order.orderNumber;
+
+    const paid = await request(app)
+      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(paid.status, 200, JSON.stringify(paid.body));
+    assert.equal(paid.body.data.order.paymentStatus, "Paid");
+    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+  });
+
+  test("a customer cannot pay another customer's order by reference — 404", async () => {
+    const owner = await registerActiveCustomer("35");
+    const intruder = await registerActiveCustomer("36");
+    await customerRepo.creditBalance(intruder.customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send(body());
+    const ref = placed.body.data.order.orderNumber;
+
+    const res = await request(app)
+      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .set("Authorization", `Bearer ${intruder.accessToken}`)
+      .send({});
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(placed.body.data.order.id)).paymentStatus, "Unpaid");
+  });
 });

@@ -221,6 +221,31 @@ const payMyOrder = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/customer/orders/by-ref/:ref/pay — pay an unpaid order from wallet
+ * balance keyed by its order NUMBER (the reference the apps hold on the history
+ * and detail screens), so a customer can settle an older order, not only the
+ * one they just placed. Ownership-scoped identically to the by-id pay.
+ */
+const payMyOrderByRef = asyncHandler(async (req, res) => {
+  const found = await orderRepo.findByNumber(req.params.ref);
+  if (!found || found.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  const order = await payOrder({
+    orderId: found.id,
+    customerId: req.customer.id,
+    actor: { type: "customer", customerId: req.customer.id },
+  });
+
+  res.json({
+    success: true,
+    message: `Order ${order.orderNumber} paid from your wallet balance.`,
+    data: { order: await withOwnerDetail(order) },
+  });
+});
+
+/**
  * POST /api/customer/orders/:id/cancel — the customer cancels their OWN order
  * while it is still Pending/unpaid. Reuses the shared cancelOrder service, which
  * releases the reserved stock and depot capacity. A Paid or further-along order
@@ -286,6 +311,7 @@ module.exports = {
   getMyOrderByRef,
   simulateMyPayment,
   payMyOrder,
+  payMyOrderByRef,
   cancelMyOrder,
   updateMyOrderTrucks,
 };
