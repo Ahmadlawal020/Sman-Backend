@@ -2,7 +2,7 @@ const axios = require("axios");
 const { getCustomerInitials } = require("../utils/helpers");
 const { toSmsRecipient } = require("../utils/phone");
 
-// Termii v3 API Configuration
+// Termii v3 API Configuratio
 const TERMII_BASE_URL = process.env.TERMII_BASE_URL || "https://v3.api.termii.com";
 const TERMII_API_KEY = process.env.TERMII_API_KEY;
 const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || "Soroman";
