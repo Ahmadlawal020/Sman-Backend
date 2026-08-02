@@ -38,8 +38,12 @@ const listLpgOrderRequests = pagination.extend({
 
 const idParam = z.object({ id: id("LPG order request id") });
 
+// The customer portal forces customerId from the token, so the body omits it.
+const createMyLpgOrderRequest = createLpgOrderRequest.omit({ customerId: true });
+
 module.exports = {
   createLpgOrderRequest,
+  createMyLpgOrderRequest,
   reviewLpgOrderRequest,
   updateLpgOrderPaymentStatus,
   updateLpgOrderCollectionStatus,

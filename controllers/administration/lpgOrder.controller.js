@@ -388,18 +388,16 @@ const cancelLpgOrderRequest = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
 
   // The state machine locks the row, refuses an illegal move (already
-  // Cancelled/Rejected → 409) or a paid/in-fulfilment order (guard), writes the
-  // Cancelled status + an audit row atomically, and reports the prior status.
+  // Cancelled/Rejected → 409) or an order already in fulfilment (guard), writes
+  // the Cancelled status + an audit row atomically, and reports the prior state.
+  // A paid order is allowed — it is reversed below rather than blocked.
   const { order, prevState } = await lpgOrderStatus.transition(id, "Cancelled", {
     actor: { type: "staff", staffId: req.user.id },
     set: { reviewedBy: req.user.id, reviewedAt: new Date() },
     action: "lpg_order.cancelled",
     guard: (o) => {
-      if (o.paymentStatus === "Paid") {
-        return { status: 409, message: "Cannot cancel a paid order — reverse the payment first" };
-      }
       if (o.collectionStatus && o.collectionStatus !== "Pending") {
-        return { status: 409, message: `Cannot cancel an order already ${o.collectionStatus}` };
+        return { status: 409, message: `Cannot cancel an order already ${o.collectionStatus} — the gas has left` };
       }
       return null;
     },
@@ -414,15 +412,27 @@ const cancelLpgOrderRequest = asyncHandler(async (req, res) => {
     );
   }
 
+  // A paid order is refunded to the customer's wallet (idempotent by reference),
+  // and its payment marked Refunded.
+  let refunded = false;
+  const total = Number(order.totalAmount);
+  if (order.paymentStatus === "Paid" && total > 0) {
+    await walletService.credit({
+      customerId: order.customerId,
+      amount: total,
+      description: `Refund for cancelled LPG Order ${order.requestNumber}`,
+      reference: `LPG-REFUND-${order.id}`,
+    });
+    await lpgOrderRequestRepo.update(id, { paymentStatus: "Refunded" });
+    refunded = true;
+  }
+
+  const parts = ["Order request cancelled"];
+  if (prevState === "Approved") parts.push("reserved cylinders returned to stock");
+  if (refunded) parts.push(`₦${total.toLocaleString()} refunded to wallet`);
+
   const fullRequest = await lpgOrderRequestRepo.findByIdFull(id);
-  res.json({
-    success: true,
-    message:
-      prevState === "Approved"
-        ? "Order request cancelled; reserved cylinders returned to stock"
-        : "Order request cancelled",
-    data: { request: fullRequest },
-  });
+  res.json({ success: true, message: parts.join("; "), data: { request: fullRequest } });
 });
 
 module.exports = {

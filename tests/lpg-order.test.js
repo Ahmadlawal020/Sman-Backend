@@ -126,25 +126,39 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
     );
   });
 
-  test("a paid order cannot be cancelled", async () => {
+  test("cancelling a paid order refunds the wallet and restocks", async () => {
+    await customerRepo.creditBalance(customerId, 100000);
+    const balBefore = Number((await customerRepo.findById(customerId)).balance);
+    const stockBefore = (await lpgStationRepo.getCylinderStock(stationId, SIZE_KG)).quantity;
+
     const id = await placeAndApprove(3);
     const paid = await request(app)
-      .put(`${LPG}/${id}/payment-status`)
+      .put(`${LPG}/${id}/pay`)
       .set("Authorization", `Bearer ${staff.accessToken}`)
-      .send({ paymentStatus: "Paid" });
+      .send({});
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
+    assert.ok(
+      Number((await customerRepo.findById(customerId)).balance) < balBefore,
+      "the wallet was debited on payment"
+    );
 
-    const stockBefore = (await lpgStationRepo.getCylinderStock(stationId, SIZE_KG)).quantity;
     const res = await request(app)
       .put(`${LPG}/${id}/cancel`)
       .set("Authorization", `Bearer ${staff.accessToken}`)
       .send({});
-    assert.equal(res.status, 409, JSON.stringify(res.body));
-    assert.match(res.body.message, /paid/i);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.request.paymentStatus, "Refunded");
+    assert.match(res.body.message, /refunded/i);
+
+    assert.equal(
+      Number((await customerRepo.findById(customerId)).balance),
+      balBefore,
+      "the wallet is refunded to its starting balance"
+    );
     assert.equal(
       (await lpgStationRepo.getCylinderStock(stationId, SIZE_KG)).quantity,
       stockBefore,
-      "a refused cancel restocks nothing"
+      "cylinders were restocked"
     );
   });
 
