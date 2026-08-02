@@ -3,6 +3,7 @@ const {
   dangoteProductRepo,
   dangoteOrderRequestRepo,
   customerRepo,
+  customerLicenseRepo,
 } = require("../../repositories");
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
 
@@ -45,6 +46,15 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
     companyName,
     licenseId,
   } = req.body;
+
+  // A license can only be attached from the customer's OWN register — a
+  // foreign id is indistinguishable from a typo, so both get the same 400.
+  if (licenseId) {
+    const license = await customerLicenseRepo.findById(Number(licenseId));
+    if (!license || license.customerId !== req.customer.id) {
+      return res.status(400).json({ success: false, message: "License not found" });
+    }
+  }
 
   const requestNumber = await dangoteOrderRequestRepo.generateRequestNumber();
   const request = await dangoteOrderRequestRepo.create({

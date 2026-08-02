@@ -98,6 +98,8 @@ app.use("/api/customer/lpg-orders", require("./routes/portal/lpgOrder.route"));
 app.use("/api/dangote-catalog", require("./routes/portal/dangoteCatalog.route"));
 // Customer-facing Dangote bulk quote requests (create/list/view own).
 app.use("/api/customer/dangote-orders", require("./routes/portal/dangoteOrder.route"));
+// Customer-facing license register (list/add own, upload signature).
+app.use("/api/customer/licenses", require("./routes/portal/license.route"));
 // Public: sanitised order tracking by reference — movement only, no price or
 // buyer identity. The order number is the shared secret.
 app.use("/api/tracking", require("./routes/portal/tracking.route"));
