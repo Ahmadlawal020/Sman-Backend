@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Native Customer App — Web Parity Plan</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --ink: #1c1917;
+    --muted: #57534e;
+    --faint: #a8a29e;
+    --line: #e7e5e4;
+    --accent: #0d7a5f;
+    --accent-soft: #e6f4f0;
+    --amber: #b45309;
+    --amber-soft: #fef3e2;
+    --blue: #1d4ed8;
+    --blue-soft: #e8effd;
+    --red: #b91c1c;
+    --red-soft: #fdecec;
+    --code-bg: #f1f0ef;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131211;
+      --surface: #1c1a19;
+      --ink: #e9e7e4;
+      --muted: #b3aea8;
+      --faint: #6f6a64;
+      --line: #2e2b28;
+      --accent: #34c39a;
+      --accent-soft: #12302a;
+      --amber: #f0a04b;
+      --amber-soft: #33250f;
+      --blue: #7ba4f5;
+      --blue-soft: #16213a;
+      --red: #f08080;
+      --red-soft: #351515;
+      --code-bg: #262321;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+    font-size: 15.5px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 48px 28px 96px; }
+
+  header.hero { margin-bottom: 40px; }
+  .kicker { text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 14px; }
+  .lede { font-size: 17px; color: var(--muted); max-width: 64ch; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .badge {
+    font-size: 12.5px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); border: 1px solid transparent;
+  }
+  .badge.neutral { background: var(--code-bg); color: var(--muted); }
+
+  nav.toc {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 24px; margin-bottom: 44px;
+  }
+  nav.toc .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); margin-bottom: 10px; }
+  nav.toc ol { list-style: none; columns: 2; column-gap: 32px; }
+  nav.toc li { margin: 4px 0; break-inside: avoid; }
+  nav.toc a { color: var(--ink); text-decoration: none; font-size: 14.5px; }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc .num { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 8px; font-size: 13px; }
+
+  section { margin-bottom: 52px; }
+  h2 {
+    font-size: 23px; letter-spacing: -0.01em; margin-bottom: 6px;
+    padding-top: 18px; border-top: 2px solid var(--line);
+  }
+  .phase-sub { color: var(--muted); font-size: 15px; margin-bottom: 18px; }
+  h3 { font-size: 16.5px; margin: 26px 0 10px; }
+  h4 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 22px 0 8px; }
+  p { margin-bottom: 12px; }
+  p.note { color: var(--muted); }
+  ul, ol { margin: 0 0 14px 22px; }
+  li { margin-bottom: 6px; }
+  strong { font-weight: 650; }
+  a { color: var(--blue); }
+
+  code {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em; background: var(--code-bg); padding: 1.5px 5px; border-radius: 5px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; overflow-x: auto; margin-bottom: 14px; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; font-size: 13px; }
+
+  .tablewrap { overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--faint); font-weight: 700; padding: 10px 14px; border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { white-space: nowrap; }
+
+  .pill { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.have { background: var(--accent-soft); color: var(--accent); }
+  .pill.add { background: var(--blue-soft); color: var(--blue); }
+
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--surface); border-radius: 0 var(--radius) var(--radius) 0;
+    border-top: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 14px 18px; margin: 16px 0;
+  }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout .label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
+  .callout .label.ok { color: var(--accent); }
+  .callout.warn .label { color: var(--amber); }
+  .callout.danger .label { color: var(--red); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .exit {
+    display: flex; gap: 10px; align-items: baseline; background: var(--accent-soft);
+    border-radius: var(--radius); padding: 12px 16px; margin-top: 18px; font-size: 14.5px;
+  }
+  .exit .tick { color: var(--accent); font-weight: 800; }
+  .exit strong { color: var(--accent); }
+
+  .seq { list-style: none; margin-left: 0; counter-reset: seq; }
+  .seq li {
+    counter-increment: seq; position: relative; padding: 10px 14px 10px 52px; margin-bottom: 8px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  .seq li::before {
+    content: counter(seq); position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center;
+  }
+  .seq .ship { color: var(--amber); font-weight: 650; font-size: 13px; }
+
+  footer { color: var(--faint); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+  @media (max-width: 640px) {
+    nav.toc ol { columns: 1; }
+    h1 { font-size: 27px; }
+    .wrap { padding: 32px 18px 72px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">Soroman · apps/native</div>
+  <h1>Native Customer App — Web Parity Plan</h1>
+  <p class="lede">Bring <code>apps/native</code> to full feature parity with the customer web portal (<code>apps/web</code>), using Expo Router for navigation and <code>@expo/ui</code> — real SwiftUI on iOS, Jetpack Compose on Android.</p>
+  <div class="badges">
+    <span class="badge">Expo SDK 57</span>
+    <span class="badge">React Native 0.86</span>
+    <span class="badge">React 19.2</span>
+    <span class="badge neutral">@expo/ui</span>
+    <span class="badge neutral">Expo Router</span>
+    <span class="badge neutral">TanStack Query</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><span class="num">—</span><a href="#state">Where things stand</a></li>
+    <li><span class="num">—</span><a href="#rules">Guiding rules</a></li>
+    <li><span class="num">—</span><a href="#libs">Libraries by phase</a></li>
+    <li><span class="num">0</span><a href="#p0">Foundation</a></li>
+    <li><span class="num">1</span><a href="#p1">Auth parity</a></li>
+    <li><span class="num">2</span><a href="#p2">Order wizard</a></li>
+    <li><span class="num">3</span><a href="#p3">Dashboard &amp; account</a></li>
+    <li><span class="num">4</span><a href="#p4">Dangote Delivery</a></li>
+    <li><span class="num">5</span><a href="#p5">Cooking gas (LPG)</a></li>
+    <li><span class="num">6</span><a href="#p6">Native extras + release</a></li>
+    <li><span class="num">—</span><a href="#decisions">Cross-cutting decisions</a></li>
+    <li><span class="num">—</span><a href="#seq">Sequencing &amp; open questions</a></li>
+  </ol>
+</nav>
+
+<section id="state">
+  <h2>Where things stand today</h2>
+  <ul>
+    <li><code>apps/native</code> already exists on the latest SDK with <code>expo-router ~57</code>, <code>@expo/ui ~57.0.1</code>, <code>@tanstack/react-query</code>, <code>expo-secure-store</code>, <code>react-native-worklets</code>, and Reanimated 4 installed.</li>
+    <li>Built so far: onboarding, <code>(auth)</code> login / register / forgot-password screens, <code>(app)/(tabs)/(index,orders,account)</code> shared tab group, a 4-step order wizard (<code>components/order/*</code>), and <code>lib/session.tsx</code>.</li>
+    <li><strong>Almost none of it talks to the real backend</strong> — <code>lib/mock-catalog.ts</code> feeds the wizard, and the tabs render mock data.</li>
+    <li>The backend customer API (<code>/api/customer/*</code>, <code>/api/catalog</code>, <code>/api/tracking/:ref</code>) is complete and already supports native token transport (<code>X-Auth-Transport: body</code>).</li>
+  </ul>
+  <div class="callout">
+    <div class="label ok">Takeaway</div>
+    <p>This is a “wire it to the real backend and grow it to parity” plan, not a “build an app” plan.</p>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>Guiding rules</h2>
+  <p class="phase-sub">Distilled from the Expo skills (project structure, Router, @expo/ui, native UI, data fetching).</p>
+  <ul>
+    <li>Keep the existing <code>app/</code> layout convention (routes only in <code>app/</code>, screen bodies and components in sibling folders); do not restructure to <code>src/</code>.</li>
+    <li><code>@expo/ui</code> universal components first (<code>Host</code>, <code>Column</code>, <code>Row</code>, <code>List</code>, <code>FieldGroup</code>, <code>Picker</code>, <code>Switch</code>, <code>BottomSheet</code>, <code>TextInput</code> + <code>useNativeState</code>); drop to <code>@expo/ui/swift-ui</code> / <code>jetpack-compose</code> only when universal lacks something, isolated in <code>.ios.tsx</code>/<code>.android.tsx</code> files.</li>
+    <li><code>NativeTabs</code> from <code>expo-router/unstable-native-tabs</code>; native <code>Stack</code> with large titles; modals via <code>presentation: "modal"</code>; pickers and confirmations via <code>presentation: "formSheet"</code> (transparent content style → liquid glass on iOS 26).</li>
+    <li>Semantic colors via <code>Color</code> from <code>expo-router</code>, centralized in <code>theme/colors.ts</code> (<code>Color.ios.*</code> / <code>Color.android.dynamic.*</code> + web hex fallback).</li>
+    <li>SF Symbols via <code>expo-image</code> (<code>source="sf:name"</code>); <code>expo-haptics</code> on meaningful state changes; every stack route starts with <code>&lt;ScrollView contentInsetAdjustmentBehavior="automatic"&gt;</code>.</li>
+    <li>Networking with <code>expo/fetch</code> + TanStack Query (no axios); tokens in <code>expo-secure-store</code>; <code>EXPO_PUBLIC_SERVER_URL</code> via <code>packages/env/src/native.ts</code>.</li>
+    <li>Develop in Expo Go / the existing dev client; no new native modules are required for parity.</li>
+  </ul>
+</section>
+
+<section id="libs">
+  <h2>Libraries by phase</h2>
+  <p class="phase-sub"><span class="pill have">installed</span> already in <code>apps/native/package.json</code> · <span class="pill add">add</span> install with <code>bunx expo install …</code> so versions match SDK 57</p>
+
+  <h3>Used everywhere (Phases 0–6)</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo</code> (SDK 57)</td><td>Framework runtime</td><td><a href="https://docs.expo.dev/versions/latest/">docs.expo.dev</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-router</code></td><td>File-based navigation, <code>NativeTabs</code>, <code>Stack</code>, semantic <code>Color</code></td><td><a href="https://docs.expo.dev/router/introduction/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>@expo/ui</code></td><td>Native UI — SwiftUI / Jetpack Compose: <code>Host</code>, <code>List</code>, <code>FieldGroup</code>, <code>Picker</code>, <code>Switch</code>, <code>BottomSheet</code>, <code>TextInput</code></td><td><a href="https://docs.expo.dev/versions/latest/sdk/ui/universal/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>@tanstack/react-query</code></td><td>Server state: queries, mutations, polling, infinite lists</td><td><a href="https://tanstack.com/query/latest">tanstack.com</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>zod</code></td><td>Schema validation (shared contract with web)</td><td><a href="https://zod.dev">zod.dev</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>react-native-reanimated</code> + <code>react-native-worklets</code></td><td>Animations; worklets power <code>@expo/ui</code> <code>useNativeState</code> inputs</td><td><a href="https://docs.swmansion.com/react-native-reanimated/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>react-native-screens</code>, <code>safe-area-context</code>, <code>gesture-handler</code></td><td>Native navigation primitives</td><td><a href="https://docs.expo.dev/versions/latest/sdk/screens/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-image</code></td><td>Images + SF Symbols (<code>source="sf:…"</code>)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/image/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-haptics</code></td><td>Haptic feedback on payments / stage changes</td><td><a href="https://docs.expo.dev/versions/latest/sdk/haptics/">docs</a></td></tr>
+  </table></div>
+
+  <h3>Phase 0 — Foundation</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo/fetch</code> (built into <code>expo</code>)</td><td>WinterCG-compliant HTTP client — no axios</td><td><a href="https://docs.expo.dev/versions/latest/sdk/expo/#expofetch-api">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-secure-store</code></td><td>Refresh token + device token (Keychain / Keystore)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/securestore/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-network</code></td><td>Offline detection for friendly error states</td><td><a href="https://docs.expo.dev/versions/latest/sdk/network/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-sqlite</code> (<code>expo-sqlite/kv-store</code>)</td><td>AsyncStorage-compatible KV store for drafts, preferences, resume pointers</td><td><a href="https://docs.expo.dev/versions/latest/sdk/sqlite/#key-value-storage">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>@sorooman-customer/env</code> (<code>@t3-oss/env-core</code>)</td><td>Typed <code>EXPO_PUBLIC_*</code> env</td><td><a href="https://env.t3.gg">env.t3.gg</a></td></tr>
+  </table></div>
+
+  <h3>Phase 1 — Auth</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>libphonenumber-js</code></td><td>Phone parsing / formatting (same as web <code>lib/phone.ts</code>)</td><td><a href="https://www.npmjs.com/package/libphonenumber-js">npm</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-local-authentication</code></td><td>Optional Face ID / fingerprint gate on PIN login</td><td><a href="https://docs.expo.dev/versions/latest/sdk/local-authentication/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-crypto</code></td><td>Random device-name / nonce generation</td><td><a href="https://docs.expo.dev/versions/latest/sdk/crypto/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td>RN core <code>TextInput</code> <code>textContentType="oneTimeCode"</code></td><td>iOS SMS OTP autofill (no lib needed)</td><td><a href="https://reactnative.dev/docs/textinput#textcontenttype-ios">docs</a></td></tr>
+  </table></div>
+
+  <h3>Phase 2 — Order wizard</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>@tanstack/react-form</code></td><td>Wizard form state + Zod adapter (monorepo standard)</td><td><a href="https://tanstack.com/form/latest">tanstack.com</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-sqlite/kv-store</code></td><td>Order draft persistence (from Phase 0)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/sqlite/#key-value-storage">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-linking</code></td><td><code>?depot=</code> deep links into the wizard</td><td><a href="https://docs.expo.dev/versions/latest/sdk/linking/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td>RN core <code>AppState</code></td><td>Pause / resume the 8 s payment poll in background</td><td><a href="https://reactnative.dev/docs/appstate">docs</a></td></tr>
+  </table></div>
+
+  <h3>Phase 3 — Dashboard, orders, tracking, account</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>@shopify/flash-list</code></td><td>Order history list (perf; <code>@expo/ui</code> <code>List</code> is JS-thread-bound)</td><td><a href="https://shopify.github.io/flash-list/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-clipboard</code></td><td>Copy-row for account numbers / references</td><td><a href="https://docs.expo.dev/versions/latest/sdk/clipboard/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>react-native-svg</code></td><td>Spend sparkline on Home</td><td><a href="https://docs.expo.dev/versions/latest/sdk/svg/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td>RN core <code>Share</code></td><td>Share public tracking link</td><td><a href="https://reactnative.dev/docs/share">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-linking</code> + app config</td><td>Universal / App Links for <code>https://…/t/REF</code></td><td><a href="https://docs.expo.dev/linking/ios-universal-links/">iOS</a> · <a href="https://docs.expo.dev/linking/android-app-links/">Android</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-web-browser</code></td><td>Open FAQ / contact / terms without leaving the app</td><td><a href="https://docs.expo.dev/versions/latest/sdk/webbrowser/">docs</a></td></tr>
+  </table></div>
+
+  <h3>Phase 4 — Dangote Delivery</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-document-picker</code></td><td>Pick the DPR/NUPRC license PDF</td><td><a href="https://docs.expo.dev/versions/latest/sdk/document-picker/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-image-picker</code></td><td>License as JPG/PNG from camera / library</td><td><a href="https://docs.expo.dev/versions/latest/sdk/imagepicker/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-file-system</code></td><td>Download / cache signed documents &amp; agreements</td><td><a href="https://docs.expo.dev/versions/latest/sdk/filesystem/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-sharing</code></td><td>Open / share downloaded documents</td><td><a href="https://docs.expo.dev/versions/latest/sdk/sharing/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>FormData</code> via <code>expo/fetch</code></td><td>Multipart upload (no extra lib)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/expo/#expofetch-api">docs</a></td></tr>
+  </table></div>
+
+  <h3>Phase 5 — Cooking gas (LPG)</h3>
+  <p class="note">No new libraries — reuses the wizard stack (TanStack Form, kv-store, <code>@expo/ui</code>) behind a swappable API module.</p>
+
+  <h3>Phase 6 — Native extras + release</h3>
+  <div class="tablewrap"><table>
+    <tr><th></th><th>Library</th><th>Purpose</th><th>Link</th></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-notifications</code></td><td>Push registration + display (client)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/notifications/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-server-sdk</code> (backend, Node)</td><td>Send Expo push from the event bus</td><td><a href="https://github.com/expo/expo-server-sdk-node">github</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-quick-actions</code></td><td>Home-screen shortcuts (New order, Track)</td><td><a href="https://github.com/EvanBacon/expo-quick-actions">github</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td><code>expo-apple-authentication</code></td><td>Apple sign-in (App Store requirement if social login ships)</td><td><a href="https://docs.expo.dev/versions/latest/sdk/apple-authentication/">docs</a></td></tr>
+    <tr><td><span class="pill add">add</span></td><td>EAS CLI (<code>eas-cli</code>)</td><td>Build / Submit / Update pipelines</td><td><a href="https://docs.expo.dev/eas/">docs</a></td></tr>
+    <tr><td><span class="pill have">installed</span></td><td><code>expo-splash-screen</code>, <code>expo-status-bar</code>, <code>expo-system-ui</code>, <code>expo-font</code>, <code>@expo/vector-icons</code></td><td>App shell polish</td><td><a href="https://docs.expo.dev/versions/latest/sdk/splash-screen/">docs</a></td></tr>
+  </table></div>
+
+  <div class="callout warn">
+    <div class="label">Deliberately not used</div>
+    <p>axios (<code>expo/fetch</code> instead) · Redux / Zustand (React Query + small stores) · <code>@react-native-async-storage/async-storage</code> (superseded by <code>expo-sqlite/kv-store</code>) · react-native-paper / NativeBase / Tamagui (<code>@expo/ui</code> renders real SwiftUI / Compose instead of imitations).</p>
+  </div>
+</section>
+
+<section id="p0">
+  <h2>Phase 0 — Foundation: real API client, session, theme</h2>
+  <p class="phase-sub">The single prerequisite for everything else.</p>
+
+  <h3>0.1 HTTP client (<code>lib/http.ts</code>)</h3>
+  <p>Port <code>apps/web/src/lib/http.ts</code> semantics to native transport:</p>
+  <ul>
+    <li>Access token: JWT, 15 min, <strong>in-memory only</strong>, sent as <code>Authorization: Bearer</code>.</li>
+    <li>Refresh token: stored in <code>expo-secure-store</code> (never the kv-store), sent in the body with header <code>X-Auth-Transport: body</code> — backend already supports this; no cookies, <strong>no CSRF needed</strong> on native.</li>
+    <li>Single-flight refresh on 401 (serialize exactly like the web <code>refreshInFlight</code> — parallel refreshes look like token theft and revoke all sessions), one retry per request.</li>
+    <li>Device token (trusted-device proof for PIN login and password step-up skip) in SecureStore, mirroring web’s <code>soroman.device</code>.</li>
+    <li>Typed <code>ApiError</code> with status / code; offline detection via <code>expo-network</code>.</li>
+  </ul>
+
+  <h3>0.2 API layer (<code>lib/api/</code>)</h3>
+  <p>The web <code>apps/web/src/lib/api.ts</code> is the contract source of truth (endpoints, <code>ORDER_STATUS</code>, <code>TRUCK_CAPACITY_LITRES</code>, tracking stages, Zod schemas).</p>
+  <ul>
+    <li><strong>Preferred:</strong> extract the transport-agnostic parts (types, Zod schemas, endpoint paths, status maps, formatting helpers) into <code>packages/api</code> consumed by both apps, each injecting its own <code>http</code> implementation.</li>
+    <li>Fallback: copy into <code>apps/native/lib/api/</code> and keep in lockstep manually.</li>
+    <li>Wire the TanStack Query provider in <code>app/_layout.tsx</code> (staleTime 30 s, no retry on 401 — same defaults as web).</li>
+  </ul>
+
+  <h3>0.3 Session store (<code>lib/session.tsx</code> rewrite)</h3>
+  <ul>
+    <li><code>ensureBootstrapped()</code> on app start: attempt refresh from SecureStore, then render <code>(auth)</code> or <code>(app)</code> group accordingly.</li>
+    <li>Logout → <code>POST /api/customer/auth/logout</code> then local clear.</li>
+  </ul>
+
+  <h3>0.4 Theme + design primitives</h3>
+  <ul>
+    <li><code>theme/colors.ts</code> with <code>Color.ios.*</code> / <code>Color.android.dynamic.*</code>; make <code>lib/use-theme.ts</code> delegate to it.</li>
+    <li>Shared primitives in <code>components/ui/</code>: status chip (order / truck / Dangote statuses), amount text (tabular-nums, ₦, selectable), copy-row (tap → copy + haptic + toast), empty / error / loading states, section card.</li>
+    <li>Replace <code>lib/mock-catalog.ts</code> with <code>useCatalog()</code> over public <code>GET /api/catalog</code>.</li>
+  </ul>
+  <div class="exit"><span class="tick">✓</span><span><strong>Exit criteria:</strong> app boots, restores a session from SecureStore, and renders the live catalog.</span></div>
+</section>
+
+<section id="p1">
+  <h2>Phase 1 — Auth parity</h2>
+  <p class="phase-sub">Match the web’s three sign-in methods and phone-first registration exactly (<code>docs/CUSTOMER_AUTH.md</code>).</p>
+  <div class="tablewrap"><table>
+    <tr><th>Flow</th><th>Endpoints</th><th>Native UI</th></tr>
+    <tr><td>Register (details → OTP → optional PIN)</td><td><code>POST /register</code>, <code>/verify-otp</code>, <code>/pin</code></td><td>Form-sheet-style steps; <code>FieldGroup</code> + <code>@expo/ui</code> <code>TextInput</code> with <code>useNativeState</code>; 6-digit OTP boxes with SMS autofill; 60 s resend cooldown; dev-code hint in dev builds</td></tr>
+    <tr><td>Phone OTP login</td><td><code>POST /request-otp</code>, <code>/verify-otp</code></td><td>Same OTP component; “trust this device” <code>Switch</code> → stores device token</td></tr>
+    <tr><td>PIN login (trusted device)</td><td><code>POST /login/pin</code></td><td>Offered first when a device token exists; native number pad; optional Face ID / Touch ID gate via <code>expo-local-authentication</code></td></tr>
+    <tr><td>Email + password (+ step-up)</td><td><code>POST /login/password</code>, <code>/login/password/verify</code></td><td>Handle <code>stepUpRequired: true</code> → OTP sheet</td></tr>
+    <tr><td>Forgot password</td><td>none</td><td>Explainer screen routing to phone OTP (exists; keep)</td></tr>
+  </table></div>
+  <div class="callout warn">
+    <div class="label">Backend coordination item</div>
+    <p>Register verifies Cloudflare Turnstile in production. Turnstile is a web widget — native needs either an exemption for <code>X-Auth-Transport: body</code> clients or app attestation (DeviceCheck / Play Integrity) later. Flag before shipping; nothing to build client-side now.</p>
+  </div>
+  <p class="note">Google / Apple sign-in and passkeys exist server-side but aren’t in the web UI either — out of parity scope (Phase 6 candidates).</p>
+  <div class="exit"><span class="tick">✓</span><span><strong>Exit criteria:</strong> all three login methods + registration work against the real backend; session survives restarts; logout works.</span></div>
+</section>
+
+<section id="p2">
+  <h2>Phase 2 — PMS/AGO order wizard (the money path)</h2>
+  <p class="phase-sub">The wizard skeleton exists (<code>components/order/*</code>); rewire every step to the real API and web business rules.</p>
+  <ol>
+    <li><strong>Order step</strong> — depot + per-product quantity from live catalog. Depot picker as a form sheet (detents <code>[0.5, 1.0]</code>); unit formatting; live line totals.</li>
+    <li><strong>Loading step</strong> — pickup vs delivery segmented control. Pickup: per-truck plate + litres split, enforcing the <strong>60,000 L tanker cap</strong> and exact-sum rule. Delivery: state <code>Picker</code> + address field.</li>
+    <li><strong>Verify step</strong> — phone OTP gate that doubles as account creation; skipped when signed in.</li>
+    <li><strong>Invoice step</strong> — <code>POST /api/customer/orders</code> (one order per cart line, one invoice), virtual-account panel with copy-all, <strong>1-hour price-lock countdown</strong> with re-quote on expiry, payment watcher polling <code>GET /api/customer/orders/:id</code> every 8 s (pause on background via AppState). Success → haptic + native transition to order detail.</li>
+    <li><strong>Draft persistence</strong> — port <code>lib/order-draft.ts</code> to <code>expo-sqlite/kv-store</code>; resume on relaunch; support <code>?depot=</code> deep links from the price board.</li>
+    <li><strong>Product front door</strong> (parity with <code>/order/new</code>): four tiles — PMS, AGO, Dangote Delivery, Cooking gas — each with a live “from ₦X/unit” hint (Dangote tiles from <code>GET /api/catalog/dangote-products</code>, which the web doesn’t use yet — native should).</li>
+  </ol>
+  <p class="note">Dev-only: <code>simulate-payment</code> button gated by env flag, mirroring <code>VITE_ENABLE_DEV_PAYMENT</code>.</p>
+  <div class="exit"><span class="tick">✓</span><span><strong>Exit criteria:</strong> end-to-end real order placed from the app, paid via simulated transfer in dev, status flips without manual refresh.</span></div>
+</section>
+
+<section id="p3">
+  <h2>Phase 3 — Signed-in dashboard: tabs, orders, tracking, account</h2>
+
+  <h3>3.1 Tab structure</h3>
+  <p>Extend the existing shared group to four <code>NativeTabs</code> triggers, each with an SF Symbol / Material icon pair:</p>
+<pre><code>app/(app)/(tabs)/(home,orders,prices,account)/
+  _layout.tsx        — shared Stack (large titles, per-segment title)
+  home.tsx           — overview
+  orders.tsx         — order history
+  prices.tsx         — depot price board
+  account.tsx        — profile + settings
+  orders/[ref].tsx   — order detail (pushable from any tab)
+  dangote/…          — Phase 4 screens</code></pre>
+  <p class="note">A prominent “New order” button lives in the Home hero and as a toolbar button on Orders. Consider <code>Stack.SearchBar</code> on Orders for reference search.</p>
+
+  <h3>3.2 Home (overview — parity with <code>/dashboard</code>)</h3>
+  <ul>
+    <li>Greeting header + New order CTA; adaptive hero card for the most urgent order (unpaid → virtual-account shortcut; in motion → stage).</li>
+    <li>Wallet card with dedicated account (complete-profile → assigning → copyable).</li>
+    <li>Reorder chips; month stats + spend sparkline; prices snapshot; recent orders.</li>
+    <li>Data: <code>GET /api/customer/dashboard</code>; poll 10 s while any order is <code>awaiting_payment</code>; pause when backgrounded.</li>
+  </ul>
+
+  <h3>3.3 Orders list + detail</h3>
+  <ul>
+    <li>List: filter tabs (All / In motion / Completed / Cancelled) as native segmented control; FlashList + <code>useInfiniteQuery</code> (25/page); pull-to-refresh; rows via <code>Link</code> with <code>Link.Preview</code> + context menu (Track live / Reorder / Copy reference).</li>
+    <li>Detail (<code>by-ref/:ref</code>): priced summary, 6-stage timeline, payment panel when unpaid, truck panel with <strong>editable pickup truck declaration</strong> (<code>PATCH …/trucks</code>) in a form sheet while loads are pending, Reorder + Track live, share sheet for the public tracking link.</li>
+  </ul>
+
+  <h3>3.4 Public tracking (parity with <code>/t/$ref</code>)</h3>
+  <ul>
+    <li><code>app/track/[ref].tsx</code> outside the authed group — works signed out.</li>
+    <li>Plain-language headline, 6-stage timeline with timestamps, truck pills, not-found state with re-search.</li>
+    <li><strong>Deep links:</strong> app scheme + Universal / App Links so <code>https://…/t/REF</code> opens this screen; the backend’s <code>GET /app</code> store redirect already exists for the landing page.</li>
+  </ul>
+
+  <h3>3.5 Prices</h3>
+  <p>Reuse the catalog query: depot × product matrix (state filter, best price highlighted, per-row “Order” deep link with <code>?depot=</code>). Render as grouped <code>List</code> sections per state rather than a wide table.</p>
+
+  <h3>3.6 Account tab</h3>
+  <ul>
+    <li><strong>Profile:</strong> read-as-record with inline edit (name / company / email) → <code>PATCH /api/customer/profile</code>.</li>
+    <li><strong>Payments:</strong> permanent Paystack dedicated account panel (3 states, copy-all rows).</li>
+    <li><strong>Preferences:</strong> default depot + loading method — device-local (kv-store) like web’s localStorage; TODO to sync when a server settings endpoint exists.</li>
+    <li><strong>Security:</strong> sign-in methods from <code>GET /auth/identities</code> — phone verified chip, set/change PIN, add email+password, change password.</li>
+    <li><strong>Devices &amp; sessions:</strong> web’s panel is disabled but the endpoints are live; on native this matters more (trusted devices originate here) — build it: grouped <code>List</code> with revoke swipe actions, “Sign out everywhere” destructive button.</li>
+    <li>Sign out; app version footer; FAQ / contact via <code>expo-web-browser</code>.</li>
+  </ul>
+  <div class="exit"><span class="tick">✓</span><span><strong>Exit criteria:</strong> a customer can live entirely in the app: place, pay, track, edit trucks, reorder, manage profile / security.</span></div>
+</section>
+
+<section id="p4">
+  <h2>Phase 4 — Dangote Delivery (wire to the REAL backend)</h2>
+  <div class="callout">
+    <div class="label ok">Key decision</div>
+    <p>The web app runs Dangote on a localStorage mock, but the backend is fully implemented (<code>routes/portal/dangoteDelivery.route.js</code>). <strong>Native skips the mock entirely and becomes the first client on the real API.</strong> Endpoint names differ from the web mock (<code>/agreement</code>, not <code>/generate-agreement</code>) — the backend routes are truth.</p>
+  </div>
+  <ol>
+    <li><strong>Wizard</strong> (3 steps, resumable):
+      <ul>
+        <li>Details — product from <code>GET /api/catalog/dangote-products</code> (PMS/AGO/LPG with DB units), quantity, delivery address + state, contact → <code>POST /api/customer/dangote-delivery-orders</code>, <code>PATCH</code> for edits.</li>
+        <li>Company + documents — company name (reuse via <code>GET …/reusable-company</code>), <strong>DPR/NUPRC license upload</strong>: <code>expo-document-picker</code> (PDF) + <code>expo-image-picker</code> (JPG/PNG), ≤10 MB client-checked, multipart to <code>POST …/:id/documents</code>, reuse via <code>POST …/documents/reuse</code>, then <code>POST …/documents/submit</code>. Terms (<code>GET /terms</code>) + e-signature → <code>POST …/:id/agreement</code>.</li>
+        <li>Review → <code>POST …/:id/submit</code> → submitted panel. Resume pointer in the kv-store.</li>
+      </ul>
+    </li>
+    <li><strong>List + detail</strong>: status timeline (UNDER_REVIEW → APPROVED → PAID → SCHEDULED → DISPATCHED → COMPLETED), documents panel with download, signed agreement view, and one contextual action — <strong>pay the approved quote</strong> (virtual-account transfer + payment watcher) or <strong>reopen after NEEDS_CHANGES</strong>; cancel where allowed.</li>
+    <li>Poll detail modestly while in review / payment states (15–30 s — this is a real API, not the web mock’s 4 s).</li>
+    <li><strong>“My documents”</strong> in Account backed by the customer license register (<code>GET/POST/DELETE /api/customer/licenses</code>) — backend-only today; it’s what makes document reuse work. Small screen, high leverage.</li>
+  </ol>
+  <div class="exit"><span class="tick">✓</span><span><strong>Exit criteria:</strong> full Dangote lifecycle from the app against staging, including a document upload and a quote payment.</span></div>
+</section>
+
+<section id="p5">
+  <h2>Phase 5 — Cooking gas (LPG)</h2>
+  <p class="phase-sub">The backend does not exist (only <code>docs/lpg-home-delivery-plan.md</code>).</p>
+  <ul>
+    <li>Build the 3-step wizard (cylinder sizes + qty → saved address, empties-returned, deposit → review) and list / tracker screens against an <code>api</code> interface with the mock’s documented signatures (<code>/lpg/cylinder-sizes</code>, <code>/lpg/addresses</code>, <code>/lpg/orders</code>, <code>/lpg/orders/:id/cancel</code>) — backed by a device-local mock module; one file swap when the backend lands.</li>
+    <li><strong>Recommended if store release is near:</strong> hide the LPG tile behind a feature flag until the backend exists, rather than shipping a fake flow to real users.</li>
+  </ul>
+  <div class="callout danger">
+    <div class="label">Must not ship</div>
+    <p>The web’s “Advance status (demo)” button is a customer-visible admin control — dev builds only.</p>
+  </div>
+</section>
+
+<section id="p6">
+  <h2>Phase 6 — Native-only value + release engineering</h2>
+  <ol>
+    <li><strong>Push notifications</strong> — the biggest native win, but <strong>greenfield on the backend</strong> (no FCM/APNs/socket/SSE exists; customers get SMS/WhatsApp today). Client: <code>expo-notifications</code> token registration + a <code>POST /api/customer/push-tokens</code> endpoint. Server: subscribe a push consumer to the existing event bus (<code>services/events.js</code>) next to <code>notification.service.js</code> for payment-confirmed, order-stage, and <code>dangote_delivery.status_changed</code> events via <code>expo-server-sdk</code>. Until then, the Phases 2–4 polling is the parity baseline.</li>
+    <li><strong>Polish pass:</strong> entering/exiting Reanimated animations, haptics on payment confirmation and stage advances, <code>Link.Preview</code> + context menus wherever lists link to details, liquid-glass sheets on iOS 26, <code>borderCurve: "continuous"</code> cards.</li>
+    <li>Quick actions (New order, Track), clipboard-aware tracking (offer to track a copied reference), Live Activity for an in-motion order (iOS, later).</li>
+    <li>Server-ready candidates: passkeys, Google / Apple sign-in.</li>
+    <li><strong>Release:</strong> EAS Build profiles (dev client / preview / production) + <code>eas submit</code>; EAS Update for OTA JS fixes; point <code>landing/app-promo.tsx</code> and <code>GET /app</code> env vars at the real store URLs.</li>
+  </ol>
+</section>
+
+<section id="decisions">
+  <h2>Cross-cutting decisions</h2>
+  <p class="phase-sub">Locked unless you object.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Topic</th><th>Decision</th></tr>
+    <tr><td>Forms</td><td>TanStack Form + Zod (monorepo standard; works in RN) with <code>@expo/ui</code> inputs; plain state for tiny forms</td></tr>
+    <tr><td>Shared code</td><td><code>packages/api</code> for contract / types / schemas / formatting; UI stays per-platform (<code>packages/ui</code> is web DOM)</td></tr>
+    <tr><td>Storage</td><td>SecureStore: refresh token, device token · <code>expo-sqlite/kv-store</code>: drafts, preferences, resume pointers</td></tr>
+    <tr><td>Real-time</td><td>Polling with AppState pause / resume (no sockets server-side); push is Phase 6</td></tr>
+    <tr><td>Lists</td><td>FlashList / SectionList for history (<code>@expo/ui</code> <code>List</code> is JS-thread-bound); <code>@expo/ui</code> <code>List</code> / <code>FieldGroup</code> for settings-style grouped forms</td></tr>
+    <tr><td>Files</td><td><code>expo-document-picker</code> + <code>expo-image-picker</code>; multipart via <code>expo/fetch</code> FormData</td></tr>
+    <tr><td>Env</td><td><code>EXPO_PUBLIC_SERVER_URL</code> in <code>packages/env/src/native.ts</code>; dev-payment flag as <code>EXPO_PUBLIC_ENABLE_DEV_PAYMENT</code></td></tr>
+  </table></div>
+</section>
+
+<section id="seq">
+  <h2>Sequencing &amp; open questions</h2>
+  <p class="phase-sub">Each phase is independently shippable to TestFlight / internal track.</p>
+  <ol class="seq">
+    <li><strong>Phase 0 + 1</strong> — foundation + auth (unblocks everything)</li>
+    <li><strong>Phase 2</strong> — order wizard (core business value; app is already useful)</li>
+    <li><strong>Phase 3</strong> — dashboard / tracking / account &nbsp;<span class="ship">← first public store release candidate</span></li>
+    <li><strong>Phase 4</strong> — Dangote on the real API</li>
+    <li><strong>Phase 5 / 6</strong> — LPG (flag-gated) + push + polish</li>
+  </ol>
+
+  <h3>Open questions for the backend <span style="font-weight:400;color:var(--muted)">(none block Phases 0–3)</span></h3>
+  <ul>
+    <li>Turnstile on <code>POST /register</code> for native clients (exempt body-transport, or app attestation?).</li>
+    <li>Push-token endpoint + Expo push consumer (Phase 6).</li>
+    <li>Server-side customer settings endpoint (preferences sync across devices).</li>
+    <li>LPG backend per <code>docs/lpg-home-delivery-plan.md</code> (Phase 5 flips from mock to real).</li>
+  </ul>
+</section>
+
+<footer>
+  Source of truth: <code>docs/native-customer-app-plan.md</code> · Soroman customer platform · generated August 2026
+</footer>
+
+</div>
+</body>
+</html>
