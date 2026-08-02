@@ -1,25 +1,13 @@
 const asyncHandler = require("express-async-handler");
-const { processAllUnpaidOrders } = require("../../services/payment.service");
 
 /**
- * Apply available wallet balances to unpaid orders.
- *
- * Idempotent: it settles only what the balance covers, and each debit is
- * guarded, so running it twice in a row settles nothing the second time.
- * That property is what makes it safe to put behind a cron.
+ * Settlement sweep is disabled — orders must be paid manually via the
+ * Payable Orders page ("Pay Now" button), same as Dangote delivery orders.
  */
 const runSettlement = asyncHandler(async (req, res) => {
-  const startedAt = Date.now();
-  const settled = await processAllUnpaidOrders();
-
-  console.log(
-    `[settlement] manual run by staff ${req.user.id} settled ${settled} order(s) in ${Date.now() - startedAt}ms`
-  );
-
-  res.json({
-    success: true,
-    message: `Settled ${settled} order(s)`,
-    data: { settled, durationMs: Date.now() - startedAt },
+  res.status(410).json({
+    success: false,
+    message: "Settlement sweep is disabled. Orders must be paid manually from the Payable Orders page.",
   });
 });
 

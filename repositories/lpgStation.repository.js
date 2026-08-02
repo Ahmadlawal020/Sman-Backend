@@ -202,6 +202,29 @@ const decrementCylinderQuantity = async (stationId, cylinderSizeKg, amount) => {
   return { success: true, remaining: newQuantity };
 };
 
+/**
+ * Return cylinders to a station's stock — the inverse of the decrement done at
+ * approval. If the row was deleted when it hit zero, recreate it.
+ */
+const incrementCylinderQuantity = async (stationId, cylinderSizeKg, amount) => {
+  const numericStationId = parseInt(stationId, 10) || stationId;
+  const stock = await getCylinderStock(numericStationId, cylinderSizeKg);
+  if (stock) {
+    const newQuantity = stock.quantity + Number(amount);
+    await db
+      .update(lpgStationCylinders)
+      .set({ quantity: newQuantity, updatedAt: new Date() })
+      .where(eq(lpgStationCylinders.id, stock.id));
+    return { success: true, remaining: newQuantity };
+  }
+  await db.insert(lpgStationCylinders).values({
+    lpgStationId: numericStationId,
+    cylinderSizeKg,
+    quantity: Number(amount),
+  });
+  return { success: true, remaining: Number(amount) };
+};
+
 // ─── Price History ──────────────────────────────────────────────────────────
 
 const logPriceChange = async (stationId, pricePerKg) => {
@@ -242,6 +265,7 @@ module.exports = {
   setCylinders,
   getCylinderStock,
   decrementCylinderQuantity,
+  incrementCylinderQuantity,
   logPriceChange,
   getPriceHistory,
 };

@@ -71,6 +71,7 @@ const FULL_ORDER_COLUMNS = {
   completedAt: orders.completedAt,
   cancelledAt: orders.cancelledAt,
   cancellationReason: orders.cancellationReason,
+  expiredAt: orders.expiredAt,
   createdAt: orders.createdAt,
   updatedAt: orders.updatedAt,
   // Customer fields
@@ -209,6 +210,7 @@ const findAll = async ({
         virtualAccountName: orders.virtualAccountName,
         paymentStatus: orders.paymentStatus,
         status: orders.status,
+        expiredAt: orders.expiredAt,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
         customerName: customers.name,

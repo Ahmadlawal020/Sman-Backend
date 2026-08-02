@@ -1,7 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { depositRepo, customerRepo } = require("../../repositories");
 const walletService = require("../../services/wallet.service");
-const { processPaystackPayment, processUnpaidOrdersForCustomer } = require("../../services/payment.service");
+const { processPaystackPayment } = require("../../services/payment.service");
 
 const getDeposits = asyncHandler(async (req, res) => {
   const { customer, page = 1, limit = 50, type = "credit" } = req.query;
@@ -101,9 +101,6 @@ const createDeposit = asyncHandler(async (req, res) => {
   }
 
   const fullDeposit = await depositRepo.findByIdFull(result.deposit.id);
-
-  // Automatically process any unpaid orders for customer using new balance
-  await processUnpaidOrdersForCustomer(customerId);
 
   res.status(201).json({
     success: true,

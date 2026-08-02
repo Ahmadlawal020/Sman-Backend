@@ -20,6 +20,7 @@ module.exports = {
   customerOtpRepo: require("./customerOtp.repository"),
   auditLogRepo: require("./auditLog.repository"),
   orderTruckRepo: require("./orderTruck.repository"),
+  orderPfiAllocationRepo: require("./orderPfiAllocation.repository"),
   customerIdentityRepo: require("./customerIdentity.repository"),
   auditEventRepo: require("./auditEvent.repository"),
   fleetTruckRepo: require("./fleetTruck.repository"),

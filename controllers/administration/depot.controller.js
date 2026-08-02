@@ -15,7 +15,13 @@ const getDepots = asyncHandler(async (req, res) => {
         depotRepo.getProductPrices(depot.id),
         depotRepo.getStaff(depot.id),
       ]);
-      return { ...depot, productCapacities: capacities, productPrices: prices, staff, staffIds: staff };
+      // Override capacities with real-time PFI stock
+      const pfiProducts = await getDepotCapacities(depot.id);
+      const enrichedCapacities = capacities.map((pc) => ({
+        ...pc,
+        capacity: pfiProducts[pc.productId] !== undefined ? pfiProducts[pc.productId] : pc.capacity,
+      }));
+      return { ...depot, productCapacities: enrichedCapacities, productPrices: prices, staff, staffIds: staff };
     })
   );
 

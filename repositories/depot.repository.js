@@ -138,6 +138,7 @@ const getProductCapacities = async (depotId) => {
       productName: products.name,
       productSku: products.sku,
       productCategory: products.category,
+      productUnit: products.unit,
     })
     .from(depotProductCapacities)
     .leftJoin(products, eq(depotProductCapacities.productId, products.id))
@@ -156,6 +157,7 @@ const getProductCapacities = async (depotId) => {
       name: r.productName || "Unknown Product",
       sku: r.productSku || "",
       category: r.productCategory || "",
+      unit: r.productUnit || "Liters",
     },
   }));
 };
@@ -260,6 +262,7 @@ const getProductPrices = async (depotId) => {
       productName: products.name,
       productSku: products.sku,
       productCategory: products.category,
+      productUnit: products.unit,
     })
     .from(depotProductPrices)
     .leftJoin(products, eq(depotProductPrices.productId, products.id))
@@ -278,6 +281,7 @@ const getProductPrices = async (depotId) => {
       name: r.productName || "Unknown Product",
       sku: r.productSku || "",
       category: r.productCategory || "",
+      unit: r.productUnit || "Liters",
     },
   }));
 };
