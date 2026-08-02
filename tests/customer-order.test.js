@@ -8,7 +8,7 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderRepo } = require("../repositories");
+const { customerRepo, orderRepo, ticketRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
@@ -530,5 +530,28 @@ describe("customer portal — a customer places their own order", () => {
       .send({});
     assert.equal(res.status, 404, JSON.stringify(res.body));
     assert.equal((await orderRepo.findById(placed.body.data.order.id)).paymentStatus, "Unpaid");
+  });
+
+  test("post-payment effects are idempotent — re-running creates no duplicate ticket", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("37");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+    await orderService.payOrder({ orderId, actor: { type: "system" } });
+
+    const ticket = await ticketRepo.findByOrder(orderId);
+    assert.ok(ticket, "payment generated a loading ticket");
+
+    // Reconcile again — must heal without duplicating.
+    const result = await orderService.runPostPaymentEffects(orderId);
+    assert.deepEqual(result, { ticket: true, commission: true }, "re-run succeeds");
+    assert.equal(
+      (await ticketRepo.findByOrder(orderId)).id,
+      ticket.id,
+      "the same ticket, not a duplicate"
+    );
   });
 });

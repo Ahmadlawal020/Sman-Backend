@@ -493,6 +493,30 @@ const payOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Re-run the post-payment side effects (ticket, commission, notification) for a
+ * Paid order — heals one whose effects failed after payment. Idempotent, so it's
+ * safe to call repeatedly (and from a cron).
+ */
+const reconcileOrderEffects = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findById(req.params.id);
+  if (!order) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+  if (order.paymentStatus !== "Paid") {
+    return res.status(409).json({
+      success: false,
+      message: `Only a paid order can be reconciled — this one is ${order.paymentStatus}`,
+    });
+  }
+  const result = await orderService.runPostPaymentEffects(order.id);
+  res.json({
+    success: true,
+    message: `Reconciled ${order.orderNumber} (ticket: ${result.ticket}, commission: ${result.commission})`,
+    data: { orderNumber: order.orderNumber, ...result },
+  });
+});
+
 module.exports = {
   getOrders,
   getOrderById,
@@ -504,4 +528,5 @@ module.exports = {
   gateOutTruck,
   getPayableOrders,
   payOrder,
+  reconcileOrderEffects,
 };
