@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const { customerLicenseRepo } = require("../../repositories");
+const { customerLicenseRepo, dangoteOrderRequestRepo } = require("../../repositories");
 const { generateSignature } = require("../../services/upload.service");
 
 /**
@@ -52,4 +52,31 @@ const getUploadSignature = asyncHandler(async (req, res) => {
   res.json({ success: true, data: params });
 });
 
-module.exports = { listMyLicenses, createMyLicense, getUploadSignature };
+/**
+ * DELETE /api/customer/licenses/:id — remove a license from the customer's own
+ * register. Scoped to req.customer, so a foreign id is a 404. Refused with 409
+ * while the license is still attached to a live (non-rejected) Dangote request,
+ * so an approved order never loses the document that backed it.
+ */
+const deleteMyLicense = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  const license = await customerLicenseRepo.findById(id);
+  if (!license || license.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "License not found" });
+  }
+
+  const referencing = await dangoteOrderRequestRepo.countActiveByLicenseId(id);
+  if (referencing > 0) {
+    return res.status(409).json({
+      success: false,
+      message:
+        "This license is attached to a live delivery request and can't be deleted. Contact support if you need to remove it.",
+    });
+  }
+
+  await customerLicenseRepo.deleteById(id);
+  res.json({ success: true, message: "License deleted" });
+});
+
+module.exports = { listMyLicenses, createMyLicense, getUploadSignature, deleteMyLicense };

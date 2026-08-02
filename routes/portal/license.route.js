@@ -8,6 +8,7 @@ const {
   listMyLicenses,
   createMyLicense,
   getUploadSignature,
+  deleteMyLicense,
 } = require("../../controllers/portal/license.controller");
 
 // Every route is the signed-in customer acting on their OWN license register.
@@ -20,6 +21,18 @@ router.post(
   requireCsrfForCookieAuth("customer"),
   validate({ body: licenseSchemas.createMyLicense }),
   createMyLicense
+);
+
+// Remove a license from the register — a state change, so CSRF-protected like
+// the create above. The controller scopes it to the caller and refuses (409)
+// while a live Dangote request still depends on it.
+router.delete(
+  "/:id",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: licenseSchemas.licenseIdParam }),
+  deleteMyLicense
 );
 
 module.exports = router;

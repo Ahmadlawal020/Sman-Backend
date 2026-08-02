@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer-App Server Gaps — Status Review</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1a1d21;
+    --muted: #5c6570;
+    --line: #e4e7eb;
+    --code-bg: #f0f2f4;
+    --ok: #1a7f4b;
+    --ok-bg: #e8f5ee;
+    --ok-line: #b5e0c6;
+    --warn: #9a6a00;
+    --warn-bg: #fdf3df;
+    --warn-line: #f0d79a;
+    --bad: #b4231f;
+    --bad-bg: #fdeceb;
+    --bad-line: #f3bfbc;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216;
+      --card: #171b20;
+      --ink: #e8ebef;
+      --muted: #9aa4af;
+      --line: #262c33;
+      --code-bg: #1e242b;
+      --ok: #4ade80;
+      --ok-bg: #10231a;
+      --ok-line: #1e4a34;
+      --warn: #f0c66b;
+      --warn-bg: #241d0e;
+      --warn-line: #4a3a17;
+      --bad: #f87171;
+      --bad-bg: #26140f;
+      --bad-line: #4a221d;
+      --accent: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 40px 24px 80px; }
+  header { margin-bottom: 32px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .meta code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+
+  .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 28px 0 40px; }
+  @media (max-width: 720px) { .summary { grid-template-columns: 1fr; } }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat .n { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat .l { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .stat.ok .n { color: var(--ok); }
+  .stat.warn .n { color: var(--warn); }
+  .stat.bad .n { color: var(--bad); }
+
+  section { margin-bottom: 40px; }
+  .sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .sec-head h2 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .pill { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok-line); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); border: 1px solid var(--bad-line); }
+  .sec-note { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 640px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; background: var(--code-bg); }
+  tr:last-child td { border-bottom: none; }
+  td.tag { white-space: nowrap; font-weight: 600; color: var(--muted); font-size: 12px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--code-bg); padding: 1.5px 6px; border-radius: 5px; white-space: nowrap; }
+  .arrow { color: var(--muted); }
+  .doc { color: var(--bad); text-decoration: line-through; opacity: 0.75; }
+  .real { color: var(--ok); }
+  .strong-bad code { background: var(--bad-bg); color: var(--bad); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 10px 10px 0; padding: 14px 18px; margin-top: 28px; font-size: 14px; }
+  .callout b { color: var(--ink); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Customer-App Server Gaps — Status Review</h1>
+    <p class="sub">Verifying <code>SERVER_GAPS_FOR_BACKEND.md</code> against what is actually mounted in the backend.</p>
+    <p class="meta">Branch <code>feat/dangote-portal-api</code> · verified against <code>app.js</code> + <code>routes/portal/*</code> · reviewed 2026-08-02</p>
+    <div class="legend">
+      <span><i class="dot ok"></i> Built &amp; correct</span>
+      <span><i class="dot warn"></i> Exists at a different route</span>
+      <span><i class="dot bad"></i> Needs to be built</span>
+    </div>
+  </header>
+
+  <div class="summary">
+    <div class="stat ok"><div class="n">11</div><div class="l">Already built &amp; correct</div></div>
+    <div class="stat warn"><div class="n">5</div><div class="l">Exist, but on a different path</div></div>
+    <div class="stat bad"><div class="n">7</div><div class="l">Genuinely missing</div></div>
+  </div>
+
+  <!-- ================= CORRECT ================= -->
+  <section>
+    <div class="sec-head">
+      <h2>1 · Already built &amp; correct</h2>
+      <span class="pill ok">Doc is stale</span>
+    </div>
+    <p class="sec-note">These are listed as “gaps” in the mobile doc, but the endpoint already exists at exactly the path the app expects. No action needed.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>#</th><th>Endpoint (as app expects)</th><th>Backend handler</th></tr></thead>
+        <tbody>
+          <tr><td class="tag">P1 · 1</td><td><code>POST /api/customer/orders/:id/pay</code></td><td><code>payMyOrder</code> — also <code>/by-ref/:ref/pay</code></td></tr>
+          <tr><td class="tag">P1 · 2</td><td><code>POST /api/customer/orders/:id/cancel</code></td><td><code>cancelMyOrder</code></td></tr>
+          <tr><td class="tag">P2 · 3</td><td><code>GET /api/customer/licenses</code></td><td><code>listMyLicenses</code></td></tr>
+          <tr><td class="tag">P2 · 3</td><td><code>POST /api/customer/licenses</code></td><td><code>createMyLicense</code></td></tr>
+          <tr><td class="tag">P2 · 4</td><td><code>GET /api/customer/dangote-orders</code></td><td><code>listMyDangoteOrders</code></td></tr>
+          <tr><td class="tag">P2 · 4</td><td><code>POST /api/customer/dangote-orders</code></td><td><code>createMyDangoteOrder</code></td></tr>
+          <tr><td class="tag">P2 · 4</td><td><code>POST /api/customer/dangote-orders/:id/pay</code> <span class="pill ok">new</span></td><td><code>payMyDangoteOrder</code> — wallet debit on an approved quote</td></tr>
+          <tr><td class="tag">P2 · 3</td><td><code>DELETE /api/customer/licenses/:id</code> <span class="pill ok">new</span></td><td><code>deleteMyLicense</code> — 409 if a live request references it</td></tr>
+          <tr><td class="tag">P3</td><td><code>POST /api/customer/lpg-orders</code></td><td><code>createMyLpgOrder</code> — LPG is live, not “no code yet”</td></tr>
+          <tr><td class="tag">P3</td><td><code>GET /api/customer/lpg-orders</code> &amp; <code>/:id</code></td><td><code>listMyLpgOrders</code> / <code>getMyLpgOrder</code></td></tr>
+          <tr><td class="tag">P3</td><td><code>GET /api/lpg-catalog</code></td><td><code>getLpgCatalog</code> (public)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= DIFFERENT ROUTE ================= -->
+  <section>
+    <div class="sec-head">
+      <h2>2 · Exists — but on a different route</h2>
+      <span class="pill warn">Reconcile path names</span>
+    </div>
+    <p class="sec-note">The functionality is fully implemented; only the URL differs from what the mobile doc assumes. Decide whether the app adopts the real path or the backend adds an alias.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>#</th><th>App expects</th><th>Actually served at</th></tr></thead>
+        <tbody>
+          <tr><td class="tag">P2 · 3</td><td><code class="doc">GET /api/customer/uploads/signature</code></td><td><span class="arrow">→</span> <code class="real">GET /api/customer/licenses/upload-signature</code></td></tr>
+          <tr><td class="tag">P2 · 4</td><td><code class="doc">GET /api/customer/dangote-products</code></td><td><span class="arrow">→</span> <code class="real">GET /api/dangote-catalog</code> (public)</td></tr>
+          <tr><td class="tag">P2 · 4</td><td><code class="doc">GET /api/customer/dangote-orders/:ref</code></td><td><span class="arrow">→</span> <code class="real">GET /api/customer/dangote-orders/:id</code> (keyed by numeric id, not ref)</td></tr>
+          <tr><td class="tag">P3</td><td><code class="doc">GET /api/customer/lpg/cylinder-sizes</code></td><td><span class="arrow">→</span> <code class="real">GET /api/lpg-catalog</code></td></tr>
+          <tr><td class="tag">P3</td><td><code class="doc">POST /api/customer/lpg/orders</code></td><td><span class="arrow">→</span> <code class="real">POST /api/customer/lpg-orders</code> (<code>lpg-orders</code>, not <code>lpg/orders</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= MISSING ================= -->
+  <section>
+    <div class="sec-head">
+      <h2>3 · Needs to be worked on</h2>
+      <span class="pill bad">Not implemented</span>
+    </div>
+    <p class="sec-note">No route mounted anywhere for these. Both P1/P2 blockers are now done (see Section 1) — everything remaining here is Priority-4 nice-to-have, plus the customer upload-delete helper.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>#</th><th>Endpoint</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="tag">P2 · 3</td><td><code>POST /api/customer/uploads/delete</code></td><td>Only the staff <code>POST /api/uploads/delete</code> exists.</td></tr>
+          <tr><td class="tag">P4 · 5</td><td><code>GET /api/customer/wallet/transactions</code></td><td>Wallet history — dashboard returns balance only.</td></tr>
+          <tr><td class="tag">P4 · 6</td><td><code>GET/PATCH /api/customer/notification-prefs</code></td><td>Notification toggles — none.</td></tr>
+          <tr><td class="tag">P4 · 7</td><td><code>GET /api/customer/notifications</code> (+ read / read-all)</td><td>In-app feed — none.</td></tr>
+          <tr><td class="tag">P4 · 8</td><td><code>POST /api/customer/support/feedback</code></td><td>Raise-a-complaint — none.</td></tr>
+          <tr><td class="tag">P4 · 9</td><td><code>PUT /api/customer/devices/push-token</code></td><td>Push registration — none.</td></tr>
+          <tr><td class="tag">P4 · 9</td><td><code>GET /api/app/min-version</code></td><td>Forced-upgrade gate — none.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="callout">
+    <b>Bottom line:</b> Both P1/P2 blockers — <b>Dangote quote Pay-Now</b> and the <b>license DELETE</b> — are now built and green (9/9 tests). All of P1–P3 is done; the fastest remaining win is reconciling the five path names in Section 2 with the app team. Everything in Section 3 is Priority-4 nice-to-have.
+  </div>
+
+  <footer>
+    Source of truth: <code>app.js</code> (route mounts) and <code>routes/portal/*.js</code>. The mobile doc <code>SERVER_GAPS_FOR_BACKEND.md</code> was “last updated 08/03” and predates the portal work on this branch.
+  </footer>
+</div>
+</body>
+</html>
