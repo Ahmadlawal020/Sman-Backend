@@ -52,6 +52,7 @@ app.use("/api/deposits", require("./routes/administration/deposit.route"));
 app.use("/api/bank-accounts", require("./routes/administration/bankAccount.route"));
 app.use("/api/bank-statements", require("./routes/administration/bankStatement.route"));
 app.use("/api/settlements", require("./routes/administration/settlement.route"));
+app.use("/api/order-expiry", require("./routes/administration/orderExpiry.route"));
 
 // ERP modules
 app.use("/api/fleet", require("./routes/administration/fleet.route"));

@@ -67,6 +67,9 @@ const orders = pgTable(
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     cancelledBy: integer("cancelled_by").references(() => staff.id, { onDelete: "set null" }),
     cancellationReason: text("cancellation_reason"),
+    // Stamped when the expiry sweep lapses an unpaid order (no staff actor —
+    // the system expires it, so there is no expiredBy).
+    expiredAt: timestamp("expired_at", { withTimezone: true }),
 
     // Supplied by callers whose requests can be redelivered (the WhatsApp
     // CONFIRM step passes the message's wamid). A second placeOrder with the

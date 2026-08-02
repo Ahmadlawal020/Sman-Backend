@@ -9,6 +9,7 @@ const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
 const { customerRepo } = require("../repositories");
+const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
 const PORTAL_AUTH = "/api/customer/auth";
@@ -136,7 +137,10 @@ describe("customer portal — dashboard", () => {
     await customerRepo.creditBalance(customer.id, TOTAL);
     const placed = await placeOrder(accessToken);
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
-    assert.equal(placed.body.data.order.paymentStatus, "Paid");
+    assert.equal(placed.body.data.order.paymentStatus, "Unpaid");
+
+    // Pay the order from the wallet so it becomes confirmed spend.
+    await orderService.payOrder({ orderId: placed.body.data.order.id, actor: { type: "system" } });
 
     const res = await request(app).get(DASHBOARD).set("Authorization", `Bearer ${accessToken}`);
     const { month, trend } = res.body.data;

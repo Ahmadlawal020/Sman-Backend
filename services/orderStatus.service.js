@@ -7,7 +7,9 @@ const { auditLogRepo } = require("../repositories");
  * The order state machine — the ONE place order.status changes.
  *
  * Pipeline: Pending → Paid → Released → Loading → Completed, with Cancelled as
- * an exit up to and including Released. Every transition writes the new status,
+ * an exit up to and including Released, and Expired as an automatic exit from
+ * Pending only (the expiry sweep, for orders never funded in time). Every
+ * transition writes the new status,
  * its stage columns and one audit_logs row inside a single transaction, and
  * takes a row lock so two concurrent transitions on the same order cannot both
  * win — the loser re-reads the new status and finds its move no longer legal.
@@ -16,12 +18,15 @@ const { auditLogRepo } = require("../repositories");
 // from → [legal to]. Loading/Completed are driven by truck gate actions, which
 // call transition() when the first/last truck moves.
 const TRANSITIONS = Object.freeze({
-  Pending: ["Paid", "Cancelled"],
+  // Expired is only reachable from Pending: once an order is Paid it has been
+  // funded and can never lapse.
+  Pending: ["Paid", "Cancelled", "Expired"],
   Paid: ["Released", "Cancelled"],
   Released: ["Loading", "Cancelled"], // cancel allowed THROUGH Released
   Loading: ["Completed"], // no cancel once a truck has gated in
   Completed: [],
   Cancelled: [],
+  Expired: [],
 });
 
 const isLegal = (from, to) => (TRANSITIONS[from] || []).includes(to);

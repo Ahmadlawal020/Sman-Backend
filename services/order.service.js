@@ -32,6 +32,23 @@ function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
+// How long an unpaid order may sit before the sweep expires it. Read lazily (not
+// captured at module load) so deployments — and tests — can tune it per run.
+const orderExpiryHours = () => Number(process.env.ORDER_EXPIRY_HOURS) || 24;
+const orderExpiryMs = () => orderExpiryHours() * 60 * 60 * 1000;
+
+/**
+ * Has this order lapsed? Only a still-Pending, still-unpaid order can — once a
+ * transfer or wallet settles it, the order is Paid and never expires.
+ */
+function isOrderExpired(order, now = Date.now()) {
+  return (
+    order.status === "Pending" &&
+    order.paymentStatus !== "Paid" &&
+    now - new Date(order.createdAt).getTime() >= orderExpiryMs()
+  );
+}
+
 /**
  * Place an order — the ONE creation path, shared by the desk
  * (POST /api/orders) and the customer portal (POST /api/customer/orders).
@@ -423,6 +440,61 @@ async function cancelOrder({
 }
 
 /**
+ * Expire a single order: drive Pending→Expired (system actor) and return its
+ * reserved stock and depot capacity, mirroring a cancel minus the human. The
+ * state machine only allows Expired from Pending, so a concurrently paid or
+ * cancelled order throws 409 here and is skipped by the sweep. Joins an existing
+ * transaction when one is passed (the pre-payment guard).
+ */
+async function expireOrder(orderId, { tx } = {}) {
+  const run = async (tx) => {
+    const order = await orderStatus.transition(orderId, "Expired", {
+      tx,
+      actor: { type: "system" },
+      action: "order.expired",
+      set: { expiredAt: new Date() },
+      metadata: { reason: "unpaid past expiry window", expiryHours: orderExpiryHours() },
+    });
+
+    if (order.pfiId) {
+      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+    }
+    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
+    // Unpaid orders carry no active hold; this is a defensive no-op.
+    await walletService.releaseHold(order.id, tx);
+
+    return order;
+  };
+  return tx ? run(tx) : db.transaction(run);
+}
+
+/**
+ * The expiry sweep: lapse every Pending, unpaid order older than the window
+ * (ORDER_EXPIRY_HOURS). Run on a schedule (POST /api/order-expiry/run). A row
+ * that a concurrent pay/cancel already moved throws inside expireOrder and is
+ * skipped — one stale order never fails the whole sweep.
+ *
+ * @returns {number} how many orders were expired
+ */
+async function expireStaleOrders() {
+  const cutoff = new Date(Date.now() - orderExpiryMs());
+  const stale = await orderRepo.findStalePending(cutoff);
+
+  let expired = 0;
+  for (const row of stale) {
+    try {
+      await expireOrder(row.id);
+      expired += 1;
+    } catch (err) {
+      console.error(`[expiry] order ${row.orderNumber} (#${row.id}) skipped:`, err.message);
+    }
+  }
+
+  console.log(`[expiry] considered ${stale.length} stale order(s); expired ${expired}`);
+  return expired;
+}
+
+/**
  * Replace the pickup truck declaration on an existing order (customer portal).
  * Writes to `order_trucks` only — tickets are issued later at load and are
  * never touched here.
@@ -555,17 +627,45 @@ async function updatePickupTrucks({
 }
 
 /**
+ * If the order has lapsed, expire it now in its own committed transaction,
+ * scoped to the caller. Runs before a payment attempt so paying a stale order
+ * flags it Expired first (that flag survives) and the payment is then refused —
+ * rather than settling an order at a price that is no longer current. A foreign
+ * order, or one a concurrent action already moved, is left untouched.
+ *
+ * @returns {boolean} whether it expired the order
+ */
+async function expireIfStale({ orderId, customerId = null }) {
+  return db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) return false;
+    if (customerId != null && order.customerId !== customerId) return false;
+    if (!isOrderExpired(order)) return false;
+    await expireOrder(orderId, { tx });
+    return true;
+  });
+}
+
+/**
  * Pay an unpaid order from the customer's wallet balance.
  *
- * Staff-triggered: places a wallet hold, transitions Pending→Paid, generates
- * a loading ticket, and creates a commission record — all in one transaction.
+ * Places a wallet hold, transitions Pending→Paid, generates a loading ticket,
+ * and creates a commission record — all in one transaction. Triggered either by
+ * staff (finance) or by the order's own customer from the portal.
  *
  * @param {object} opts
  * @param {number} opts.orderId
- * @param {{ type: string, staffId?: number }} opts.actor
+ * @param {number} [opts.customerId]  When set, an ownership guard: the order
+ *   must belong to this customer or the call 404s. Omitted for staff, who may
+ *   pay any order.
+ * @param {{ type: string, staffId?: number, customerId?: number }} opts.actor
  * @returns {object} the updated order
  */
-async function payOrder({ orderId, actor }) {
+async function payOrder({ orderId, customerId = null, actor }) {
+  // Lapsed orders are expired-and-refused, never paid at a stale price. The
+  // guard commits the Expired flag first; the transaction below then sees it.
+  await expireIfStale({ orderId, customerId });
+
   return db.transaction(async (tx) => {
     const [order] = await tx
       .select()
@@ -575,7 +675,16 @@ async function payOrder({ orderId, actor }) {
       .limit(1);
 
     if (!order) throw httpError(404, "Order not found");
+    // Customer-initiated payment may only ever touch the caller's OWN order; a
+    // foreign order reads as a flat 404, never confirmed. Checked under the row
+    // lock so it holds even against a concurrent change.
+    if (customerId != null && order.customerId !== customerId) {
+      throw httpError(404, "Order not found");
+    }
     if (order.paymentStatus === "Paid") throw httpError(409, "Order is already paid");
+    if (order.status === "Expired") {
+      throw httpError(409, "This order has expired. Please place a new order at current prices.");
+    }
     if (order.status !== "Pending") throw httpError(409, `Cannot pay an order in ${order.status} status`);
 
     const customer = await customerRepo.findById(order.customerId);
@@ -616,7 +725,7 @@ async function payOrder({ orderId, actor }) {
   }).then(async (order) => {
     // Post-commit side effects (best-effort, outside transaction)
     try {
-      await generateTicketForOrder(order.orderNumber);
+      await generateTicketForOrder(order.id);
     } catch (ticketErr) {
       console.error("Failed to generate ticket for paid order:", ticketErr.message);
     }
@@ -633,4 +742,13 @@ async function payOrder({ orderId, actor }) {
   });
 }
 
-module.exports = { placeOrder, cancelOrder, updatePickupTrucks, payOrder, httpError };
+module.exports = {
+  placeOrder,
+  cancelOrder,
+  updatePickupTrucks,
+  payOrder,
+  expireOrder,
+  expireStaleOrders,
+  isOrderExpired,
+  httpError,
+};
