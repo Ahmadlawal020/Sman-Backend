@@ -42,6 +42,7 @@ app.use("/api/depots", require("./routes/administration/depot.route"));
 app.use("/api/filing-stations", require("./routes/administration/filingStation.route"));
 app.use("/api/products", require("./routes/administration/product.route"));
 app.use("/api/pfis", require("./routes/administration/pfi.route"));
+app.use("/api/expenses", require("./routes/administration/expense.route"));
 app.use("/api/customers", require("./routes/administration/customer.route"));
 app.use("/api/delivery-customers", require("./routes/administration/deliveryCustomer.route"));
 app.use("/api/delivery-inventory", require("./routes/administration/deliveryInventory.route"));

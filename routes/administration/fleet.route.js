@@ -18,11 +18,20 @@ const {
   getComplianceWatchlist,
   recordLedgerEntry,
   getLedgerEntries,
+  getAllLedgerEntries,
+  updateLedgerEntry,
+  deleteLedgerEntry,
+  deleteFleetTruck,
 } = require("../../controllers/administration/fleet.controller");
 
 router.get("/", verifyStaff, validate({ query: fleetQuerySchema }), getFleetTrucks);
 // Static path before "/:id" so "compliance" is never parsed as a truck id.
 router.get("/compliance", verifyStaff, getComplianceWatchlist);
+// Flat ledger: the Directory rolls money up across every truck.
+router.get("/ledger", verifyStaff, getAllLedgerEntries);
+router.patch("/ledger/:entryId", verifyStaff, updateLedgerEntry);
+router.delete("/ledger/:entryId", verifyStaff, deleteLedgerEntry);
+router.delete("/:id", verifyStaff, deleteFleetTruck);
 router.get("/:id", verifyStaff, validate({ params: idParamSchema }), getFleetTruckById);
 router.post("/", verifyStaff, validate({ body: createFleetTruckSchema }), createFleetTruck);
 router.patch(

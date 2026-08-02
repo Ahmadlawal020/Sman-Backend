@@ -12,6 +12,8 @@ const depotPriceHistorySchema = require("./depotPriceHistory");
 const driverTruckHistorySchema = require("./driverTruckHistory");
 const pfiSchema = require("./pfi");
 const orderSchema = require("./order");
+// After ./order — pfiExpense destructures `orders` at load time.
+const pfiExpenseSchema = require("./pfiExpense");
 const ticketSchema = require("./ticket");
 const depositSchema = require("./deposit");
 const walletHoldSchema = require("./walletHold");
@@ -57,6 +59,7 @@ module.exports = {
   ...driverTruckHistorySchema,
   ...pfiSchema,
   ...orderSchema,
+  ...pfiExpenseSchema,
   ...ticketSchema,
   ...depositSchema,
   ...walletHoldSchema,

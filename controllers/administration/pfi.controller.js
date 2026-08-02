@@ -1,5 +1,41 @@
 const asyncHandler = require("express-async-handler");
-const { pfiRepo, depotRepo, productRepo, staffRepo, orderRepo } = require("../../repositories");
+const {
+  pfiRepo,
+  pfiExpenseRepo,
+  depotRepo,
+  productRepo,
+  staffRepo,
+  orderRepo,
+} = require("../../repositories");
+const { computeFinancials } = require("../../lib/pfiFinance");
+const { applyCategoryPfi, actorFor } = require("./expense.controller");
+
+function httpErr(status, message) {
+  return Object.assign(new Error(message), { status });
+}
+
+/**
+ * Attach the money figures to one PFI or a list of them.
+ *
+ * Aggregates are fetched for the whole page in three grouped queries rather
+ * than a dozen per row — the difference between a list that renders instantly
+ * and one that takes seconds once there are a few dozen batches.
+ */
+const withFinancials = async (rows) => {
+  const many = Array.isArray(rows);
+  const list = many ? rows : [rows];
+  const aggs = await pfiExpenseRepo.aggregatesFor(list.map((p) => p.id));
+  const decorated = list.map((pfi) => {
+    const agg = aggs.get(Number(pfi.id)) || {};
+    return {
+      ...pfi,
+      financials: computeFinancials(pfi, agg),
+      orderCount: agg.orderCount || 0,
+      expenseCount: agg.expenseCount || 0,
+    };
+  });
+  return many ? decorated : decorated[0];
+};
 
 const parseDate = (val) => {
   if (!val) return null;
@@ -23,18 +59,26 @@ const getPfis = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 100, location } = req.query;
 
   const result = await pfiRepo.findAll({ search, status, location, page, limit });
+  result.pfis = await withFinancials(result.pfis || []);
 
   res.json({ success: true, data: result });
 });
 
 const getPfiById = asyncHandler(async (req, res) => {
-  const pfi = await pfiRepo.findById(req.params.id);
+  const found = await pfiRepo.findById(req.params.id);
 
-  if (!pfi) {
+  if (!found) {
     return res.status(404).json({ success: false, message: "PFI not found" });
   }
 
-  res.json({ success: true, data: { pfi } });
+  // The drawer needs the lines behind the totals, not just the totals.
+  const [pfi, expenses, movements] = await Promise.all([
+    withFinancials(found),
+    pfiExpenseRepo.listExpensesForPfi(found.id),
+    pfiExpenseRepo.listMovements(found.id),
+  ]);
+
+  res.json({ success: true, data: { pfi, expenses, movements } });
 });
 
 const createPfi = asyncHandler(async (req, res) => {
@@ -44,6 +88,7 @@ const createPfi = asyncHandler(async (req, res) => {
   const location_id = req.body.location_id || req.body.locationId;
   const product_id = req.body.product_id || req.body.productId;
   const starting_qty_litres = req.body.starting_qty_litres ?? req.body.startingQtyLitres;
+  const bl_qty_litres = req.body.bl_qty_litres ?? req.body.blQtyLitres;
   const qty_volume_mt = req.body.qty_volume_mt ?? req.body.qtyVolumeMt;
   const unit_price = req.body.unit_price ?? req.body.unitPrice;
   const audit_officer = req.body.audit_officer || req.body.auditOfficerId;
@@ -107,6 +152,9 @@ const createPfi = asyncHandler(async (req, res) => {
     productName: product_name,
     productUnit: product_unit,
     startingQtyLitres: Number(starting_qty_litres) || 0,
+    // Left null when not supplied — an unknown BL must not read as zero, or
+    // every money figure downstream would silently compute against it.
+    blQtyLitres: bl_qty_litres == null || bl_qty_litres === "" ? null : Number(bl_qty_litres),
     qtyVolumeMt: Number(qty_volume_mt) || 0,
     unitPrice: String(Number(unit_price) || 0),
     auditOfficerId: audit_officer ? (parseInt(audit_officer, 10) || audit_officer) : null,
@@ -122,7 +170,15 @@ const createPfi = asyncHandler(async (req, res) => {
     surveyorPhone: surveyor_phone || "",
   });
 
-  res.status(201).json({ success: true, message: "PFI created successfully", data: { pfi } });
+  // Every PFI becomes an expense category the moment it exists. Without this
+  // there is no way to book a cost against the batch at all.
+  await pfiExpenseRepo.ensureCategoryForPfi(pfi.id, pfi.pfiNumber);
+
+  res.status(201).json({
+    success: true,
+    message: "PFI created successfully",
+    data: { pfi: await withFinancials(pfi) },
+  });
 });
 
 const updatePfi = asyncHandler(async (req, res) => {
@@ -134,6 +190,7 @@ const updatePfi = asyncHandler(async (req, res) => {
 
   const allowedFields = [
     "pfi_number", "description", "pfi_date", "status", "starting_qty_litres",
+    "bl_qty_litres",
     "qty_volume_mt", "sold_qty_litres", "total_amount", "unit_price", "product_unit",
     "vessel_broker", "vessel_name", "surveyor_name", "surveyor_phone",
     "closure_date", "total_inflow", "closure_bank", "purchase_cost",
@@ -149,6 +206,9 @@ const updatePfi = asyncHandler(async (req, res) => {
         updateData.pfiDate = parseDate(value);
       } else if (field === "closure_date") {
         updateData.closureDate = parseDate(value);
+      } else if (field === "bl_qty_litres") {
+        // Blank clears it back to unknown rather than setting zero.
+        updateData.blQtyLitres = value === "" || value === null ? null : Number(value);
       } else {
         updateData[camelKey] = value;
       }
@@ -216,7 +276,18 @@ const updatePfi = asyncHandler(async (req, res) => {
 
   const updated = await pfiRepo.update(pfi.id, updateData);
 
-  res.json({ success: true, message: "PFI updated successfully", data: { pfi: updated } });
+  // The category is named after the PFI, so a renumbered PFI renames it. It is
+  // also created here if missing, which covers rows predating the table.
+  if (updated.pfiNumber !== pfi.pfiNumber) {
+    const renamed = await pfiExpenseRepo.renameCategoryForPfi(updated.id, updated.pfiNumber);
+    if (!renamed) await pfiExpenseRepo.ensureCategoryForPfi(updated.id, updated.pfiNumber);
+  }
+
+  res.json({
+    success: true,
+    message: "PFI updated successfully",
+    data: { pfi: await withFinancials(updated) },
+  });
 });
 
 const deletePfi = asyncHandler(async (req, res) => {
@@ -239,4 +310,268 @@ const deletePfi = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "PFI deleted successfully" });
 });
 
-module.exports = { getPfis, getPfiById, createPfi, updatePfi, deletePfi };
+/**
+ * Close a batch out.
+ *
+ * The closure figures are typed in by hand while the system already computes
+ * the same quantities from the actual data. We keep both — the manual numbers
+ * are what the closing statement was signed against — but the response returns
+ * the computed pair alongside so a mismatch is visible at the moment of
+ * closing rather than discovered later.
+ */
+const finishPfi = asyncHandler(async (req, res) => {
+  const pfi = await pfiRepo.findById(req.params.id);
+  if (!pfi) throw httpErr(404, "PFI not found");
+  if (pfi.status === "finished") throw httpErr(409, "This PFI is already closed");
+
+  const updateData = { status: "finished", closureDate: parseDate(req.body.closure_date ?? req.body.closureDate) || new Date() };
+
+  const map = {
+    total_inflow: "totalInflow",
+    closure_bank: "closureBank",
+    purchase_cost: "purchaseCost",
+    aggregate_expenses: "aggregateExpenses",
+    closure_handler: "closureHandler",
+    closure_remarks: "closureRemarks",
+  };
+  for (const [snake, camel] of Object.entries(map)) {
+    const value = req.body[snake] !== undefined ? req.body[snake] : req.body[camel];
+    if (value !== undefined && value !== null && value !== "") {
+      updateData[camel] = ["totalInflow", "purchaseCost", "aggregateExpenses"].includes(camel)
+        ? String(Number(value) || 0)
+        : value;
+    }
+  }
+
+  const updated = await withFinancials(await pfiRepo.update(pfi.id, updateData));
+
+  // Nothing reconciles the manual closure figures against the computed ones,
+  // so surface the gap instead of leaving two answers to the same question.
+  const f = updated.financials;
+  const discrepancies = [];
+  const compare = (label, typed, computed) => {
+    const t = Number(typed);
+    if (!Number.isFinite(t) || t === 0 || computed == null) return;
+    if (Math.abs(t - computed) >= 0.01) {
+      discrepancies.push({ label, entered: t, computed, difference: Number((t - computed).toFixed(2)) });
+    }
+  };
+  compare("Purchase cost", updated.purchaseCost, f.pfiValue);
+  compare("Aggregate expenses", updated.aggregateExpenses, f.totalExpenses);
+
+  // Closing with stock still on the books usually means releases were never
+  // recorded, not that the product vanished.
+  const warnings = [];
+  if (f.remaining > 0) {
+    warnings.push(
+      `${f.remaining.toLocaleString()} L still shows as remaining. Either that stock is genuinely unsold, or movements were never recorded against it.`
+    );
+  }
+
+  res.json({
+    success: true,
+    message: "PFI closed",
+    data: { pfi: updated, discrepancies, warnings },
+  });
+});
+
+/** Just the money, for a drawer or a card that does not need the whole record. */
+const getPfiSummary = asyncHandler(async (req, res) => {
+  const pfi = await pfiRepo.findById(req.params.id);
+  if (!pfi) throw httpErr(404, "PFI not found");
+
+  const decorated = await withFinancials(pfi);
+  res.json({
+    success: true,
+    data: {
+      pfiNumber: decorated.pfiNumber,
+      status: decorated.status,
+      orderCount: decorated.orderCount,
+      expenseCount: decorated.expenseCount,
+      ...decorated.financials,
+    },
+  });
+});
+
+const getPfiExpenses = asyncHandler(async (req, res) => {
+  const pfi = await pfiRepo.findById(req.params.id);
+  if (!pfi) throw httpErr(404, "PFI not found");
+
+  const expenses = await pfiExpenseRepo.listExpensesForPfi(pfi.id);
+  const total = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+  res.json({ success: true, data: { expenses, total } });
+});
+
+/**
+ * Quick-add from inside the PFI drawer.
+ *
+ * The category is resolved server-side from the PFI itself, so a line added
+ * here is indistinguishable from one added on the expenses page — same row,
+ * same stamped `pfi_id`, same audit entry.
+ */
+const addPfiExpense = asyncHandler(async (req, res) => {
+  const pfi = await pfiRepo.findById(req.params.id);
+  if (!pfi) throw httpErr(404, "PFI not found");
+
+  const amount = Number(req.body.amount);
+  if (!Number.isFinite(amount) || amount < 0) throw httpErr(400, "Amount must be a positive number");
+
+  const category =
+    (await pfiExpenseRepo.ensureCategoryForPfi(pfi.id, pfi.pfiNumber)) ||
+    (await pfiExpenseRepo.findCategoryById(req.body.category_id));
+  if (!category) throw httpErr(500, "Could not resolve this PFI's expense category");
+
+  const { pfiId } = await applyCategoryPfi(category.id);
+  const { actorId, actorName } = await actorFor(req);
+
+  const expense = await pfiExpenseRepo.createExpense({
+    pfi_id: pfiId,
+    category_id: category.id,
+    expense_date:
+      parseDate(req.body.expense_date ?? req.body.expenseDate)?.toISOString?.() ||
+      new Date().toISOString(),
+    vendor: req.body.vendor || "",
+    description: req.body.description || "",
+    amount: String(amount),
+    bank_paid_from: req.body.bank_paid_from ?? req.body.bankPaidFrom ?? "",
+    entered_by: actorName,
+    recorded_by: actorId,
+  });
+
+  await pfiExpenseRepo.writeAudit({
+    expenseId: expense.id,
+    action: "create",
+    changes: expense,
+    actorId,
+    actorName,
+  });
+
+  res.status(201).json({ success: true, message: "Expense recorded", data: { expense } });
+});
+
+/** Stock position across every PFI, for the allocation view. */
+const getStockSummary = asyncHandler(async (req, res) => {
+  const { status = "active" } = req.query;
+  const result = await pfiRepo.findAll({ status: status === "all" ? undefined : status, limit: 200 });
+  const decorated = await withFinancials(result.pfis || []);
+
+  const rows = decorated.map((p) => ({
+    id: p.id,
+    pfiNumber: p.pfiNumber,
+    status: p.status,
+    locationName: p.locationName,
+    productName: p.productName,
+    tankQtyLitres: p.financials.tankQtyLitres,
+    blQtyLitres: p.financials.blQtyLitres,
+    surplusDeficitLitres: p.financials.surplusDeficitLitres,
+    sold: p.financials.sold,
+    remaining: p.financials.remaining,
+    sellThrough: p.financials.sellThrough,
+  }));
+
+  res.json({
+    success: true,
+    data: {
+      stock: rows,
+      totals: {
+        tank: rows.reduce((s, r) => s + r.tankQtyLitres, 0),
+        sold: rows.reduce((s, r) => s + r.sold, 0),
+        remaining: rows.reduce((s, r) => s + r.remaining, 0),
+      },
+    },
+  });
+});
+
+/**
+ * Bulk-assign orders to a PFI.
+ *
+ * Each order is checked independently and reported on independently — one bad
+ * order in a batch of forty must not cost you the other thirty-nine.
+ */
+const assignOrdersToPfi = asyncHandler(async (req, res) => {
+  const pfiId = req.body.pfi_id ?? req.body.pfiId;
+  const orderIds = Array.isArray(req.body.order_ids ?? req.body.orderIds)
+    ? req.body.order_ids ?? req.body.orderIds
+    : [];
+
+  if (!pfiId) throw httpErr(400, "A PFI is required");
+  if (orderIds.length === 0) throw httpErr(400, "Select at least one order");
+
+  const pfi = await pfiRepo.findById(pfiId);
+  if (!pfi) throw httpErr(404, "PFI not found");
+  // A finished batch has been closed out; assigning to it would move figures
+  // that have already been reported.
+  if (pfi.status !== "active") throw httpErr(400, "This PFI is not active");
+
+  const allowed = new Set(
+    [pfi.locationId, ...(Array.isArray(pfi.allowedLocations) ? pfi.allowedLocations : [])]
+      .filter((v) => v != null)
+      .map(Number)
+  );
+
+  const assigned = [];
+  const errors = [];
+
+  for (const rawId of orderIds) {
+    const orderId = Number(rawId);
+    try {
+      const order = await orderRepo.findById(orderId);
+      if (!order) {
+        errors.push({ orderId: rawId, error: "Order not found" });
+        continue;
+      }
+      // The depot must be one the batch can serve.
+      if (allowed.size > 0 && !allowed.has(Number(order.depotId))) {
+        errors.push({
+          orderId: rawId,
+          orderNumber: order.orderNumber,
+          error: `Order is at a location this PFI does not cover`,
+        });
+        continue;
+      }
+      // A PFI is one product. An order carrying anything else cannot belong
+      // to it, and a multi-product order can never belong to one at all.
+      if (pfi.productId && Number(order.productId) !== Number(pfi.productId)) {
+        errors.push({
+          orderId: rawId,
+          orderNumber: order.orderNumber,
+          error: `Order product does not match this PFI's product (${pfi.productName})`,
+        });
+        continue;
+      }
+      if (order.pfiId && Number(order.pfiId) === Number(pfi.id)) {
+        assigned.push({ orderId, orderNumber: order.orderNumber, alreadyAssigned: true });
+        continue;
+      }
+
+      await orderRepo.update(orderId, { pfiId: Number(pfi.id) });
+      assigned.push({ orderId, orderNumber: order.orderNumber });
+    } catch (err) {
+      errors.push({ orderId: rawId, error: err.message || "Could not assign this order" });
+    }
+  }
+
+  res.json({
+    success: errors.length === 0,
+    message:
+      errors.length === 0
+        ? `${assigned.length} order(s) assigned to ${pfi.pfiNumber}`
+        : `${assigned.length} assigned, ${errors.length} could not be`,
+    data: { assigned, errors, pfi: await withFinancials(await pfiRepo.findById(pfi.id)) },
+  });
+});
+
+module.exports = {
+  getPfis,
+  getPfiById,
+  createPfi,
+  updatePfi,
+  deletePfi,
+  finishPfi,
+  getPfiSummary,
+  getPfiExpenses,
+  addPfiExpense,
+  getStockSummary,
+  assignOrdersToPfi,
+};

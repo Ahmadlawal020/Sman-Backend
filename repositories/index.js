@@ -6,6 +6,7 @@ module.exports = {
   depotRepo: require("./depot.repository"),
   productRepo: require("./product.repository"),
   pfiRepo: require("./pfi.repository"),
+  pfiExpenseRepo: require("./pfiExpense.repository"),
   orderRepo: require("./order.repository"),
   ticketRepo: require("./ticket.repository"),
   depositRepo: require("./deposit.repository"),

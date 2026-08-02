@@ -53,6 +53,12 @@ const orderTrucks = pgTable(
 
     driverName: varchar("driver_name", { length: 255 }),
     driverPhone: varchar("driver_phone", { length: 50 }),
+    // Observed at the gate, kept separate from the driver booked at
+    // generation — the truck that turns up is not always the one booked.
+    entryDriverName: varchar("entry_driver_name", { length: 255 }),
+    entryDriverPhone: varchar("entry_driver_phone", { length: 50 }),
+    // Gantry/arm the truck loaded from, recorded on exit.
+    gantry: varchar("gantry", { length: 20 }),
     loaderName: varchar("loader_name", { length: 255 }),
     loaderPhone: varchar("loader_phone", { length: 50 }),
 

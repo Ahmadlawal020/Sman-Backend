@@ -9,12 +9,30 @@ const {
   createPfi,
   updatePfi,
   deletePfi,
+  finishPfi,
+  getPfiSummary,
+  getPfiExpenses,
+  addPfiExpense,
+  getStockSummary,
+  assignOrdersToPfi,
 } = require("../../controllers/administration/pfi.controller");
 
+// Stock across every PFI. Declared before "/:id" so it is not swallowed by it.
+router.get("/stock-summary", verifyStaff, getStockSummary);
+// Bulk assignment lives here rather than under /orders because it is the PFI
+// that validates the request.
+router.post("/assign-orders", verifyStaff, assignOrdersToPfi);
+
 router.get("/", verifyStaff, validate({ query: misc.listPfis }), getPfis);
-router.get("/:id", verifyStaff, validate({ params: misc.idParam }), getPfiById);
 router.post("/", verifyStaff, createPfi);
+
+router.get("/:id", verifyStaff, validate({ params: misc.idParam }), getPfiById);
 router.patch("/:id", verifyStaff, validate({ params: misc.idParam }), updatePfi);
 router.delete("/:id", verifyStaff, validate({ params: misc.idParam }), deletePfi);
+
+router.post("/:id/finish", verifyStaff, validate({ params: misc.idParam }), finishPfi);
+router.get("/:id/summary", verifyStaff, validate({ params: misc.idParam }), getPfiSummary);
+router.get("/:id/expenses", verifyStaff, validate({ params: misc.idParam }), getPfiExpenses);
+router.post("/:id/expenses", verifyStaff, validate({ params: misc.idParam }), addPfiExpense);
 
 module.exports = router;

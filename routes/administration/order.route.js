@@ -10,6 +10,9 @@ const {
   createOrder,
   releaseOrder,
   cancelOrder,
+  generateOrderTickets,
+  getTruckTicketPrintData,
+  getOrderTrucks,
   gateInTruck,
   markTruckLoaded,
   gateOutTruck,
@@ -54,6 +57,10 @@ router.post(
 );
 
 // The truck gate flow — each checkpoint gated to its security/ticketing post.
+router.post("/:id/generate-tickets", verifyStaff, generateOrderTickets);
+router.get("/:id/trucks/:loadId/print", verifyStaff, getTruckTicketPrintData);
+router.get("/:id/trucks", verifyStaff, getOrderTrucks);
+
 router.post(
   "/:id/gate-in",
   authenticateStaff,

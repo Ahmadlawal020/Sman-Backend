@@ -1,0 +1,1 @@
+ALTER TABLE "fleet_trucks" ADD COLUMN "incidents" text DEFAULT '[]';

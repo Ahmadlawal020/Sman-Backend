@@ -51,7 +51,10 @@ const fleetTrucks = pgTable(
     passportPhoto: text("passport_photo").default(""),
     truckStatus: varchar("truck_status", { length: 500 }).default(""),
     isActive: boolean("is_active").default(true).notNull(),
-    notes: text("notes").default(""),
+    // A JSON array of {date, description}. Stored as text and parsed
+  // defensively — malformed JSON yields an empty list rather than a crash.
+  incidents: text("incidents").default("[]"),
+  notes: text("notes").default(""),
 
     createdBy: integer("created_by").references(() => staff.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
