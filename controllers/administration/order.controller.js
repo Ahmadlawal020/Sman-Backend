@@ -527,21 +527,6 @@ const payOrder = asyncHandler(async (req, res) => {
   });
 });
 
-const reconcileOrderEffects = asyncHandler(async (req, res) => {
-  const orderId = Number(req.params.id);
-  const order = await orderRepo.findById(orderId);
-  if (!order) throw httpErr(404, "Order not found");
-  if (order.paymentStatus !== "Paid") {
-    throw httpErr(400, "Only paid orders can be reconciled");
-  }
-  const result = await orderService.runPostPaymentEffects(orderId);
-  res.json({
-    success: true,
-    message: "Post-payment effects reconciled",
-    data: result,
-  });
-});
-
 /** Per-truck ceiling, matching the limit order.service enforces at creation. */
 const MAX_TRUCK_LITRES = 60000;
 /** Tickets may only be generated once the order has been released. */
