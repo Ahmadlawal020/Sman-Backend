@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
-const { placeOrder, updatePickupTrucks, payOrder } = require("../../services/order.service");
+const { placeOrder, updatePickupTrucks, payOrder, cancelOrder } = require("../../services/order.service");
 const walletService = require("../../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 const {
@@ -221,6 +221,61 @@ const payMyOrder = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/customer/orders/by-ref/:ref/pay — pay an unpaid order from wallet
+ * balance keyed by its order NUMBER (the reference the apps hold on the history
+ * and detail screens), so a customer can settle an older order, not only the
+ * one they just placed. Ownership-scoped identically to the by-id pay.
+ */
+const payMyOrderByRef = asyncHandler(async (req, res) => {
+  const found = await orderRepo.findByNumber(req.params.ref);
+  if (!found || found.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  const order = await payOrder({
+    orderId: found.id,
+    customerId: req.customer.id,
+    actor: { type: "customer", customerId: req.customer.id },
+  });
+
+  res.json({
+    success: true,
+    message: `Order ${order.orderNumber} paid from your wallet balance.`,
+    data: { order: await withOwnerDetail(order) },
+  });
+});
+
+/**
+ * POST /api/customer/orders/:id/cancel — the customer cancels their OWN order
+ * while it is still Pending/unpaid. Reuses the shared cancelOrder service, which
+ * releases the reserved stock and depot capacity. A Paid or further-along order
+ * can't be self-cancelled here — that's a support/finance action.
+ */
+const cancelMyOrder = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findById(req.params.id);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+  if (order.status !== "Pending") {
+    return res.status(409).json({
+      success: false,
+      message: `Only an unpaid, pending order can be cancelled here — this one is ${order.status}. Contact support.`,
+    });
+  }
+
+  await cancelOrder({
+    orderId: order.id,
+    actor: { type: "customer", customerId: req.customer.id },
+    reason: "Cancelled by customer",
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  const fresh = await orderRepo.findByIdFull(order.id);
+  res.json({ success: true, message: "Order cancelled", data: { order: await withOwnerDetail(fresh) } });
+});
+
+/**
  * PATCH /api/customer/orders/by-ref/:ref/trucks — replace the pickup truck
  * declaration on the caller's own order. Plate/driver may be blank (filled at
  * the gate); quantities must still sum to the order. Refuses once any load
@@ -256,5 +311,7 @@ module.exports = {
   getMyOrderByRef,
   simulateMyPayment,
   payMyOrder,
+  payMyOrderByRef,
+  cancelMyOrder,
   updateMyOrderTrucks,
 };

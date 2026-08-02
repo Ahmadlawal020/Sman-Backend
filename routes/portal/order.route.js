@@ -11,6 +11,8 @@ const {
   getMyOrderByRef,
   simulateMyPayment,
   payMyOrder,
+  payMyOrderByRef,
+  cancelMyOrder,
   updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
@@ -42,6 +44,18 @@ router.get(
   authenticateCustomer,
   validate({ params: orderSchemas.refParam }),
   getMyOrderByRef
+);
+
+// Pay an older unpaid order from wallet, keyed by its order number (the ref the
+// apps hold on history/detail). Registered under /by-ref so it isn't mistaken
+// for the numeric /:id/pay.
+router.post(
+  "/by-ref/:ref/pay",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.refParam }),
+  payMyOrderByRef
 );
 
 // Replace pickup truck declaration — same by-ref key the dashboard already uses.
@@ -84,6 +98,18 @@ router.post(
   requireCsrfForCookieAuth("customer"),
   validate({ params: orderSchemas.idParam }),
   payMyOrder
+);
+
+// Cancel one of the customer's own still-unpaid orders. Releases reserved stock
+// and capacity via the shared cancelOrder service; CSRF-protected like the
+// other state-changing portal actions.
+router.post(
+  "/:id/cancel",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.idParam }),
+  cancelMyOrder
 );
 
 module.exports = router;

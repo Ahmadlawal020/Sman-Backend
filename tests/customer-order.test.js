@@ -8,7 +8,7 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderRepo } = require("../repositories");
+const { customerRepo, orderRepo, ticketRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
@@ -433,5 +433,125 @@ describe("customer portal — a customer places their own order", () => {
   test("paying requires authentication", async () => {
     const res = await request(app).post(`${ORDERS}/1/pay`).send({});
     assert.equal(res.status, 401);
+  });
+
+  // ── Self-service cancel: POST /api/customer/orders/:id/cancel ──────────────
+
+  test("a customer cancels their own unpaid order", async () => {
+    const { accessToken } = await registerActiveCustomer("30");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.order.status, "Cancelled");
+    assert.equal((await orderRepo.findById(orderId)).status, "Cancelled");
+  });
+
+  test("a customer cannot cancel a paid order here (409)", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("31");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+    await orderService.payOrder({ orderId, actor: { type: "system" } });
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(orderId)).status, "Paid", "the paid order is untouched");
+  });
+
+  test("a customer cannot cancel another customer's order — 404", async () => {
+    const owner = await registerActiveCustomer("32");
+    const intruder = await registerActiveCustomer("33");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/cancel`)
+      .set("Authorization", `Bearer ${intruder.accessToken}`)
+      .send({});
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(orderId)).status, "Pending", "the owner's order is untouched");
+  });
+
+  test("cancelling requires authentication", async () => {
+    const res = await request(app).post(`${ORDERS}/1/cancel`).send({});
+    assert.equal(res.status, 401);
+  });
+
+  // ── Pay an older order by reference: POST /orders/by-ref/:ref/pay ──────────
+
+  test("a customer pays an older order from wallet by its reference", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("34");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const ref = placed.body.data.order.orderNumber;
+
+    const paid = await request(app)
+      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(paid.status, 200, JSON.stringify(paid.body));
+    assert.equal(paid.body.data.order.paymentStatus, "Paid");
+    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+  });
+
+  test("a customer cannot pay another customer's order by reference — 404", async () => {
+    const owner = await registerActiveCustomer("35");
+    const intruder = await registerActiveCustomer("36");
+    await customerRepo.creditBalance(intruder.customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send(body());
+    const ref = placed.body.data.order.orderNumber;
+
+    const res = await request(app)
+      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .set("Authorization", `Bearer ${intruder.accessToken}`)
+      .send({});
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal((await orderRepo.findById(placed.body.data.order.id)).paymentStatus, "Unpaid");
+  });
+
+  test("post-payment effects are idempotent — re-running creates no duplicate ticket", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("37");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+    await orderService.payOrder({ orderId, actor: { type: "system" } });
+
+    const ticket = await ticketRepo.findByOrder(orderId);
+    assert.ok(ticket, "payment generated a loading ticket");
+
+    // Reconcile again — must heal without duplicating.
+    const result = await orderService.runPostPaymentEffects(orderId);
+    assert.deepEqual(result, { ticket: true, commission: true }, "re-run succeeds");
+    assert.equal(
+      (await ticketRepo.findByOrder(orderId)).id,
+      ticket.id,
+      "the same ticket, not a duplicate"
+    );
   });
 });

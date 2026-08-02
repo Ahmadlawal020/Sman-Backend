@@ -33,13 +33,17 @@ const updateLpgOrderCollectionStatus = z.object({
 
 const listLpgOrderRequests = pagination.extend({
   search: searchTerm,
-  status: enumOf("Status", ["Pending Review", "Approved", "Rejected", "all"]).optional(),
+  status: enumOf("Status", ["Pending Review", "Approved", "Rejected", "Cancelled", "all"]).optional(),
 });
 
 const idParam = z.object({ id: id("LPG order request id") });
 
+// The customer portal forces customerId from the token, so the body omits it.
+const createMyLpgOrderRequest = createLpgOrderRequest.omit({ customerId: true });
+
 module.exports = {
   createLpgOrderRequest,
+  createMyLpgOrderRequest,
   reviewLpgOrderRequest,
   updateLpgOrderPaymentStatus,
   updateLpgOrderCollectionStatus,

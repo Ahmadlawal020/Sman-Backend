@@ -44,6 +44,12 @@ jobs:
 
       - run: npm ci
 
+      # Fails if two migrations claim the same index (a merge collision that
+      # drizzle-kit check can miss once the journal keeps one and orphans the
+      # other .sql). Cheap, so it runs first.
+      - name: Check for duplicate migration numbers
+        run: npm run check:migrations
+
       # Fails if the migration journal and the SQL files have drifted apart —
       # the exact class of breakage that made db:migrate hang before.
       - name: Check migration consistency

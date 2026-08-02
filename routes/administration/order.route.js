@@ -15,6 +15,7 @@ const {
   gateOutTruck,
   getPayableOrders,
   payOrder,
+  reconcileOrderEffects,
 } = require("../../controllers/administration/order.controller");
 
 // Payable orders (must be before /:id to avoid param conflict)
@@ -51,6 +52,15 @@ router.post(
   requireRole("finance", "super_admin", { message: "Finance access required to pay" }),
   validate({ params: orderSchemas.idParam }),
   payOrder
+);
+
+// Re-run post-payment effects for a paid order whose ticket/commission failed.
+router.post(
+  "/:id/reconcile",
+  authenticateStaff,
+  requireRole("finance", "super_admin", { message: "Finance access required" }),
+  validate({ params: orderSchemas.idParam }),
+  reconcileOrderEffects
 );
 
 // The truck gate flow — each checkpoint gated to its security/ticketing post.
