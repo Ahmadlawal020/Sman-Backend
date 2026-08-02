@@ -27,7 +27,7 @@ const aggregatesFor = async (ids) => {
   });
   for (const id of list) out.set(id, blank());
 
-  const [expenses, revenue, movements] = await Promise.all([
+  const [expenses, revenue, movements, allocations] = await Promise.all([
     // Soft-deleted lines are excluded from every total.
     client`
       SELECT pfi_id, COALESCE(SUM(amount), 0)::text AS total, COUNT(*)::int AS lines
@@ -41,10 +41,19 @@ const aggregatesFor = async (ids) => {
       WHERE pfi_id = ANY(${list}) AND status = ANY(${REVENUE_STATUSES})
       GROUP BY pfi_id
     `,
-    // The append-only ledger is the only source of truth for sold quantity.
+    // The append-only ledger is the source of truth for released stock.
     client`
       SELECT pfi_id, COALESCE(SUM(qty_litres), 0)::bigint AS qty
       FROM pfi_movements
+      WHERE pfi_id = ANY(${list})
+      GROUP BY pfi_id
+    `,
+    // Delivery allocations are a second way stock leaves a batch, and they
+    // count toward sold alongside releases — a litre allocated to a delivery
+    // is no longer available to sell.
+    client`
+      SELECT pfi_id, COALESCE(SUM(quantity), 0)::bigint AS qty
+      FROM order_pfi_allocations
       WHERE pfi_id = ANY(${list})
       GROUP BY pfi_id
     `,
@@ -67,6 +76,10 @@ const aggregatesFor = async (ids) => {
   for (const r of movements) {
     const row = out.get(Number(r.pfi_id));
     if (row) row.movementQty = Number(r.qty);
+  }
+  for (const r of allocations) {
+    const row = out.get(Number(r.pfi_id));
+    if (row) row.allocationQty = Number(r.qty);
   }
 
   return out;

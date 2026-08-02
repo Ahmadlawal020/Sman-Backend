@@ -18,6 +18,7 @@ const pfiSchema = require("./pfi");
 const orderSchema = require("./order");
 // After ./order — pfiExpense destructures `orders` at load time.
 const pfiExpenseSchema = require("./pfiExpense");
+const orderPfiAllocationSchema = require("./orderPfiAllocation");
 const ticketSchema = require("./ticket");
 const depositSchema = require("./deposit");
 const walletHoldSchema = require("./walletHold");
@@ -69,6 +70,7 @@ module.exports = {
   ...pfiSchema,
   ...orderSchema,
   ...pfiExpenseSchema,
+  ...orderPfiAllocationSchema,
   ...ticketSchema,
   ...depositSchema,
   ...walletHoldSchema,
