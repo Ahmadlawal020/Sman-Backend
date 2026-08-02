@@ -6,6 +6,10 @@ const driverSchema = require("./driver");
 const depotSchema = require("./depot");
 const productSchema = require("./product");
 const depotStaffSchema = require("./depotStaff");
+const lpgStationSchema = require("./lpgStation");
+const lpgStationStaffSchema = require("./lpgStationStaff");
+const lpgStationCylinderSchema = require("./lpgStationCylinder");
+const lpgPriceHistorySchema = require("./lpgPriceHistory");
 const depotProductCapacitiesSchema = require("./depotProductCapacities");
 const depotProductPricesSchema = require("./depotProductPrices");
 const depotPriceHistorySchema = require("./depotPriceHistory");
@@ -33,6 +37,7 @@ const incidentRecordSchema = require("./incidentRecord");
 const offlineSaleSchema = require("./offlineSale");
 const dangoteProductSchema = require("./dangoteProduct");
 const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
+const lpgOrderRequestSchema = require("./lpgOrderRequest");
 const waSessionSchema = require("./waSession");
 const waMessageSchema = require("./waMessage");
 const waTemplateSchema = require("./waTemplate");
@@ -51,6 +56,10 @@ module.exports = {
   ...depotSchema,
   ...productSchema,
   ...depotStaffSchema,
+  ...lpgStationSchema,
+  ...lpgStationStaffSchema,
+  ...lpgStationCylinderSchema,
+  ...lpgPriceHistorySchema,
   ...depotProductCapacitiesSchema,
   ...depotProductPricesSchema,
   ...depotPriceHistorySchema,
@@ -78,6 +87,7 @@ module.exports = {
   ...offlineSaleSchema,
   ...dangoteProductSchema,
   ...dangoteOrderRequestSchema,
+  ...lpgOrderRequestSchema,
   ...waSessionSchema,
   ...waMessageSchema,
   ...waTemplateSchema,

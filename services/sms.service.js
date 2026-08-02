@@ -130,4 +130,34 @@ const sendDangoteDeliveryOrderSMS = async (phone, orderData) => {
   return { success: false, message: "All Termii channels failed" };
 };
 
-module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, CHANNELS };
+const sendLpgOrderSMS = async (phone, orderData) => {
+  const { requestNumber, customerName, cylinderSizeKg, cylinderQuantity, totalAmount, accountNumber, bankName, accountName } = orderData;
+
+  const formattedAmount = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 0,
+  }).format(totalAmount);
+
+  const customerInitials = getCustomerInitials(customerName);
+  const formattedAccountName = accountName || `SOROMANNIGERI/ ${customerInitials}`;
+
+  const sms = `Hi ${customerName}, your LPG order ${requestNumber} for ${cylinderQuantity}x ${cylinderSizeKg}Kg cylinders (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
+
+  for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
+    try {
+      const result = await sendSMSTermii(phone, sms, channel);
+      if (result.success) {
+        return { success: true, message: "LPG order SMS sent successfully" };
+      }
+      console.warn(`Termii ${channel} channel failed:`, result.message);
+    } catch (error) {
+      const errMsg = error.response?.data?.message || error.message || "Termii SMS error";
+      console.warn(`Termii ${channel} channel error:`, errMsg);
+    }
+  }
+
+  return { success: false, message: "All Termii channels failed" };
+};
+
+module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, sendLpgOrderSMS, CHANNELS };
