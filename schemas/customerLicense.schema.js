@@ -39,8 +39,12 @@ const getAllLicensesQuery = z.object({
 const customerIdParam = z.object({ customerId: id("Customer id") });
 const licenseIdParam = z.object({ id: id("License id") });
 
+// The customer portal forces customerId from the session, so the body omits it.
+const createMyLicense = createLicense.omit({ customerId: true });
+
 module.exports = {
   createLicense,
+  createMyLicense,
   updateLicense,
   reviewLicense,
   getAllLicensesQuery,
