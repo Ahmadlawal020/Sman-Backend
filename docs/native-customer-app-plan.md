@@ -281,7 +281,31 @@ Things the app can do that the web can't, plus shipping.
 
 ---
 
-## Cross-cutting decisions (locked unless you object)
+## Native design pass (Mobbin-sourced — de-webify the flows)
+
+The parity build reused web layout idioms (bordered input boxes, filter chips, an underlined step rail, multi-field forms). Reference flows pulled from Mobbin show how native apps handle the same moments; refactor toward these:
+
+**Auth — one question per screen** (refs: [Tinder onboarding](https://mobbin.com/flows/f1af7bae-5348-4966-8e49-a1f7581ab3a8), [Corner onboarding](https://mobbin.com/flows/82014fc1-ea4f-455f-90e7-49a11b9804b1), [App Store phone verify](https://mobbin.com/flows/802f05d7-e5c3-43c4-99b4-17db30ddebb6))
+- Each step is its own screen: a big bold question as the title ("What's your number?"), ONE input, keyboard already open (`autoFocus`), full-width pill CTA pinned above the keyboard (`KeyboardAvoidingView`).
+- Inputs are borderless — an underline or plain field on the background, not a bordered card box.
+- Phone entry gets an inline country-code prefix (default 🇳🇬 +234).
+- OTP is a dedicated screen: six slots, "Resend code" as a small inline action beneath, auto-submit on sixth digit (already built).
+- Kill the three-way method switcher chip row; make it a stack of navigation choices or default-to-PIN with "Use phone code instead" links.
+
+**Quantity & checkout — the value is the screen** (refs: [ANZ Plus transfer](https://mobbin.com/flows/526d53d9-6d75-4809-ae8d-d05a1de39b9d), [OKX P2P payment](https://mobbin.com/flows/6925bcc8-6082-4650-a367-ac1ceb79d1d5))
+- Replace the inline right-aligned quantity boxes with a tap-through: product row → quantity screen/sheet with a giant centered value ("33,000 L"), number pad, live line total under it, "Add" CTA (ANZ's amount-entry pattern).
+- Invoice screen adopts the OKX bank-transfer anatomy: countdown at the top ("Price locked · 42:10"), then numbered steps — ① "Transfer to these details" as labeled rows (bank / account number / amount) each with its own copy icon, ② "We confirm automatically" with a live status row. Keep the dev "I've paid" as the OKX-style acknowledgment button.
+- Payment success = receipt moment: big check, amount, reference chip, Share button (ANZ receipt).
+
+**Tracking — outcome first, dots not rails** (refs: [Walmart order tracking](https://mobbin.com/screens/da5c3b1c-2ff5-424f-ab22-dd8009a58e7f), [Rappi tracking](https://mobbin.com/screens/9632e386-3489-4d57-91bf-1125c5ac9b52), [Baemin timeline](https://mobbin.com/screens/43325ab8-1e21-4d75-b771-f93eb7ca2bab))
+- Lead with the outcome, not the stage name: "Loading at Calabar depot" / "Arrives after loading completes" as the headline.
+- Compact horizontal progress dots with labels under the headline (Walmart/Rappi); the detailed vertical timeline with timestamps moves lower on the page (Baemin).
+- Below: grouped chevron rows (delivery address, trucks, payment) instead of stacked cards.
+
+**General de-webification**
+- Orders filter chips → native segmented control.
+- Text-link "Edit / Save trucks" actions → toolbar buttons or a form-sheet editor.
+- Any remaining bordered `TextInput` boxes → grouped-list rows (`@expo/ui` `FieldGroup`) or borderless fields.
 
 | Topic | Decision |
 |---|---|
