@@ -12,6 +12,7 @@ const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendLpgOrderSMS } = require("../../services/sms.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
+const lpgOrderStatus = require("../../services/lpgOrderStatus.service");
 
 const getLpgOrderRequests = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 50 } = req.query;
@@ -106,12 +107,12 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
   }
 
   if (action === "reject") {
-    const updated = await lpgOrderRequestRepo.update(id, {
-      status: "Rejected",
-      reviewedBy: req.user.id,
-      reviewedAt: new Date(),
+    await lpgOrderStatus.transition(id, "Rejected", {
+      actor: { type: "staff", staffId: req.user.id },
+      set: { reviewedBy: req.user.id, reviewedAt: new Date() },
+      action: "lpg_order.rejected",
     });
-    const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+    const fullRequest = await lpgOrderRequestRepo.findByIdFull(id);
     return res.json({
       success: true,
       message: "Order request rejected",
@@ -161,13 +162,17 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
     });
   }
 
-  const updated = await lpgOrderRequestRepo.update(id, {
-    status: "Approved",
-    deliveryPrice: String(deliveryPrice || 0),
-    totalAmount: String(totalAmount),
-    expectedArrivalDate: expectedArrivalDate || "",
-    reviewedBy: req.user.id,
-    reviewedAt: new Date(),
+  const { order: updated } = await lpgOrderStatus.transition(id, "Approved", {
+    actor: { type: "staff", staffId: req.user.id },
+    set: {
+      deliveryPrice: String(deliveryPrice || 0),
+      totalAmount: String(totalAmount),
+      expectedArrivalDate: expectedArrivalDate || "",
+      reviewedBy: req.user.id,
+      reviewedAt: new Date(),
+    },
+    action: "lpg_order.approved",
+    metadata: { totalAmount: String(totalAmount), cylinders: existing.cylinderQuantity },
   });
 
   const customer = await customerRepo.findById(existing.customerId);
@@ -184,7 +189,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
         virtualAccountBank = accountResult.data.bankName;
         virtualAccountName =
           accountResult.data.accountName ||
-          `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+          `SOROMAN/${getCustomerInitials(customer.name)}`;
         const updateData = {
           virtualAccountNumber,
           virtualAccountBank,
@@ -201,7 +206,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
       console.error("DVA creation error:", dvaErr.message);
     }
   } else if (!virtualAccountName && customer) {
-    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    virtualAccountName = `SOROMAN/${getCustomerInitials(customer.name)}`;
     await customerRepo.update(customer.id, { virtualAccountName });
   }
 
@@ -373,6 +378,63 @@ const payLpgOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Cancel an order request and, if it had been approved, return its reserved
+ * cylinders to the station's stock — closing the leak where an approved-then-
+ * abandoned order kept inventory decremented forever. Refuses a paid order
+ * (reverse the payment first) or one already in fulfilment.
+ */
+const cancelLpgOrderRequest = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  // The state machine locks the row, refuses an illegal move (already
+  // Cancelled/Rejected → 409) or an order already in fulfilment (guard), writes
+  // the Cancelled status + an audit row atomically, and reports the prior state.
+  // A paid order is allowed — it is reversed below rather than blocked.
+  const { order, prevState } = await lpgOrderStatus.transition(id, "Cancelled", {
+    actor: { type: "staff", staffId: req.user.id },
+    set: { reviewedBy: req.user.id, reviewedAt: new Date() },
+    action: "lpg_order.cancelled",
+    guard: (o) => {
+      if (o.collectionStatus && o.collectionStatus !== "Pending") {
+        return { status: 409, message: `Cannot cancel an order already ${o.collectionStatus} — the gas has left` };
+      }
+      return null;
+    },
+  });
+
+  // An approved order had its cylinders decremented — return them to stock.
+  if (prevState === "Approved") {
+    await lpgStationRepo.incrementCylinderQuantity(
+      order.lpgStationId,
+      order.cylinderSizeKg,
+      order.cylinderQuantity
+    );
+  }
+
+  // A paid order is refunded to the customer's wallet (idempotent by reference),
+  // and its payment marked Refunded.
+  let refunded = false;
+  const total = Number(order.totalAmount);
+  if (order.paymentStatus === "Paid" && total > 0) {
+    await walletService.credit({
+      customerId: order.customerId,
+      amount: total,
+      description: `Refund for cancelled LPG Order ${order.requestNumber}`,
+      reference: `LPG-REFUND-${order.id}`,
+    });
+    await lpgOrderRequestRepo.update(id, { paymentStatus: "Refunded" });
+    refunded = true;
+  }
+
+  const parts = ["Order request cancelled"];
+  if (prevState === "Approved") parts.push("reserved cylinders returned to stock");
+  if (refunded) parts.push(`₦${total.toLocaleString()} refunded to wallet`);
+
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(id);
+  res.json({ success: true, message: parts.join("; "), data: { request: fullRequest } });
+});
+
 module.exports = {
   getLpgOrderRequests,
   getLpgOrderRequestById,
@@ -382,4 +444,5 @@ module.exports = {
   updateLpgOrderCollectionStatus,
   getPayableLpgOrders,
   payLpgOrder,
+  cancelLpgOrderRequest,
 };

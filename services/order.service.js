@@ -15,7 +15,7 @@ const {
 const walletService = require("./wallet.service");
 const { createDedicatedAccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
-const { sendOrderSummarySMS } = require("./sms.service");
+const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
 const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
@@ -512,8 +512,9 @@ async function expireStaleOrders() {
   let expired = 0;
   for (const row of stale) {
     try {
-      await expireOrder(row.id);
+      const order = await expireOrder(row.id);
       expired += 1;
+      await notifyOrderExpired(order);
     } catch (err) {
       console.error(`[expiry] order ${row.orderNumber} (#${row.id}) skipped:`, err.message);
     }
@@ -521,6 +522,25 @@ async function expireStaleOrders() {
 
   console.log(`[expiry] considered ${stale.length} stale order(s); expired ${expired}`);
   return expired;
+}
+
+/**
+ * Tell the customer their order lapsed — best-effort, never fails the sweep. The
+ * order got an SMS at placement; this closes the loop so a lapsed order isn't
+ * silent. The customer is unpaid, so there's nothing to refund.
+ */
+async function notifyOrderExpired(order) {
+  try {
+    const customer = await customerRepo.findById(order.customerId);
+    if (customer?.phone) {
+      await sendOrderExpiredSMS(customer.phone, {
+        orderNumber: order.orderNumber,
+        customerName: customer.name,
+      });
+    }
+  } catch (err) {
+    console.error(`[expiry] failed to notify customer for ${order.orderNumber}:`, err.message);
+  }
 }
 
 /**
@@ -676,6 +696,41 @@ async function expireIfStale({ orderId, customerId = null }) {
 }
 
 /**
+ * The side effects that must follow a confirmed payment: the loading ticket,
+ * the commission record, and the WhatsApp payment-confirmed push. Runs
+ * post-commit (the money is already durable) and NEVER throws — each failure is
+ * logged with a `[post-payment]` marker for alerting.
+ *
+ * Idempotent: the ticket and commission each no-op if they already exist, so a
+ * failed effect can be healed by re-running this — at pay time, or via the
+ * finance reconcile endpoint — without duplicating anything.
+ *
+ * @returns {{ticket: boolean, commission: boolean}} what succeeded this run
+ */
+async function runPostPaymentEffects(orderId) {
+  let ticket = false;
+  let commission = false;
+
+  try {
+    await generateTicketForOrder(orderId);
+    ticket = true;
+  } catch (err) {
+    console.error(`[post-payment] ticket failed for order ${orderId}:`, err.message);
+  }
+
+  try {
+    await commissionService.createForOrder(orderId);
+    commission = true;
+  } catch (err) {
+    console.error(`[post-payment] commission failed for order ${orderId}:`, err.message);
+  }
+
+  notifyWhatsAppPaymentConfirmed(orderId);
+
+  return { ticket, commission };
+}
+
+/**
  * Pay an unpaid order from the customer's wallet balance.
  *
  * Places a wallet hold, transitions Pending→Paid, generates a loading ticket,
@@ -752,19 +807,7 @@ async function payOrder({ orderId, customerId = null, actor }) {
 
     return order;
   }).then(async (order) => {
-    // Post-commit side effects (best-effort, outside transaction)
-    try {
-      await generateTicketForOrder(order.id);
-    } catch (ticketErr) {
-      console.error("Failed to generate ticket for paid order:", ticketErr.message);
-    }
-    try {
-      await commissionService.createForOrder(order.id);
-    } catch (commErr) {
-      console.error("Failed to create commission for paid order:", commErr.message);
-    }
-
-    notifyWhatsAppPaymentConfirmed(order.id);
+    await runPostPaymentEffects(order.id);
 
     const fullOrder = await orderRepo.findByIdFull(order.id);
     return fullOrder;
@@ -776,6 +819,7 @@ module.exports = {
   cancelOrder,
   updatePickupTrucks,
   payOrder,
+  runPostPaymentEffects,
   expireOrder,
   expireStaleOrders,
   isOrderExpired,

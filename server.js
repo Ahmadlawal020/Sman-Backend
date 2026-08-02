@@ -98,6 +98,15 @@ testConnection()
           ),
         );
     }
+
+    // Opt-in recurring jobs (the order-expiry sweep). Off unless a deployment
+    // sets SCHEDULED_JOBS_ENABLED=true; a failure here never takes the
+    // dashboard down, and the manual /run endpoint works regardless.
+    if (process.env.SCHEDULED_JOBS_ENABLED === "true") {
+      require("./jobs/scheduler")
+        .start()
+        .catch((err) => console.error("[scheduler] failed to start:", err.message));
+    }
   })
   .catch(() => {
     console.error("Failed to connect to database. Exiting.");

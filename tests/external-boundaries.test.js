@@ -21,15 +21,29 @@ const TERMII_HOST = "https://v3.api.termii.com";
 const TERMII_PATH = "/sms/send";
 
 /**
- * Net connect is NOT disabled: these suites also talk to Postgres and to the
- * app over loopback. Only the two external hosts are intercepted.
+ * Real network is blocked here (loopback to Postgres/the app stays allowed), so
+ * a mock that doesn't match fails loudly instead of reaching Termii/Cloudflare
+ * for real — the exact trap that let a stale mock URL hit production Termii.
+ * SMS is force-enabled because the wider suite runs with SMS_ENABLED=false, but
+ * this file's whole job is to exercise the real send path against the mocks.
  */
 describe("external boundaries — Turnstile and Termii", () => {
+  const ORIGINAL_SMS_ENABLED = process.env.SMS_ENABLED;
+
+  before(() => {
+    process.env.SMS_ENABLED = "true";
+    nock.disableNetConnect();
+    nock.enableNetConnect(/127\.0\.0\.1|localhost/);
+  });
+
   afterEach(() => {
     nock.cleanAll();
   });
 
   after(async () => {
+    nock.enableNetConnect();
+    if (ORIGINAL_SMS_ENABLED === undefined) delete process.env.SMS_ENABLED;
+    else process.env.SMS_ENABLED = ORIGINAL_SMS_ENABLED;
     await closeDb();
   });
 

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fast pre-push guard — catches duplicate migration numbers before they reach a
+# PR/CI (the merge-collision class). Enable once, per clone:
+#   git config core.hooksPath .githooks
+npm run --silent check:migrations || {
+  echo "pre-push blocked: fix the migration collision above (or 'git push --no-verify' to bypass)."
+  exit 1
+}
