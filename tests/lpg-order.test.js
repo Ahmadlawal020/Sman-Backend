@@ -8,7 +8,7 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { lpgStations, lpgStationCylinders } = require("../db/schema");
-const { customerRepo, lpgStationRepo } = require("../repositories");
+const { customerRepo, lpgStationRepo, auditLogRepo } = require("../repositories");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
 
 const RUN = Date.now();
@@ -146,6 +146,35 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
       stockBefore,
       "a refused cancel restocks nothing"
     );
+  });
+
+  test("approving and cancelling are recorded in the audit trail", async () => {
+    const id = await placeAndApprove(2);
+
+    const afterApprove = await auditLogRepo.findByEntity("lpg_order_request", id);
+    const approved = afterApprove.find((e) => e.newState === "Approved");
+    assert.ok(approved, "the approval wrote an audit row");
+    assert.equal(approved.prevState, "Pending Review");
+    assert.equal(approved.actorType, "staff");
+
+    await request(app)
+      .put(`${LPG}/${id}/cancel`)
+      .set("Authorization", `Bearer ${staff.accessToken}`)
+      .send({});
+
+    const afterCancel = await auditLogRepo.findByEntity("lpg_order_request", id);
+    const cancelled = afterCancel.find((e) => e.newState === "Cancelled");
+    assert.ok(cancelled, "the cancellation wrote an audit row");
+    assert.equal(cancelled.prevState, "Approved");
+  });
+
+  test("an already-approved order cannot be rejected (illegal transition)", async () => {
+    const id = await placeAndApprove(2);
+    const res = await request(app)
+      .put(`${LPG}/${id}/review`)
+      .set("Authorization", `Bearer ${staff.accessToken}`)
+      .send({ action: "reject" });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
   });
 
   test("a second cancel is a no-op — cylinders are returned only once", async () => {
