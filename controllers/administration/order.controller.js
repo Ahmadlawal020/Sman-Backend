@@ -757,6 +757,30 @@ const getOrderTrucks = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { trucks } });
 });
 
+/**
+ * POST /:id/reconcile — re-run the post-payment side effects (loading ticket,
+ * commission, WhatsApp confirmation) for a paid order whose effects failed the
+ * first time. runPostPaymentEffects is idempotent — it no-ops anything that
+ * already exists — so this only fills the gaps and never duplicates. Finance-
+ * gated at the route.
+ */
+const reconcileOrderEffects = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const order = await orderRepo.findById(orderId);
+  if (!order) throw httpErr(404, "Order not found");
+  if (order.paymentStatus !== "Paid") {
+    throw httpErr(409, "Only a paid order can have its post-payment effects reconciled");
+  }
+
+  const result = await orderService.runPostPaymentEffects(orderId);
+
+  res.json({
+    success: true,
+    message: "Post-payment effects reconciled",
+    data: { orderId, ...result },
+  });
+});
+
 module.exports = {
   getOrders,
   getOrderById,
@@ -771,4 +795,5 @@ module.exports = {
   gateOutTruck,
   getPayableOrders,
   payOrder,
+  reconcileOrderEffects,
 };

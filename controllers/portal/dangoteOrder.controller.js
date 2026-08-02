@@ -6,6 +6,7 @@ const {
   customerLicenseRepo,
 } = require("../../repositories");
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
+const walletService = require("../../services/wallet.service");
 
 /**
  * GET /api/dangote-catalog — public, read-only: the active Dangote products a
@@ -118,9 +119,68 @@ const getMyDangoteOrder = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { request } });
 });
 
+/**
+ * POST /api/customer/dangote-orders/:id/pay — the signed-in customer settles
+ * their OWN approved quote from wallet balance. Customer twin of the staff
+ * finance pay route: same guards (must be Approved + Unpaid) and the same
+ * wallet debit, but scoped to req.customer — a foreign request is a 404, and
+ * the already-Paid / not-yet-Approved guards double as the double-pay guard.
+ */
+const payMyDangoteOrder = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  const existing = await dangoteOrderRequestRepo.findById(id);
+  if (!existing || existing.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+  if (existing.paymentStatus === "Paid") {
+    return res.status(409).json({ success: false, message: "Order is already paid" });
+  }
+  if (existing.status !== "Approved") {
+    return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });
+  }
+
+  const totalAmount = Number(existing.totalAmount);
+  if (!totalAmount || totalAmount <= 0) {
+    return res.status(400).json({ success: false, message: "Order total is invalid" });
+  }
+
+  const debitResult = await walletService.debit({
+    customerId: req.customer.id,
+    amount: totalAmount,
+    description: `Payment for Dangote Order ${existing.requestNumber}`,
+    reference: `DNG-PAY-${existing.id}`,
+  });
+
+  if (!debitResult.success) {
+    if (debitResult.insufficient) {
+      const customer = await customerRepo.findById(req.customer.id);
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance. Required: ₦${totalAmount.toLocaleString()}, Available: ₦${Number(customer?.balance || 0).toLocaleString()}`,
+      });
+    }
+    return res.status(400).json({ success: false, message: debitResult.message || "Payment failed" });
+  }
+
+  await dangoteOrderRequestRepo.update(id, {
+    paymentStatus: "Paid",
+    paymentMode: "wallet",
+    paymentReference: debitResult.deposit?.reference || `DNG-PAY-${existing.id}`,
+  });
+
+  const request = await dangoteOrderRequestRepo.findByIdFull(id);
+  res.json({
+    success: true,
+    message: `Dangote order ${existing.requestNumber} paid from your wallet balance.`,
+    data: { request },
+  });
+});
+
 module.exports = {
   getDangoteCatalog,
   createMyDangoteOrder,
   listMyDangoteOrders,
   getMyDangoteOrder,
+  payMyDangoteOrder,
 };
