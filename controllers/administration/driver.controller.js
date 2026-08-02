@@ -107,8 +107,8 @@ const deleteDriver = asyncHandler(async (req, res) => {
 
   if (driver.assignedTruckId) {
     const truck = await truckRepo.findById(driver.assignedTruckId);
-    if (truck && String(truck.currentDriverId) === String(driver.id)) {
-      await truckRepo.update(driver.assignedTruckId, { currentDriverId: null });
+    if (truck && String(truck.driverId) === String(driver.id)) {
+      await truckRepo.update(driver.assignedTruckId, { driverId: null });
     }
   }
 

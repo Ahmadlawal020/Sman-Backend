@@ -1,7 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { truckRepo, driverRepo } = require("../../repositories");
 const { db } = require("../../config/db");
-const { trucks, drivers } = require("../../db/schema");
+const { fleetTrucks: trucks, drivers } = require("../../db/schema");
 const { eq } = require("drizzle-orm");
 
 const parseDate = (val) => {
@@ -64,15 +64,15 @@ const createTruck = asyncHandler(async (req, res) => {
   const truck = await truckRepo.create({
     plateNumber: plateNumber.toUpperCase(),
     model,
-    capacity,
-    status: status || "Idle",
-    currentDriverId,
+    maxCapacity: capacity,
+    truckStatus: status || "Idle",
+    driverId: currentDriverId,
     fuelLevel: fuelLevel ?? 100,
-    mileage: mileage || "0 km",
+    mileage: mileage || 0,
     vin,
     year,
-    make,
-    type,
+    truckMake: make,
+    truckType: type,
     insuranceExpiry: parseDate(insuranceExpiry),
     registrationExpiry: parseDate(registrationExpiry),
     nextServiceMileage,
@@ -106,14 +106,22 @@ const updateTruck = asyncHandler(async (req, res) => {
     "type", "insuranceExpiry", "registrationExpiry", "nextServiceMileage",
   ];
 
-  const oldDriverId = truck.currentDriverId;
+  const oldDriverId = truck.driverId;
   const oldPlateNumber = truck.plateNumber;
 
   const updateData = {};
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
       if (field === "driverRef") {
-        updateData.currentDriverId = req.body[field] || null;
+        updateData.driverId = req.body[field] || null;
+      } else if (field === "capacity") {
+        updateData.maxCapacity = req.body[field];
+      } else if (field === "status") {
+        updateData.truckStatus = req.body[field];
+      } else if (field === "make") {
+        updateData.truckMake = req.body[field];
+      } else if (field === "type") {
+        updateData.truckType = req.body[field];
       } else if (field === "insuranceExpiry" || field === "registrationExpiry") {
         updateData[field] = parseDate(req.body[field]);
       } else {
@@ -126,7 +134,7 @@ const updateTruck = asyncHandler(async (req, res) => {
     updateData.plateNumber = updateData.plateNumber.toUpperCase();
   }
 
-  const newDriverId = updateData.currentDriverId !== undefined ? updateData.currentDriverId : oldDriverId;
+  const newDriverId = updateData.driverId !== undefined ? updateData.driverId : oldDriverId;
 
   await truckRepo.update(truck.id, updateData);
 
@@ -146,7 +154,7 @@ const updateTruck = asyncHandler(async (req, res) => {
       if (newDriver) {
         // If new driver was on another truck, clean that
         if (newDriver.assignedTruckId && String(newDriver.assignedTruckId) !== String(truck.id)) {
-          await truckRepo.update(newDriver.assignedTruckId, { currentDriverId: null });
+          await truckRepo.update(newDriver.assignedTruckId, { driverId: null });
         }
         await driverRepo.update(newDriverId, { assignedTruckId: truck.id });
         await truckRepo.addDriverHistory(truck.id, newDriverId);
@@ -173,10 +181,10 @@ const deleteTruck = asyncHandler(async (req, res) => {
   }
 
   // Clean up driver assignment
-  if (truck.currentDriverId) {
-    const driver = await driverRepo.findById(truck.currentDriverId);
+  if (truck.driverId) {
+    const driver = await driverRepo.findById(truck.driverId);
     if (driver && String(driver.assignedTruckId) === String(truck.id)) {
-      await driverRepo.update(truck.currentDriverId, { assignedTruckId: null });
+      await driverRepo.update(truck.driverId, { assignedTruckId: null });
     }
   }
 

@@ -13,15 +13,15 @@ const findByIdWithDriver = async (id) => {
       id: trucks.id,
       plateNumber: trucks.plateNumber,
       model: trucks.model,
-      capacity: trucks.capacity,
-      status: trucks.status,
-      currentDriverId: trucks.currentDriverId,
+      capacity: trucks.maxCapacity,
+      status: trucks.truckStatus,
+      currentDriverId: trucks.driverId,
       fuelLevel: trucks.fuelLevel,
       mileage: trucks.mileage,
       vin: trucks.vin,
       year: trucks.year,
-      make: trucks.make,
-      type: trucks.type,
+      make: trucks.truckMake,
+      type: trucks.truckType,
       insuranceExpiry: trucks.insuranceExpiry,
       registrationExpiry: trucks.registrationExpiry,
       nextServiceMileage: trucks.nextServiceMileage,
@@ -32,7 +32,7 @@ const findByIdWithDriver = async (id) => {
       driverLicense: drivers.licenseNumber,
     })
     .from(trucks)
-    .leftJoin(drivers, eq(trucks.currentDriverId, drivers.id))
+    .leftJoin(drivers, eq(trucks.driverId, drivers.id))
     .where(eq(trucks.id, id))
     .limit(1);
   return row || null;
@@ -65,7 +65,7 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   }
 
   if (status && status !== "all") {
-    conditions.push(eq(trucks.status, status));
+    conditions.push(eq(trucks.truckStatus, status));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -76,15 +76,15 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
         id: trucks.id,
         plateNumber: trucks.plateNumber,
         model: trucks.model,
-        capacity: trucks.capacity,
-        status: trucks.status,
-        currentDriverId: trucks.currentDriverId,
+        capacity: trucks.maxCapacity,
+        status: trucks.truckStatus,
+        currentDriverId: trucks.driverId,
         fuelLevel: trucks.fuelLevel,
         mileage: trucks.mileage,
         vin: trucks.vin,
         year: trucks.year,
-        make: trucks.make,
-        type: trucks.type,
+        make: trucks.truckMake,
+        type: trucks.truckType,
         insuranceExpiry: trucks.insuranceExpiry,
         registrationExpiry: trucks.registrationExpiry,
         nextServiceMileage: trucks.nextServiceMileage,
@@ -94,7 +94,7 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
         driverPhone: drivers.phone,
       })
       .from(trucks)
-      .leftJoin(drivers, eq(trucks.currentDriverId, drivers.id))
+      .leftJoin(drivers, eq(trucks.driverId, drivers.id))
       .where(whereClause)
       .orderBy(desc(trucks.createdAt))
       .limit(limitNum)

@@ -33,7 +33,6 @@ const sessionSchema = require("./session");
 const customerOtpSchema = require("./customerOtp");
 const auditLogSchema = require("./auditLog");
 const orderTruckSchema = require("./orderTruck");
-const orderPfiAllocationSchema = require("./orderPfiAllocation");
 const customerIdentitySchema = require("./customerIdentity");
 const auditEventSchema = require("./auditEvent");
 const fleetLedgerSchema = require("./fleetLedgerEntry");
@@ -84,7 +83,6 @@ module.exports = {
   ...customerOtpSchema,
   ...auditLogSchema,
   ...orderTruckSchema,
-  ...orderPfiAllocationSchema,
   ...customerIdentitySchema,
   ...auditEventSchema,
   ...fleetTruckSchema,
