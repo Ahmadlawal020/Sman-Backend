@@ -5,7 +5,6 @@ const { toSmsRecipient } = require("../utils/phone");
 // Termii v3 API Configuratio
 const TERMII_BASE_URL = process.env.TERMII_BASE_URL || "https://v3.api.termii.com";
 const TERMII_API_KEY = process.env.TERMII_API_KEY;
-const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || "Soroman";
 const SMS_ENABLED = process.env.SMS_ENABLED !== "false";
 const WHATSAPP_DEVICE_ID = process.env.WHATSAPP_DEVICE_ID || "036ccd6b-c655-4c2e-a47b-903898e55732";
 const WHATSAPP_TEMPLATE_ID = process.env.WHATSAPP_TEMPLATE_ID || "ffb23b37-8475-4571-8e3b-7f55e4bc6d54";
@@ -35,7 +34,9 @@ const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
     `${TERMII_BASE_URL}/sms/send`,
     {
       to: formatPhoneForTermii(phone),
-      from: TERMII_SENDER_ID,
+      // Read at call time so a per-request/test env override is honoured, not
+      // frozen at module load.
+      from: process.env.TERMII_SENDER_ID || "Soroman",
       sms,
       type: "plain",
       channel,

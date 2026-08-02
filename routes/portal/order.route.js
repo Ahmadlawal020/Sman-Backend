@@ -10,6 +10,7 @@ const {
   getMyOrder,
   getMyOrderByRef,
   simulateMyPayment,
+  payMyOrder,
   updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
@@ -71,6 +72,18 @@ router.post(
   requireCsrfForCookieAuth("customer"),
   validate({ params: orderSchemas.idParam }),
   simulateMyPayment
+);
+
+// Pay one of the customer's own unpaid orders from their wallet balance. A
+// balance-spending state change, so it carries CSRF like order placement; the
+// service scopes it to the caller and refuses a foreign order with a 404.
+router.post(
+  "/:id/pay",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.idParam }),
+  payMyOrder
 );
 
 module.exports = router;

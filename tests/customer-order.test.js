@@ -8,7 +8,8 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo } = require("../repositories");
+const { customerRepo, orderRepo } = require("../repositories");
+const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
 const PORTAL_AUTH = "/api/customer/auth";
@@ -112,7 +113,7 @@ describe("customer portal — a customer places their own order", () => {
     assert.ok(res.body.data.payment.accountNumber, "an account to transfer into is returned");
   });
 
-  test("a funded wallet pays at creation and the lifecycle advances to Paid", async () => {
+  test("a funded wallet pays an order after placement, advancing it to Paid", async () => {
     const { customer, accessToken } = await registerActiveCustomer("2");
     await customerRepo.creditBalance(customer.id, TOTAL);
 
@@ -121,9 +122,18 @@ describe("customer portal — a customer places their own order", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .send(body());
 
+    // Orders are always created Unpaid now; payment is a separate action.
     assert.equal(res.status, 201, JSON.stringify(res.body));
-    assert.equal(res.body.data.order.paymentStatus, "Paid");
-    assert.equal(res.body.data.order.status, "Paid", "wallet payment advanced the lifecycle");
+    assert.equal(res.body.data.order.paymentStatus, "Unpaid");
+    assert.equal(res.body.data.order.status, "Pending");
+
+    // Finance pays the order from the customer's wallet balance (the manual
+    // "Pay Now" action). This is the path the admin /pay endpoint invokes.
+    await orderService.payOrder({ orderId: res.body.data.order.id, actor: { type: "system" } });
+
+    const order = await orderRepo.findById(res.body.data.order.id);
+    assert.equal(order.paymentStatus, "Paid");
+    assert.equal(order.status, "Paid", "wallet payment advanced the lifecycle");
     assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
   });
 
@@ -287,14 +297,15 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(pending.status, 201);
     const pendingNumber = pending.body.data.order.orderNumber;
 
-    // Fund the wallet and place a second order that settles to Paid.
+    // Fund the wallet, place a second order, then pay it so it settles to Paid.
     await customerRepo.creditBalance(pending.body.data.order.customerId, TOTAL);
     const paid = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
       .send(body());
     assert.equal(paid.status, 201);
-    assert.equal(paid.body.data.order.status, "Paid");
+    await orderService.payOrder({ orderId: paid.body.data.order.id, actor: { type: "system" } });
+    assert.equal((await orderRepo.findById(paid.body.data.order.id)).status, "Paid");
 
     // Status filter: only Pending.
     const onlyPending = await request(app)
@@ -334,5 +345,93 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(empty.status, 200);
     assert.equal(empty.body.data.orders.length, 0);
     assert.equal(empty.body.data.pagination.total, 0);
+  });
+
+  // ── Self-service wallet payment: POST /api/customer/orders/:id/pay ─────────
+
+  test("a customer pays their own unpaid order from wallet balance", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("20");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const orderId = placed.body.data.order.id;
+
+    const paid = await request(app)
+      .post(`${ORDERS}/${orderId}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(paid.status, 200, JSON.stringify(paid.body));
+    assert.equal(paid.body.data.order.paymentStatus, "Paid");
+    assert.equal(paid.body.data.order.status, "Paid");
+    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+  });
+
+  test("paying with an empty wallet is refused (400), the order stays Unpaid", async () => {
+    const { accessToken } = await registerActiveCustomer("21");
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.match(res.body.message, /insufficient/i);
+    assert.equal((await orderRepo.findById(orderId)).paymentStatus, "Unpaid", "still unpaid");
+  });
+
+  test("a customer cannot pay another customer's order — 404, and nothing is touched", async () => {
+    const owner = await registerActiveCustomer("22");
+    const intruder = await registerActiveCustomer("23");
+    await customerRepo.creditBalance(intruder.customer.id, TOTAL);
+
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const res = await request(app)
+      .post(`${ORDERS}/${orderId}/pay`)
+      .set("Authorization", `Bearer ${intruder.accessToken}`)
+      .send({});
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    // The owner's order is untouched and the intruder's wallet is not debited.
+    assert.equal((await orderRepo.findById(orderId)).paymentStatus, "Unpaid");
+    assert.equal(Number((await customerRepo.findById(intruder.customer.id)).balance), TOTAL);
+  });
+
+  test("paying an already-paid order is refused (409)", async () => {
+    const { customer, accessToken } = await registerActiveCustomer("24");
+    await customerRepo.creditBalance(customer.id, TOTAL);
+    const placed = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body());
+    const orderId = placed.body.data.order.id;
+
+    const first = await request(app)
+      .post(`${ORDERS}/${orderId}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+
+    const second = await request(app)
+      .post(`${ORDERS}/${orderId}/pay`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+    assert.equal(second.status, 409, JSON.stringify(second.body));
+  });
+
+  test("paying requires authentication", async () => {
+    const res = await request(app).post(`${ORDERS}/1/pay`).send({});
+    assert.equal(res.status, 401);
   });
 });

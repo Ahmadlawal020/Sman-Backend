@@ -132,7 +132,7 @@ describe("integration — customer register → order → release → gates → 
     });
     await customerRepo.creditBalance(customerId, TOTAL);
 
-    // ── 2. The desk creates the order (wallet pays → Paid) ───────────────────
+    // ── 2. The desk creates the order (Unpaid), then finance pays it ─────────
     const placed = await request(app)
       .post("/api/orders")
       .set("Authorization", `Bearer ${desk.accessToken}`)
@@ -148,6 +148,16 @@ describe("integration — customer register → order → release → gates → 
     const orderId = placed.body.data.order.id;
 
     let order = await orderRepo.findById(orderId);
+    assert.equal(order.paymentStatus, "Unpaid", "created Unpaid, awaiting payment");
+
+    // The manual "Pay Now" action — finance settles it from the wallet.
+    const paid = await request(app)
+      .post(`/api/orders/${orderId}/pay`)
+      .set("Authorization", `Bearer ${desk.accessToken}`)
+      .send({});
+    assert.equal(paid.status, 200, JSON.stringify(paid.body));
+
+    order = await orderRepo.findById(orderId);
     assert.equal(order.paymentStatus, "Paid", "wallet covered it");
     assert.equal(order.status, "Paid", "payment advanced the lifecycle to Paid");
     assert.ok(order.paymentConfirmedAt, "paymentConfirmedAt stamped");
@@ -228,9 +238,11 @@ describe("integration — customer register → order → release → gates → 
       ["Paid", "Released", "Loading", "Completed"],
       "the audit trail is the full pipeline, in order"
     );
-    // The Paid step was the system (payment); the rest were staff at their posts.
+    // The Paid step is now a staff action (finance's manual "Pay Now"); the
+    // rest were staff at their posts.
     const paidEvent = timeline.find((e) => e.newState === "Paid");
-    assert.equal(paidEvent.actorType, "system");
+    assert.equal(paidEvent.actorType, "staff");
+    assert.equal(paidEvent.actorStaffId, desk.staff.id);
     const releasedEvent = timeline.find((e) => e.newState === "Released");
     assert.equal(releasedEvent.actorType, "staff");
     assert.equal(releasedEvent.actorStaffId, release.staff.id);
@@ -278,7 +290,7 @@ describe("integration — customer register → order → release → gates → 
     });
     await customerRepo.creditBalance(cust.id, TOTAL);
 
-    // ── 2. The customer places their OWN order (wallet pays → Paid) ──────────
+    // ── 2. The customer places their OWN order (Unpaid), finance pays it ─────
     const placed = await request(app)
       .post("/api/customer/orders")
       .set("Authorization", `Bearer ${customerToken}`)
@@ -292,7 +304,14 @@ describe("integration — customer register → order → release → gates → 
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;
     assert.equal(placed.body.data.order.customerId, cust.id, "the order is the customer's own");
-    assert.equal(placed.body.data.order.status, "Paid", "wallet payment advanced it to Paid");
+    assert.equal(placed.body.data.order.status, "Pending", "created Unpaid, awaiting payment");
+
+    const settled = await request(app)
+      .post(`/api/orders/${orderId}/pay`)
+      .set("Authorization", `Bearer ${desk.accessToken}`)
+      .send({});
+    assert.equal(settled.status, 200, JSON.stringify(settled.body));
+    assert.equal((await orderRepo.findById(orderId)).status, "Paid", "wallet payment advanced it to Paid");
 
     // ── 3. Release desk allocates the fleet trucks ──────────────────────────
     const released = await request(app)

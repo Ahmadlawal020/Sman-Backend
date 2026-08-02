@@ -5,16 +5,20 @@ const { test, describe, before, beforeEach, afterEach, after } = require("node:t
 const assert = require("node:assert/strict");
 const nock = require("nock");
 
+const { eq } = require("drizzle-orm");
 const botCheck = require("../services/botCheck.service");
 const { sendSMSTermii } = require("../services/sms.service");
 const otpService = require("../services/otp.service");
 const { customerOtpRepo, customerRepo } = require("../repositories");
+const { db } = require("../config/db");
+const { customerOtps } = require("../db/schema");
 const { closeDb } = require("./helpers");
 
 const TURNSTILE_HOST = "https://challenges.cloudflare.com";
 const TURNSTILE_PATH = "/turnstile/v0/siteverify";
-const TERMII_HOST = "https://api.ng.termii.com";
-const TERMII_PATH = "/api/sms/send";
+// Termii v3 base URL — the default sms.service uses when TERMII_BASE_URL is unset.
+const TERMII_HOST = "https://v3.api.termii.com";
+const TERMII_PATH = "/sms/send";
 
 /**
  * Net connect is NOT disabled: these suites also talk to Postgres and to the
@@ -199,7 +203,10 @@ describe("external boundaries — Turnstile and Termii", () => {
       // The suite normally runs with the bypass on, which skips dispatch
       // entirely — so this whole path was previously never executed.
       process.env.OTP_DEV_MODE = "false";
-      await customerOtpRepo.invalidateLive(customer.id);
+      // Both tests here send a login OTP to the one fixture phone, and the
+      // per-phone rate window is 60 min. Clear the fixture's history (not just
+      // the live code) so a rerun within the hour starts under the cap.
+      await db.delete(customerOtps).where(eq(customerOtps.customerId, customer.id));
     });
 
     afterEach(() => {
