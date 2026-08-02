@@ -13,7 +13,7 @@ const {
 const { sql } = require("drizzle-orm");
 const { orderTruckStatusEnum } = require("./enums");
 const { orders } = require("./order");
-const { trucks } = require("./truck");
+const { fleetTrucks } = require("./fleetTruck");
 const { staff } = require("./staff");
 
 /**
@@ -42,7 +42,7 @@ const orderTrucks = pgTable(
     // Ordinal within the order — "truck 1 of 3". Drives the ticket suffix.
     truckIndex: smallint("truck_index").notNull(),
     // Soft link to the fleet vehicle (delivery only). Nullable by design.
-    truckId: integer("truck_id").references(() => trucks.id, { onDelete: "set null" }),
+    truckId: integer("truck_id").references(() => fleetTrucks.id, { onDelete: "set null" }),
     // The plate — the STORED source of truth. Delivery: copied from the fleet
     // record at release. Pickup: set by the entry officer at gate-in.
     truckNumber: varchar("truck_number", { length: 100 }),

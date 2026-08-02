@@ -15,10 +15,16 @@ const {
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
 const { staff } = require("./staff");
+const { drivers } = require("./driver");
 
-// Fleet registry — the company's own tanker fleet, distinct from the ops
-// `trucks` table (third-party/loading trucks). Mirrors the Django FleetTruck
-// model; financials live in fleet_ledger_entries, never as columns here.
+// The single truck registry.
+//
+// This absorbed the old `trucks` table: there is no longer an "ops trucks"
+// versus "fleet trucks" split, because two registries meant the same plate
+// had to be typed in two places and neither was authoritative. Vehicle
+// identity (VIN, year, make, model, type) came across from that table.
+//
+// Financials live in fleet_ledger_entries, never as columns here.
 const fleetTrucks = pgTable(
   "fleet_trucks",
   {
@@ -27,6 +33,18 @@ const fleetTrucks = pgTable(
     truckMake: varchar("truck_make", { length: 255 }).default(""),
     chassisNumber: varchar("chassis_number", { length: 255 }).default(""),
     maxCapacity: integer("max_capacity"),
+    // ── Vehicle identity, carried over from the old `trucks` table ─────────
+    vin: varchar("vin", { length: 50 }),
+    year: integer("year"),
+    model: varchar("model", { length: 100 }),
+    truckType: varchar("truck_type", { length: 100 }),
+    fuelLevel: integer("fuel_level").default(100),
+    registrationExpiry: date("registration_expiry"),
+    nextServiceMileage: integer("next_service_mileage"),
+    // The driver as a record rather than a name. The free-text driverName /
+    // driverPhone below are kept for rows that predate this and for one-off
+    // stand-ins who are not in the drivers table.
+    driverId: integer("driver_id").references(() => drivers.id, { onDelete: "set null" }),
     fuelCapacity: real("fuel_capacity"),
     avgLitresPerTrip: real("avg_litres_per_trip"),
     mileage: integer("mileage"),

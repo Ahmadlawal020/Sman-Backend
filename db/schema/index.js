@@ -1,8 +1,10 @@
 const enums = require("./enums");
 const staffSchema = require("./staff");
 const customerSchema = require("./customer");
-const truckSchema = require("./truck");
 const driverSchema = require("./driver");
+// Before its dependents: orderTruck, driverTruckHistory and deliveryInventory
+// all destructure `fleetTrucks` at load time.
+const fleetTruckSchema = require("./fleetTruck");
 const depotSchema = require("./depot");
 const productSchema = require("./product");
 const depotStaffSchema = require("./depotStaff");
@@ -33,7 +35,6 @@ const auditLogSchema = require("./auditLog");
 const orderTruckSchema = require("./orderTruck");
 const customerIdentitySchema = require("./customerIdentity");
 const auditEventSchema = require("./auditEvent");
-const fleetTruckSchema = require("./fleetTruck");
 const fleetLedgerSchema = require("./fleetLedgerEntry");
 const dailyReportSchema = require("./dailyReport");
 const incidentRecordSchema = require("./incidentRecord");
@@ -54,7 +55,6 @@ module.exports = {
   ...enums,
   ...staffSchema,
   ...customerSchema,
-  ...truckSchema,
   ...driverSchema,
   ...depotSchema,
   ...productSchema,

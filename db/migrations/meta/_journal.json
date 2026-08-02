@@ -218,6 +218,13 @@
       "when": 1785674806162,
       "tag": "0030_whole_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785695895267,
+      "tag": "0031_light_lake",
+      "breakpoints": true
     }
   ]
 }

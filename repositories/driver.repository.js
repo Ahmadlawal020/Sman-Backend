@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { drivers, trucks, driverTruckHistory } = require("../db/schema");
+const { drivers, fleetTrucks: trucks, driverTruckHistory } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(drivers).where(eq(drivers.id, id)).limit(1);

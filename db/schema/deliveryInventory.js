@@ -13,7 +13,7 @@ const {
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
 const { loadingStatusEnum, releaseStatusEnum } = require("./enums");
-const { trucks } = require("./truck");
+const { fleetTrucks } = require("./fleetTruck");
 const { pfis } = require("./pfi");
 const { deliveryCustomers } = require("./deliveryCustomer");
 
@@ -21,7 +21,7 @@ const deliveryInventory = pgTable(
   "delivery_inventory",
   {
     id: serial("id").primaryKey(),
-    truckId: integer("truck_id").references(() => trucks.id, { onDelete: "set null" }),
+    truckId: integer("truck_id").references(() => fleetTrucks.id, { onDelete: "set null" }),
     truckNumber: varchar("truck_number", { length: 30 }).default(""),
     pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "set null" }),
     pfiNumber: varchar("pfi_number", { length: 100 }).default(""),
