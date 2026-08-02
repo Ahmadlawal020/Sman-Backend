@@ -1,0 +1,385 @@
+const asyncHandler = require("express-async-handler");
+const {
+  lpgOrderRequestRepo,
+  lpgStationRepo,
+  customerRepo,
+} = require("../../repositories");
+const {
+  sendLpgRequestReceivedEmail,
+  sendLpgOrderConfirmedEmail,
+} = require("../../services/email.service");
+const { createDedicatedAccount } = require("../../services/payment.service");
+const { sendLpgOrderSMS } = require("../../services/sms.service");
+const { getCustomerInitials } = require("../../utils/helpers");
+const walletService = require("../../services/wallet.service");
+
+const getLpgOrderRequests = asyncHandler(async (req, res) => {
+  const { search, status, page = 1, limit = 50 } = req.query;
+  const result = await lpgOrderRequestRepo.findAll({ search, status, page, limit });
+  res.json({ success: true, data: result });
+});
+
+const getLpgOrderRequestById = asyncHandler(async (req, res) => {
+  const request = await lpgOrderRequestRepo.findByIdFull(Number(req.params.id));
+  if (!request) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+  res.json({ success: true, data: { request } });
+});
+
+const createLpgOrderRequest = asyncHandler(async (req, res) => {
+  const {
+    customerId, lpgStationId, cylinderSizeKg, cylinderQuantity,
+    deliveryAddress, deliveryState, deliveryLga,
+  } = req.body;
+
+  if (!customerId || !lpgStationId || !cylinderSizeKg || !cylinderQuantity || !deliveryAddress) {
+    return res.status(400).json({
+      success: false,
+      message: "Customer, LPG station, cylinder size, cylinder quantity, and delivery address are required",
+    });
+  }
+
+  const customer = await customerRepo.findById(Number(customerId));
+  if (!customer) {
+    return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  const station = await lpgStationRepo.findById(Number(lpgStationId));
+  if (!station) {
+    return res.status(404).json({ success: false, message: "LPG station not found" });
+  }
+
+  const requestNumber = await lpgOrderRequestRepo.generateRequestNumber();
+
+  const request = await lpgOrderRequestRepo.create({
+    requestNumber,
+    customerId: customer.id,
+    lpgStationId: Number(lpgStationId),
+    cylinderSizeKg: Number(cylinderSizeKg),
+    cylinderQuantity: Number(cylinderQuantity),
+    deliveryAddress,
+    deliveryState: deliveryState || "",
+    deliveryLga: deliveryLga || "",
+    pricePerKg: String(station.pricePerKg || 0),
+    status: "Pending Review",
+  });
+
+  if (customer.email) {
+    try {
+      await sendLpgRequestReceivedEmail(customer.email, {
+        requestNumber,
+        customerName: customer.name,
+        cylinderSizeKg: Number(cylinderSizeKg),
+        cylinderQuantity: Number(cylinderQuantity),
+        deliveryAddress,
+        deliveryState,
+      });
+    } catch (emailErr) {
+      console.error("Failed to send LPG request email:", emailErr);
+    }
+  }
+
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(request.id);
+
+  res.status(201).json({
+    success: true,
+    message: "LPG cooking gas order request submitted successfully",
+    data: { request: fullRequest },
+  });
+});
+
+const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const { deliveryPrice, expectedArrivalDate, action } = req.body;
+
+  const existing = await lpgOrderRequestRepo.findById(id);
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+
+  if (existing.status !== "Pending Review") {
+    return res.status(409).json({
+      success: false,
+      message: `Request is already ${existing.status}`,
+    });
+  }
+
+  if (action === "reject") {
+    const updated = await lpgOrderRequestRepo.update(id, {
+      status: "Rejected",
+      reviewedBy: req.user.id,
+      reviewedAt: new Date(),
+    });
+    const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+    return res.json({
+      success: true,
+      message: "Order request rejected",
+      data: { request: fullRequest },
+    });
+  }
+
+  const pricePerKg = Number(existing.pricePerKg) || 0;
+  if (!pricePerKg) {
+    return res.status(400).json({
+      success: false,
+      message: "Station price per Kg is not set. Please update the LPG station pricing first.",
+    });
+  }
+
+  // Check cylinder stock before approval
+  const stockResult = await lpgStationRepo.getCylinderStock(
+    existing.lpgStationId,
+    existing.cylinderSizeKg
+  );
+  if (!stockResult) {
+    return res.status(400).json({
+      success: false,
+      message: "Cylinder stock not found for this station and size",
+    });
+  }
+  if (stockResult.quantity < existing.cylinderQuantity) {
+    return res.status(400).json({
+      success: false,
+      message: `Insufficient cylinder stock. Available: ${stockResult.quantity}, Requested: ${existing.cylinderQuantity}`,
+    });
+  }
+
+  const totalWeightKg = Number(existing.cylinderSizeKg) * Number(existing.cylinderQuantity);
+  const totalAmount = (pricePerKg * totalWeightKg) + Number(deliveryPrice || 0);
+
+  // Decrement cylinder inventory
+  const decrementResult = await lpgStationRepo.decrementCylinderQuantity(
+    existing.lpgStationId,
+    existing.cylinderSizeKg,
+    existing.cylinderQuantity
+  );
+  if (!decrementResult.success) {
+    return res.status(400).json({
+      success: false,
+      message: decrementResult.message || "Failed to update cylinder inventory",
+    });
+  }
+
+  const updated = await lpgOrderRequestRepo.update(id, {
+    status: "Approved",
+    deliveryPrice: String(deliveryPrice || 0),
+    totalAmount: String(totalAmount),
+    expectedArrivalDate: expectedArrivalDate || "",
+    reviewedBy: req.user.id,
+    reviewedAt: new Date(),
+  });
+
+  const customer = await customerRepo.findById(existing.customerId);
+
+  let virtualAccountNumber = customer?.virtualAccountNumber || "";
+  let virtualAccountBank = customer?.virtualAccountBank || "";
+  let virtualAccountName = customer?.virtualAccountName || "";
+
+  if (!virtualAccountNumber && customer) {
+    try {
+      const accountResult = await createDedicatedAccount(customer);
+      if (accountResult.success) {
+        virtualAccountNumber = accountResult.data.accountNumber;
+        virtualAccountBank = accountResult.data.bankName;
+        virtualAccountName =
+          accountResult.data.accountName ||
+          `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+        const updateData = {
+          virtualAccountNumber,
+          virtualAccountBank,
+          virtualAccountName,
+        };
+        if (accountResult.data.paystackCustomerId) {
+          updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
+        }
+        await customerRepo.update(customer.id, updateData);
+      } else {
+        console.error("Failed to create DVA for customer:", accountResult.message);
+      }
+    } catch (dvaErr) {
+      console.error("DVA creation error:", dvaErr.message);
+    }
+  } else if (!virtualAccountName && customer) {
+    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    await customerRepo.update(customer.id, { virtualAccountName });
+  }
+
+  await lpgOrderRequestRepo.update(id, {
+    virtualAccountNumber,
+    virtualAccountBank,
+    virtualAccountName,
+  });
+
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+
+  if (fullRequest.customerEmail) {
+    try {
+      await sendLpgOrderConfirmedEmail(fullRequest.customerEmail, {
+        requestNumber: fullRequest.requestNumber,
+        customerName: fullRequest.customerName,
+        stationName: fullRequest.stationName,
+        cylinderSizeKg: fullRequest.cylinderSizeKg,
+        cylinderQuantity: fullRequest.cylinderQuantity,
+        pricePerKg: pricePerKg,
+        deliveryPrice: Number(deliveryPrice || 0),
+        totalAmount,
+        deliveryAddress: fullRequest.deliveryAddress,
+        deliveryState: fullRequest.deliveryState,
+        expectedArrivalDate: expectedArrivalDate || "",
+        accountNumber: virtualAccountNumber,
+        bankName: virtualAccountBank,
+        accountName: virtualAccountName,
+      });
+    } catch (emailErr) {
+      console.error("Failed to send LPG confirmation email:", emailErr);
+    }
+  }
+
+  if (customer?.phone) {
+    try {
+      await sendLpgOrderSMS(customer.phone, {
+        requestNumber: fullRequest.requestNumber,
+        customerName: fullRequest.customerName,
+        cylinderSizeKg: fullRequest.cylinderSizeKg,
+        cylinderQuantity: fullRequest.cylinderQuantity,
+        totalAmount,
+        accountNumber: virtualAccountNumber,
+        bankName: virtualAccountBank,
+        accountName: virtualAccountName,
+      });
+    } catch (smsErr) {
+      console.error("Failed to send LPG order SMS:", smsErr);
+    }
+  }
+
+  res.json({
+    success: true,
+    message: "Order request approved, confirmation email and SMS sent",
+    data: { request: fullRequest },
+  });
+});
+
+const updateLpgOrderPaymentStatus = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const { paymentStatus } = req.body;
+
+  if (!paymentStatus || !["Unpaid", "Paid"].includes(paymentStatus)) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid payment status is required (Unpaid or Paid)",
+    });
+  }
+
+  const existing = await lpgOrderRequestRepo.findById(id);
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+
+  const updated = await lpgOrderRequestRepo.update(id, { paymentStatus });
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+
+  res.json({
+    success: true,
+    message: `Payment status updated to ${paymentStatus}`,
+    data: { request: fullRequest },
+  });
+});
+
+const updateLpgOrderCollectionStatus = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const { collectionStatus } = req.body;
+
+  if (!collectionStatus || !["Pending", "Dispatched", "Collected"].includes(collectionStatus)) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid collection status is required (Pending, Dispatched, or Collected)",
+    });
+  }
+
+  const existing = await lpgOrderRequestRepo.findById(id);
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+
+  const updated = await lpgOrderRequestRepo.update(id, { collectionStatus });
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+
+  res.json({
+    success: true,
+    message: `Collection status updated to ${collectionStatus}`,
+    data: { request: fullRequest },
+  });
+});
+
+const getPayableLpgOrders = asyncHandler(async (req, res) => {
+  const orders = await lpgOrderRequestRepo.findPayableLpgOrders();
+  res.json({ success: true, data: { orders } });
+});
+
+const payLpgOrder = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  const existing = await lpgOrderRequestRepo.findById(id);
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+  if (existing.paymentStatus === "Paid") {
+    return res.status(409).json({ success: false, message: "Order is already paid" });
+  }
+  if (existing.status !== "Approved") {
+    return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });
+  }
+
+  const totalAmount = Number(existing.totalAmount);
+  if (!totalAmount || totalAmount <= 0) {
+    return res.status(400).json({ success: false, message: "Order total is invalid" });
+  }
+
+  const customer = await customerRepo.findById(existing.customerId);
+  if (!customer) {
+    return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  const debitResult = await walletService.debit({
+    customerId: customer.id,
+    amount: totalAmount,
+    description: `Payment for LPG Order ${existing.requestNumber}`,
+    reference: `LPG-PAY-${existing.id}`,
+  });
+
+  if (!debitResult.success) {
+    if (debitResult.insufficient) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance. Required: ₦${totalAmount.toLocaleString()}, Available: ₦${Number(customer.balance).toLocaleString()}`,
+      });
+    }
+    return res.status(400).json({ success: false, message: debitResult.message || "Payment failed" });
+  }
+
+  const updated = await lpgOrderRequestRepo.update(id, {
+    paymentStatus: "Paid",
+    paymentMode: "wallet",
+    paymentReference: debitResult.deposit?.reference || `LPG-PAY-${existing.id}`,
+  });
+
+  const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+
+  res.json({
+    success: true,
+    message: `LPG order ${existing.requestNumber} paid successfully from wallet`,
+    data: { request: fullRequest },
+  });
+});
+
+module.exports = {
+  getLpgOrderRequests,
+  getLpgOrderRequestById,
+  createLpgOrderRequest,
+  reviewLpgOrderRequest,
+  updateLpgOrderPaymentStatus,
+  updateLpgOrderCollectionStatus,
+  getPayableLpgOrders,
+  payLpgOrder,
+};

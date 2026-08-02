@@ -1,6 +1,6 @@
 {
-  "id": "7f8b36b1-c382-478c-b829-a58dda54d8da",
-  "prevId": "b8d39880-178d-4953-9d9b-b9378c5a8d2f",
+  "id": "fda44d46-8c7a-40c1-bf73-5b45187a851e",
+  "prevId": "7f8b36b1-c382-478c-b829-a58dda54d8da",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6199,6 +6199,96 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.lpg_station_cylinders": {
+      "name": "lpg_station_cylinders",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "lpg_station_id": {
+          "name": "lpg_station_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cylinder_size_kg": {
+          "name": "cylinder_size_kg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lpg_station_cylinders_station_idx": {
+          "name": "lpg_station_cylinders_station_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "lpg_station_cylinders_lpg_station_id_lpg_stations_id_fk": {
+          "name": "lpg_station_cylinders_lpg_station_id_lpg_stations_id_fk",
+          "tableFrom": "lpg_station_cylinders",
+          "tableTo": "lpg_stations",
+          "columnsFrom": [
+            "lpg_station_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "lpg_station_cylinders_size_check": {
+          "name": "lpg_station_cylinders_size_check",
+          "value": "\"lpg_station_cylinders\".\"cylinder_size_kg\" >= 1"
+        },
+        "lpg_station_cylinders_qty_check": {
+          "name": "lpg_station_cylinders_qty_check",
+          "value": "\"lpg_station_cylinders\".\"quantity\" >= 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.pfis": {

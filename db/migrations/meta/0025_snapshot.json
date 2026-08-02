@@ -1,6 +1,6 @@
 {
-  "id": "7f8b36b1-c382-478c-b829-a58dda54d8da",
-  "prevId": "b8d39880-178d-4953-9d9b-b9378c5a8d2f",
+  "id": "5c675b30-50ba-4b5d-82ff-6787ddd9c661",
+  "prevId": "fda44d46-8c7a-40c1-bf73-5b45187a851e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6201,6 +6201,96 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.lpg_station_cylinders": {
+      "name": "lpg_station_cylinders",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "lpg_station_id": {
+          "name": "lpg_station_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cylinder_size_kg": {
+          "name": "cylinder_size_kg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lpg_station_cylinders_station_idx": {
+          "name": "lpg_station_cylinders_station_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "lpg_station_cylinders_lpg_station_id_lpg_stations_id_fk": {
+          "name": "lpg_station_cylinders_lpg_station_id_lpg_stations_id_fk",
+          "tableFrom": "lpg_station_cylinders",
+          "tableTo": "lpg_stations",
+          "columnsFrom": [
+            "lpg_station_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "lpg_station_cylinders_size_check": {
+          "name": "lpg_station_cylinders_size_check",
+          "value": "\"lpg_station_cylinders\".\"cylinder_size_kg\" >= 1"
+        },
+        "lpg_station_cylinders_qty_check": {
+          "name": "lpg_station_cylinders_qty_check",
+          "value": "\"lpg_station_cylinders\".\"quantity\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.pfis": {
       "name": "pfis",
       "schema": "",
@@ -8343,6 +8433,265 @@
           "value": "\"offline_sale_items\".\"unit_price\" >= 0"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.lpg_order_requests": {
+      "name": "lpg_order_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "request_number": {
+          "name": "request_number",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lpg_station_id": {
+          "name": "lpg_station_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cylinder_size_kg": {
+          "name": "cylinder_size_kg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cylinder_quantity": {
+          "name": "cylinder_quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delivery_address": {
+          "name": "delivery_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delivery_state": {
+          "name": "delivery_state",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "delivery_lga": {
+          "name": "delivery_lga",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Pending Review'"
+        },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Unpaid'"
+        },
+        "collection_status": {
+          "name": "collection_status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Pending'"
+        },
+        "price_per_kg": {
+          "name": "price_per_kg",
+          "type": "numeric(15, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delivery_price": {
+          "name": "delivery_price",
+          "type": "numeric(15, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_amount": {
+          "name": "total_amount",
+          "type": "numeric(15, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_arrival_date": {
+          "name": "expected_arrival_date",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_reference": {
+          "name": "payment_reference",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_mode": {
+          "name": "payment_mode",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "virtual_account_number": {
+          "name": "virtual_account_number",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "virtual_account_bank": {
+          "name": "virtual_account_bank",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "virtual_account_name": {
+          "name": "virtual_account_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lpg_requests_status_idx": {
+          "name": "lpg_requests_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lpg_requests_customer_idx": {
+          "name": "lpg_requests_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lpg_requests_station_idx": {
+          "name": "lpg_requests_station_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "lpg_order_requests_customer_id_customers_id_fk": {
+          "name": "lpg_order_requests_customer_id_customers_id_fk",
+          "tableFrom": "lpg_order_requests",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "lpg_order_requests_lpg_station_id_lpg_stations_id_fk": {
+          "name": "lpg_order_requests_lpg_station_id_lpg_stations_id_fk",
+          "tableFrom": "lpg_order_requests",
+          "tableTo": "lpg_stations",
+          "columnsFrom": [
+            "lpg_station_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "lpg_order_requests_reviewed_by_staff_id_fk": {
+          "name": "lpg_order_requests_reviewed_by_staff_id_fk",
+          "tableFrom": "lpg_order_requests",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "reviewed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.wa_sessions": {

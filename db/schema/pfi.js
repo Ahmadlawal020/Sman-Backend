@@ -14,6 +14,7 @@ const {
 const { sql } = require("drizzle-orm");
 const { pfiStatusEnum } = require("./enums");
 const { depots } = require("./depot");
+const { lpgStations } = require("./lpgStation");
 const { products } = require("./product");
 const { staff } = require("./staff");
 
@@ -26,6 +27,7 @@ const pfis = pgTable(
     description: text("description").default(""),
     pfiDate: timestamp("pfi_date", { withTimezone: true }),
     locationId: integer("location_id").references(() => depots.id, { onDelete: "set null" }),
+    lpgStationId: integer("lpg_station_id").references(() => lpgStations.id, { onDelete: "set null" }),
     locationName: varchar("location_name", { length: 255 }).default(""),
     productId: integer("product_id").references(() => products.id, { onDelete: "set null" }),
     productName: varchar("product_name", { length: 255 }).default(""),
@@ -67,6 +69,7 @@ const pfis = pgTable(
   (table) => [
     uniqueIndex("pfis_pfi_number_idx").on(table.pfiNumber),
     index("pfis_location_product_status_idx").on(table.locationId, table.productId, table.status),
+    index("pfis_lpg_station_idx").on(table.lpgStationId),
     index("pfis_status_idx").on(table.status),
     check("pfis_qty_check", sql`${table.startingQtyLitres} >= 0`),
     check("pfis_sold_qty_check", sql`${table.soldQtyLitres} >= 0`),
