@@ -209,18 +209,20 @@ describe("truck gate flow — Released → Loading → Completed", () => {
 
   // ── guards ─────────────────────────────────────────────────────────────────
 
-  test("out-of-order actions are refused 409 (load before gate-in; gate-out before load)", async () => {
+  test("load before gate-in is refused 409; gate-out is arrival-based, not load-gated", async () => {
     const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
-    // load before gate-in
+    // A pending truck cannot be marked loaded — it must be entered first.
     let res = await request(app)
       .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
       .set("Authorization", `Bearer ${ticketing.accessToken}`)
       .send({});
     assert.equal(res.status, 409);
 
-    // gate it in, then try to gate out before loading
+    // The gate rule is arrival-based: once a truck has entered (gated_in) it may
+    // exit, even without a separate load record. Only a truck that never
+    // arrived (still pending) is refused at the exit gate.
     await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
@@ -229,10 +231,10 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
-    assert.equal(res.status, 409);
+    assert.equal(res.status, 200);
   });
 
-  test("gating the same truck in twice is refused 409", async () => {
+  test("gating the same truck in twice is idempotent — the second entry reports the first", async () => {
     const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
@@ -242,11 +244,13 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .send({ loadId: t.id });
     assert.equal(res.status, 200);
 
+    // A repeat gate-in does not error or overwrite the original entry — it
+    // returns 200 and reports the existing load.
     res = await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
       .send({ loadId: t.id });
-    assert.equal(res.status, 409);
+    assert.equal(res.status, 200);
   });
 
   test("each checkpoint is gated to its role", async () => {

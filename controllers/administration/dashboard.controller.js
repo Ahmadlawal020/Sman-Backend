@@ -88,7 +88,7 @@ const getOverview = asyncHandler(async (req, res) => {
         id: trucks.id,
         plateNumber: trucks.plateNumber,
         model: trucks.model,
-        status: trucks.status,
+        status: trucks.truckStatus,
         fuelLevel: trucks.fuelLevel,
         createdAt: trucks.createdAt,
       })
