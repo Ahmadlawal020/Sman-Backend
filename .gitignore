@@ -13,3 +13,17 @@ WHATSAPP_PLAN.md
 WHATSAPP_ENGINE_PLAN.md
 PR2_PLAN.md
 .claude/
+.DS_Store
+docs/dangote-delivery-comparison.html
+docs/dangote-delivery-overview.html
+docs/dangote-delivery-plan-v2.md
+docs/dangote-delivery-plan.html
+docs/dangote-implementation-comparison.html
+docs/dangote-improvements-plan.md
+docs/dangote-main-vs-branch.html
+docs/dangote-products-and-requests-plan.md
+docs/lpg-home-delivery-plan.md
+docs/lpg-whatsapp-subflow.html
+scripts/approve-license.js
+scripts/seed-status-demo-orders.js
+scripts/wipe-customer-by-phone.js
