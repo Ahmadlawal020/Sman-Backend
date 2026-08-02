@@ -55,12 +55,17 @@ const findByIdFull = async (id) => {
   return row || null;
 };
 
-const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+
+  // Portal scoping: the customer sees only their own requests.
+  if (customerId) {
+    conditions.push(eq(dangoteOrderRequests.customerId, customerId));
+  }
 
   if (status && status !== "all") {
     conditions.push(eq(dangoteOrderRequests.status, status));
