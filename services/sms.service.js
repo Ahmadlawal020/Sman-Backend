@@ -157,4 +157,21 @@ const sendLpgOrderSMS = async (phone, orderData) => {
   return { success: false, message: "All Termii channels failed" };
 };
 
-module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, sendLpgOrderSMS, CHANNELS };
+const sendOrderExpiredSMS = async (phone, { orderNumber, customerName }) => {
+  const name = customerName ? `Hi ${customerName}, ` : "";
+  const sms = `${name}your Soroman order ${orderNumber} has expired because payment wasn't received in time. The price is no longer held — place a new order at today's prices whenever you're ready.`;
+
+  for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
+    try {
+      const result = await sendSMSTermii(phone, sms, channel);
+      if (result.success) return { success: true, message: "SMS sent successfully" };
+      console.warn(`Termii ${channel} channel failed:`, result.message);
+    } catch (error) {
+      const errMsg = error.response?.data?.message || error.message || "Termii SMS error";
+      console.warn(`Termii ${channel} channel error:`, errMsg);
+    }
+  }
+  return { success: false, message: "All Termii channels failed" };
+};
+
+module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, sendLpgOrderSMS, sendOrderExpiredSMS, CHANNELS };

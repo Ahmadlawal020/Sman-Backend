@@ -13,7 +13,7 @@ const {
 const walletService = require("./wallet.service");
 const { createDedicatedAccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
-const { sendOrderSummarySMS } = require("./sms.service");
+const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
 const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
@@ -483,8 +483,9 @@ async function expireStaleOrders() {
   let expired = 0;
   for (const row of stale) {
     try {
-      await expireOrder(row.id);
+      const order = await expireOrder(row.id);
       expired += 1;
+      await notifyOrderExpired(order);
     } catch (err) {
       console.error(`[expiry] order ${row.orderNumber} (#${row.id}) skipped:`, err.message);
     }
@@ -492,6 +493,25 @@ async function expireStaleOrders() {
 
   console.log(`[expiry] considered ${stale.length} stale order(s); expired ${expired}`);
   return expired;
+}
+
+/**
+ * Tell the customer their order lapsed — best-effort, never fails the sweep. The
+ * order got an SMS at placement; this closes the loop so a lapsed order isn't
+ * silent. The customer is unpaid, so there's nothing to refund.
+ */
+async function notifyOrderExpired(order) {
+  try {
+    const customer = await customerRepo.findById(order.customerId);
+    if (customer?.phone) {
+      await sendOrderExpiredSMS(customer.phone, {
+        orderNumber: order.orderNumber,
+        customerName: customer.name,
+      });
+    }
+  } catch (err) {
+    console.error(`[expiry] failed to notify customer for ${order.orderNumber}:`, err.message);
+  }
 }
 
 /**
