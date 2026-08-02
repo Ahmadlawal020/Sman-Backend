@@ -45,7 +45,11 @@ CREATE TABLE "pfi_expense_audits" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "fleet_trucks" ADD COLUMN "incidents" text DEFAULT '[]';--> statement-breakpoint
 ALTER TABLE "pfis" ADD COLUMN "bl_qty_litres" integer;--> statement-breakpoint
+ALTER TABLE "order_trucks" ADD COLUMN "entry_driver_name" varchar(255);--> statement-breakpoint
+ALTER TABLE "order_trucks" ADD COLUMN "entry_driver_phone" varchar(50);--> statement-breakpoint
+ALTER TABLE "order_trucks" ADD COLUMN "gantry" varchar(20);--> statement-breakpoint
 ALTER TABLE "expense_categories" ADD CONSTRAINT "expense_categories_pfi_id_pfis_id_fk" FOREIGN KEY ("pfi_id") REFERENCES "public"."pfis"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pfi_expenses" ADD CONSTRAINT "pfi_expenses_pfi_id_pfis_id_fk" FOREIGN KEY ("pfi_id") REFERENCES "public"."pfis"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pfi_expenses" ADD CONSTRAINT "pfi_expenses_category_id_expense_categories_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."expense_categories"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint

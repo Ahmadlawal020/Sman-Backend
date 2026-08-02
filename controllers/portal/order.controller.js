@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
-const { placeOrder, updatePickupTrucks } = require("../../services/order.service");
+const { placeOrder, updatePickupTrucks, payOrder } = require("../../services/order.service");
 const walletService = require("../../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 const {
@@ -67,10 +67,11 @@ const withOwnerDetail = async (order) => {
  *
  * The customer id comes from the token (req.customer), never the body: a
  * customer can only order for themselves. The heavy lifting — pricing, stock,
- * the atomic transaction, the wallet-pays Paid transition, notifications — is
- * the shared placeOrder service, the same one the desk uses. If the wallet
- * can't cover it the order is created Unpaid and the response carries the
- * virtual account to pay into; the Paystack webhook then advances it to Paid.
+ * the atomic transaction, notifications — is the shared placeOrder service, the
+ * same one the desk uses. Orders are always created Unpaid; the response carries
+ * the virtual account to pay into. Payment then arrives one of three ways: a
+ * bank transfer the Paystack webhook confirms, the customer paying from wallet
+ * balance (POST /:id/pay), or staff settling it from finance.
  */
 const createMyOrder = asyncHandler(async (req, res) => {
   const {
@@ -196,6 +197,30 @@ const simulateMyPayment = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/customer/orders/:id/pay — the customer settles their OWN unpaid
+ * order from their wallet balance (the self-service "Pay from wallet" action).
+ *
+ * The shared payOrder service places the hold, drives Pending→Paid, and issues
+ * the ticket + commission in one transaction. `customerId` scopes it to the
+ * caller: a foreign order 404s under the row lock, never confirmed. An empty
+ * balance is a 400, an already-paid or non-Pending order a 409 — all surfaced
+ * from the service with the customer-facing message.
+ */
+const payMyOrder = asyncHandler(async (req, res) => {
+  const order = await payOrder({
+    orderId: Number(req.params.id),
+    customerId: req.customer.id,
+    actor: { type: "customer", customerId: req.customer.id },
+  });
+
+  res.json({
+    success: true,
+    message: `Order ${order.orderNumber} paid from your wallet balance.`,
+    data: { order: await withOwnerDetail(order) },
+  });
+});
+
+/**
  * PATCH /api/customer/orders/by-ref/:ref/trucks — replace the pickup truck
  * declaration on the caller's own order. Plate/driver may be blank (filled at
  * the gate); quantities must still sum to the order. Refuses once any load
@@ -230,5 +255,6 @@ module.exports = {
   getMyOrder,
   getMyOrderByRef,
   simulateMyPayment,
+  payMyOrder,
   updateMyOrderTrucks,
 };

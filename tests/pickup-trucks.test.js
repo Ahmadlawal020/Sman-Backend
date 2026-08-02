@@ -9,7 +9,16 @@ const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
 const { customerRepo, orderTruckRepo, ticketRepo, auditLogRepo } = require("../repositories");
+const orderService = require("../services/order.service");
 const { staffTokenWithRoles, NATIVE_TRANSPORT, closeDb } = require("./helpers");
+
+/**
+ * Pay an order from the customer's wallet — the manual "Pay Now" action that
+ * moves Pending → Paid. Orders are created Unpaid; releasing and gating need a
+ * Paid order, so tests that reach the gate pay first.
+ */
+const payFromWallet = (orderId) =>
+  orderService.payOrder({ orderId, actor: { type: "system" } });
 
 const PORTAL_AUTH = "/api/customer/auth";
 const ORDERS = "/api/customer/orders";
@@ -124,6 +133,9 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
       "plate + per-truck quantity captured, awaiting the gate"
     );
     assert.equal(loads[0].orderId, orderId);
+
+    // Placement no longer debits the wallet; paying the order does.
+    await payFromWallet(orderId);
     assert.equal((await customerRepo.findById(customer.id)).balance, "0.00", "wallet paid the order");
   });
 
@@ -174,6 +186,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;
 
+    await payFromWallet(orderId);
     await request(app)
       .post(`/api/orders/${orderId}/release`)
       .set("Authorization", `Bearer ${release.accessToken}`)
@@ -202,6 +215,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
       .send(body({ quantity: 30000, trucks: [{ truckNumber: "PK-FIRST", quantity: 30000 }] }));
     const orderId = placed.body.data.order.id;
 
+    await payFromWallet(orderId);
     await request(app)
       .post(`/api/orders/${orderId}/release`)
       .set("Authorization", `Bearer ${release.accessToken}`)
@@ -297,6 +311,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     const ref = placed.body.data.order.orderNumber;
     const load = (await orderTruckRepo.findByOrder(orderId))[0];
 
+    await payFromWallet(orderId);
     const releaseRes = await request(app)
       .post(`/api/orders/${orderId}/release`)
       .set("Authorization", `Bearer ${release.accessToken}`)

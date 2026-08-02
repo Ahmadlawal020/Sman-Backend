@@ -39,6 +39,7 @@ app.use("/api/dashboard", require("./routes/administration/dashboard.route"));
 app.use("/api/trucks", require("./routes/administration/truck.route"));
 app.use("/api/drivers", require("./routes/administration/driver.route"));
 app.use("/api/depots", require("./routes/administration/depot.route"));
+app.use("/api/lpg-stations", require("./routes/administration/lpgStation.route"));
 app.use("/api/filing-stations", require("./routes/administration/filingStation.route"));
 app.use("/api/products", require("./routes/administration/product.route"));
 app.use("/api/pfis", require("./routes/administration/pfi.route"));
@@ -53,6 +54,7 @@ app.use("/api/deposits", require("./routes/administration/deposit.route"));
 app.use("/api/bank-accounts", require("./routes/administration/bankAccount.route"));
 app.use("/api/bank-statements", require("./routes/administration/bankStatement.route"));
 app.use("/api/settlements", require("./routes/administration/settlement.route"));
+app.use("/api/order-expiry", require("./routes/administration/orderExpiry.route"));
 
 // ERP modules
 app.use("/api/fleet", require("./routes/administration/fleet.route"));
@@ -66,6 +68,9 @@ app.use("/api/uploads", require("./routes/administration/upload.route"));
 
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));
+
+// LPG cooking gas orders
+app.use("/api", require("./routes/administration/lpgOrder.route"));
 
 // Event consumers: audit writes every business event; notifications react to
 // the ones customers and staff should hear about. Registered once, here,

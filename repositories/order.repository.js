@@ -349,6 +349,24 @@ const findPayableOrders = async () => {
     .orderBy(asc(orders.createdAt));
 };
 
+/**
+ * Pending, unpaid orders created on or before `cutoff` — the expiry sweep's
+ * work list. Oldest first, so the log reads in the order they lapsed.
+ */
+const findStalePending = async (cutoff) => {
+  return db
+    .select({ id: orders.id, orderNumber: orders.orderNumber, createdAt: orders.createdAt })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.status, "Pending"),
+        eq(orders.paymentStatus, "Unpaid"),
+        lte(orders.createdAt, cutoff)
+      )
+    )
+    .orderBy(asc(orders.createdAt));
+};
+
 module.exports = {
   findById,
   lockById,
@@ -364,4 +382,5 @@ module.exports = {
   findOpenByCustomer,
   countByPfi,
   findPayableOrders,
+  findStalePending,
 };

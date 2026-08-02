@@ -1,0 +1,1 @@
+ALTER TABLE "lpg_stations" ADD COLUMN "price_per_kg" numeric(15, 2) DEFAULT '0' NOT NULL;

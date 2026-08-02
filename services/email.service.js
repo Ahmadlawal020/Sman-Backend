@@ -874,6 +874,351 @@ const sendDangoteOrderConfirmedEmail = async (email, requestData) => {
   });
 };
 
+const sendLpgRequestReceivedEmail = async (email, requestData) => {
+  const {
+    requestNumber,
+    customerName,
+    cylinderSizeKg,
+    cylinderQuantity,
+    deliveryAddress,
+    deliveryState,
+  } = requestData;
+
+  await resend.emails.send({
+    from: process.env.EMAIL_FROM || "Soroman Dashboard <onboarding@resend.dev>",
+    to: email,
+    subject: `LPG Cooking Gas Order Request Received - ${requestNumber}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin:0;padding:0;background-color:#f4f7fa;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fa;padding:40px 20px;">
+            <tr>
+              <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.07);">
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:32px 40px;">
+                      <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">Soroman</h1>
+                      <p style="margin:8px 0 0;color:#ccfbf1;font-size:14px;">LPG Cooking Gas Order Request</p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:40px;">
+                      <h2 style="margin:0 0 16px;color:#1e293b;font-size:20px;font-weight:600;">Request Received</h2>
+                      <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
+                        Dear ${escapeHtml(customerName)},
+                      </p>
+                      <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
+                        Your LPG cooking gas home delivery order request has been received and is currently <strong style="color:#d97706;">under review</strong>. Our team will review your request and get back to you shortly.
+                      </p>
+
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:8px;padding:16px;margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:8px 12px;">
+                            <p style="margin:0 0 4px;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Request Number</p>
+                            <p style="margin:0;color:#1e293b;font-size:16px;font-weight:700;font-family:monospace;">${requestNumber}</p>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Cylinder Size</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${cylinderSizeKg} Kg</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Quantity</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${Number(cylinderQuantity).toLocaleString()} cylinder${Number(cylinderQuantity) > 1 ? 's' : ''}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;">
+                            <span style="color:#475569;font-size:13px;">Delivery Address</span>
+                          </td>
+                          <td style="padding:8px 0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${escapeHtml(deliveryAddress)}${deliveryState ? `, ${escapeHtml(deliveryState)}` : ""}</span>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #fbbf24;border-radius:8px;padding:16px;margin-bottom:24px;">
+                        <tr>
+                          <td>
+                            <p style="margin:0;color:#92400e;font-size:13px;line-height:1.5;">
+                              <strong>What happens next?</strong><br/>
+                              Our team will review your request and set the pricing. Once approved, you will receive a confirmation email with the full order details, pricing, and payment instructions.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.5;text-align:center;">
+                        Thank you for choosing Soroman. If you have any questions, please contact us.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="background-color:#f8fafc;padding:24px 40px;border-top:1px solid #e2e8f0;">
+                      <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">
+                        &copy; ${new Date().getFullYear()} Soroman. All rights reserved.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
+    `,
+  });
+};
+
+const sendLpgOrderConfirmedEmail = async (email, requestData) => {
+  const {
+    requestNumber,
+    customerName,
+    stationName,
+    cylinderSizeKg,
+    cylinderQuantity,
+    pricePerKg,
+    deliveryPrice,
+    totalAmount,
+    deliveryAddress,
+    deliveryState,
+    expectedArrivalDate,
+    accountNumber,
+    bankName,
+    accountName,
+  } = requestData;
+
+  const formattedTotal = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 2,
+  }).format(totalAmount);
+
+  const formattedPricePerKg = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 2,
+  }).format(pricePerKg);
+
+  const formattedDeliveryPrice = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 2,
+  }).format(deliveryPrice || 0);
+
+  const totalWeightKg = Number(cylinderSizeKg) * Number(cylinderQuantity);
+
+  await resend.emails.send({
+    from: process.env.EMAIL_FROM || "Soroman Dashboard <onboarding@resend.dev>",
+    to: email,
+    subject: `LPG Cooking Gas Order Confirmed - ${requestNumber}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin:0;padding:0;background-color:#f4f7fa;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fa;padding:40px 20px;">
+            <tr>
+              <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.07);">
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:32px 40px;">
+                      <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">Soroman</h1>
+                      <p style="margin:8px 0 0;color:#ccfbf1;font-size:14px;">LPG Cooking Gas Order Confirmed</p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:40px;">
+                      <div style="text-align:center;margin-bottom:32px;">
+                        <div style="display:inline-block;height:64px;width:64px;border-radius:50%;background-color:#d1fae5;border:2px solid #a7f3d0;line-height:64px;font-size:28px;color:#059669;">&#10003;</div>
+                        <h2 style="margin:16px 0 8px;color:#1e293b;font-size:22px;font-weight:700;">Order Confirmed!</h2>
+                        <p style="margin:0;color:#475569;font-size:14px;">Your LPG cooking gas order request has been approved and confirmed.</p>
+                      </div>
+
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:8px;padding:16px;margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:8px 12px;">
+                            <p style="margin:0 0 4px;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Order Reference</p>
+                            <p style="margin:0;color:#1e293b;font-size:16px;font-weight:700;font-family:monospace;">${requestNumber}</p>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:8px;padding:16px;margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:8px 12px;">
+                            <p style="margin:0 0 4px;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Customer</p>
+                            <p style="margin:0;color:#1e293b;font-size:15px;font-weight:600;">${escapeHtml(customerName)}</p>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <h3 style="margin:0 0 12px;color:#1e293b;font-size:15px;border-bottom:2px solid #f1f5f9;padding-bottom:6px;">Order Details</h3>
+                      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                        ${stationName ? `
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">LPG Station</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${escapeHtml(stationName)}</span>
+                          </td>
+                        </tr>` : ""}
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Cylinder Size</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${cylinderSizeKg} Kg</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Quantity</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${Number(cylinderQuantity).toLocaleString()} cylinder${Number(cylinderQuantity) > 1 ? 's' : ''} (${totalWeightKg.toLocaleString()} Kg total)</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Delivery Address</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${escapeHtml(deliveryAddress)}${deliveryState ? `, ${escapeHtml(deliveryState)}` : ""}</span>
+                          </td>
+                        </tr>
+                        ${expectedArrivalDate ? `
+                        <tr>
+                          <td style="padding:8px 0;">
+                            <span style="color:#475569;font-size:13px;">Expected Arrival</span>
+                          </td>
+                          <td style="padding:8px 0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${expectedArrivalDate}</span>
+                          </td>
+                        </tr>` : ""}
+                      </table>
+
+                      <h3 style="margin:0 0 12px;color:#1e293b;font-size:15px;border-bottom:2px solid #f1f5f9;padding-bottom:6px;">Pricing & Payment</h3>
+                      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Price Per Kg</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${formattedPricePerKg}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Total Weight</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${totalWeightKg.toLocaleString()} Kg</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
+                            <span style="color:#475569;font-size:13px;">Delivery Price</span>
+                          </td>
+                          <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;text-align:right;">
+                            <span style="color:#1e293b;font-size:13px;font-weight:600;">${formattedDeliveryPrice}</span>
+                          </td>
+                        </tr>
+                        <tr style="border-top:2px solid #0d9488;">
+                          <td style="padding:12px 0;">
+                            <span style="color:#1e293b;font-size:16px;font-weight:700;">Total Amount</span>
+                          </td>
+                          <td style="padding:12px 0;text-align:right;">
+                            <span style="color:#0d9488;font-size:20px;font-weight:700;">${formattedTotal}</span>
+                          </td>
+                        </tr>
+                      </table>
+
+                      ${accountNumber ? `
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1px solid #a7f3d0;border-radius:8px;padding:20px;margin-bottom:24px;">
+                        <tr>
+                          <td style="padding:0 0 8px;">
+                            <p style="margin:0;color:#065f46;font-size:14px;font-weight:700;">Payment Details</p>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:4px 0;">
+                            <span style="color:#065f46;font-size:13px;">Bank: </span>
+                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(bankName)}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:4px 0;">
+                            <span style="color:#065f46;font-size:13px;">Account Number: </span>
+                            <span style="color:#065f46;font-size:18px;font-weight:700;font-family:monospace;letter-spacing:2px;">${escapeHtml(accountNumber)}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:4px 0;">
+                            <span style="color:#065f46;font-size:13px;">Account Name: </span>
+                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || `SOROMANNIGERI/ ${getCustomerInitials(customerName)}`)}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0 0;">
+                            <p style="margin:0;color:#047857;font-size:12px;line-height:1.5;">Please make payment to the dedicated account above. Your payment will be confirmed automatically.</p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : `
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1px solid #a7f3d0;border-radius:8px;padding:20px;margin-bottom:24px;">
+                        <tr>
+                          <td>
+                            <p style="margin:0 0 8px;color:#065f46;font-size:14px;font-weight:700;">Payment Instructions</p>
+                            <p style="margin:0;color:#047857;font-size:13px;line-height:1.5;">
+                              Please make payment for the confirmed amount. Once payment is verified, your order will be processed for delivery. Contact our finance team for payment details.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      `}
+
+                      <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.5;text-align:center;">
+                        Thank you for your business. If you have any questions, please contact us.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="background-color:#f8fafc;padding:24px 40px;border-top:1px solid #e2e8f0;">
+                      <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">
+                        &copy; ${new Date().getFullYear()} Soroman. All rights reserved.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
+    `,
+  });
+};
+
 module.exports = {
   sendPasswordSetupEmail,
   sendPasswordResetEmail,
@@ -881,4 +1226,6 @@ module.exports = {
   sendTicketEmail,
   sendDangoteRequestReceivedEmail,
   sendDangoteOrderConfirmedEmail,
+  sendLpgRequestReceivedEmail,
+  sendLpgOrderConfirmedEmail,
 };

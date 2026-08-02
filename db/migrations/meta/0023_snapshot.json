@@ -1,5 +1,5 @@
 {
-  "id": "2abe1b42-8e1c-463b-a87e-d3dccd5243fb",
+  "id": "7f8b36b1-c382-478c-b829-a58dda54d8da",
   "prevId": "b8d39880-178d-4953-9d9b-b9378c5a8d2f",
   "version": "7",
   "dialect": "postgresql",
@@ -5968,6 +5968,239 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.lpg_stations": {
+      "name": "lpg_stations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "city": {
+          "name": "city",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country": {
+          "name": "country",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "postcode": {
+          "name": "postcode",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lpg_capacity_kg": {
+          "name": "lpg_capacity_kg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "depot_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Active'"
+        },
+        "established_year": {
+          "name": "established_year",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lpg_stations_code_idx": {
+          "name": "lpg_stations_code_idx",
+          "columns": [
+            {
+              "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "lpg_stations_capacity_check": {
+          "name": "lpg_stations_capacity_check",
+          "value": "\"lpg_stations\".\"lpg_capacity_kg\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.lpg_station_staff": {
+      "name": "lpg_station_staff",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "lpg_station_id": {
+          "name": "lpg_station_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lpg_station_staff_unique_idx": {
+          "name": "lpg_station_staff_unique_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "staff_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lpg_station_staff_station_idx": {
+          "name": "lpg_station_staff_station_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lpg_station_staff_staff_idx": {
+          "name": "lpg_station_staff_staff_idx",
+          "columns": [
+            {
+              "expression": "staff_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "lpg_station_staff_lpg_station_id_lpg_stations_id_fk": {
+          "name": "lpg_station_staff_lpg_station_id_lpg_stations_id_fk",
+          "tableFrom": "lpg_station_staff",
+          "tableTo": "lpg_stations",
+          "columnsFrom": [
+            "lpg_station_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "lpg_station_staff_staff_id_staff_id_fk": {
+          "name": "lpg_station_staff_staff_id_staff_id_fk",
+          "tableFrom": "lpg_station_staff",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.pfis": {
       "name": "pfis",
       "schema": "",
@@ -6007,6 +6240,12 @@
         },
         "location_id": {
           "name": "location_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lpg_station_id": {
+          "name": "lpg_station_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -6285,6 +6524,21 @@
           "method": "btree",
           "with": {}
         },
+        "pfis_lpg_station_idx": {
+          "name": "pfis_lpg_station_idx",
+          "columns": [
+            {
+              "expression": "lpg_station_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "pfis_status_idx": {
           "name": "pfis_status_idx",
           "columns": [
@@ -6308,6 +6562,19 @@
           "tableTo": "depots",
           "columnsFrom": [
             "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "pfis_lpg_station_id_lpg_stations_id_fk": {
+          "name": "pfis_lpg_station_id_lpg_stations_id_fk",
+          "tableFrom": "pfis",
+          "tableTo": "lpg_stations",
+          "columnsFrom": [
+            "lpg_station_id"
           ],
           "columnsTo": [
             "id"
@@ -7505,24 +7772,6 @@
         "driver_phone": {
           "name": "driver_phone",
           "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "entry_driver_name": {
-          "name": "entry_driver_name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "entry_driver_phone": {
-          "name": "entry_driver_phone",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "gantry": {
-          "name": "gantry",
-          "type": "varchar(20)",
           "primaryKey": false,
           "notNull": false
         },

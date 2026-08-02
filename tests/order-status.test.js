@@ -98,6 +98,10 @@ describe("order state machine — legal transitions, atomic with audit, single-w
     assert.ok(orderStatus.isLegal("Pending", "Cancelled"));
     assert.ok(orderStatus.isLegal("Released", "Cancelled"));
     assert.ok(!orderStatus.isLegal("Loading", "Cancelled"));
+    // Expire only from Pending — a funded (Paid+) order can never lapse.
+    assert.ok(orderStatus.isLegal("Pending", "Expired"));
+    assert.ok(!orderStatus.isLegal("Paid", "Expired"));
+    assert.ok(!orderStatus.isLegal("Released", "Expired"));
     // No backwards / skips.
     assert.ok(!orderStatus.isLegal("Loading", "Pending"));
     assert.ok(!orderStatus.isLegal("Pending", "Released"));
