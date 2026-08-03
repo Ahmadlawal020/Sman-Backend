@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "company_name" varchar(255) DEFAULT '' NOT NULL;

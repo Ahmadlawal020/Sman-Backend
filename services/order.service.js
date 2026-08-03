@@ -121,6 +121,7 @@ async function placeOrder({
   quantity,
   deliveryType,
   deliveryAddress,
+  companyName,
   trucks,
   actor = { type: "system" },
   // Callers whose requests can be redelivered (the WhatsApp CONFIRM step
@@ -271,6 +272,7 @@ async function placeOrder({
           deliveryType === "delivery" && typeof deliveryAddress === "string"
             ? deliveryAddress.trim()
             : "",
+        companyName: typeof companyName === "string" ? companyName.trim() : "",
         status: "Pending",
         paymentStatus: "Unpaid",
         virtualAccountNumber,

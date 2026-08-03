@@ -45,6 +45,9 @@ const orders = pgTable(
     // words. Empty for pickup (the depot is the address) and for orders
     // predating the column. `state` above stays the routing/pricing field.
     deliveryAddress: text("delivery_address").default("").notNull(),
+    // The company the customer is buying for on this order — may differ from
+    // the customer's own registered companyName on their profile.
+    companyName: varchar("company_name", { length: 255 }).default("").notNull(),
     pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "set null" }),
     virtualAccountNumber: varchar("virtual_account_number", { length: 30 }).default(""),
     virtualAccountBank: varchar("virtual_account_bank", { length: 100 }).default(""),

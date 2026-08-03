@@ -81,6 +81,7 @@ const createMyOrder = asyncHandler(async (req, res) => {
     quantity,
     deliveryType,
     deliveryAddress,
+    companyName,
     trucks,
   } = req.body;
 
@@ -92,6 +93,7 @@ const createMyOrder = asyncHandler(async (req, res) => {
     quantity,
     deliveryType,
     deliveryAddress,
+    companyName,
     trucks,
     actor: { type: "customer", customerId: req.customer.id },
   });

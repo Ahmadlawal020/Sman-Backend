@@ -54,7 +54,7 @@ const getOrderById = asyncHandler(async (req, res) => {
 const createOrder = asyncHandler(async (req, res) => {
   const {
     customer: customerId, state, depot: depotId,
-    product: productId, quantity, deliveryType, deliveryAddress, trucks,
+    product: productId, quantity, deliveryType, deliveryAddress, companyName, trucks,
   } = req.body;
 
   if (!customerId || !state || !depotId || !productId || !quantity || !deliveryType) {
@@ -65,7 +65,7 @@ const createOrder = asyncHandler(async (req, res) => {
   }
 
   const { order, payment } = await placeOrder({
-    customerId, state, depotId, productId, quantity, deliveryType, deliveryAddress, trucks,
+    customerId, state, depotId, productId, quantity, deliveryType, deliveryAddress, companyName, trucks,
     actor: { type: "staff", staffId: req.user.id },
   });
 
@@ -716,11 +716,11 @@ const getTruckTicketPrintData = asyncHandler(async (req, res) => {
   const unitPrice = Number(order.price);
   const litres = Number(load.quantity);
 
-  res.json({
+    res.json({
     success: true,
     data: {
       reference: order.orderNumber,
-      company: order.customerCompanyName || "",
+      company: order.companyName || order.customerCompanyName || "",
       customerName: order.customerName || "",
       customerPhone: order.customerPhone || "",
       product: order.productName || "",
