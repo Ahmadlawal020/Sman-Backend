@@ -6,7 +6,6 @@ const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../re
 const { toE164 } = require("../utils/phone");
 const { placeOrder, cancelOrder, payOrder } = require("../services/order.service");
 const walletService = require("../services/wallet.service");
-const { processUnpaidOrdersForCustomer } = require("../services/payment.service");
 const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
 const copy = require("./copy");
@@ -118,8 +117,10 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
           orderId: effect.payload.orderId,
           customerId: effect.payload.customerId,
           actor: { type: "customer", customerId: effect.payload.customerId },
+          // The engine replies "Payment received" synchronously below, so
+          // suppress payOrder's own async push — it would be a duplicate.
+          notifyWhatsApp: false,
         });
-        // Success travels the same path as a confirmed transfer.
         return { type: INBOUND.PAYMENT_CONFIRMED, order };
       } catch (err) {
         // payOrder scopes to the customer and re-checks the balance, so this
@@ -143,26 +144,30 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
       }
       const order = await orderRepo.findById(effect.payload.orderId);
       if (!order || order.paymentStatus === "Paid") return null;
-      // Announce on the wire BEFORE settlement. Settlement enqueues a
-      // wa-events job that pushes "payment received"; if we only queued
-      // "Simulating…" afterward, that push won the race (observed in UAT).
+      // Announce on the wire BEFORE settlement, so the async "payment received"
+      // push can't win the race and arrive first.
       await sendNow({
         waPhone,
         customerId: order.customerId,
         payload: { kind: REPLY.TEXT, body: copy.devSimulating() },
         inReplyTo: inboundMessageId,
       });
-      // Same as scripts/dev-simulate-payment.js: credit the wallet ledger
-      // (idempotent by reference), then run the REAL settlement — which
-      // drives Pending→Paid and enqueues the payment push. The confirmation
-      // the tester sees travels the exact production path.
+      // Credit the wallet by exactly THIS order's total (idempotent by
+      // reference), then pay THIS order specifically — not the oldest-first
+      // sweep a real transfer would do, so the tester always settles the order
+      // they tapped, never an older one. payOrder's push delivers the
+      // confirmation, travelling the same wa-events path as production.
       await walletService.credit({
         customerId: order.customerId,
         amount: Number(order.totalAmount),
         description: "Simulated bank transfer (dev button)",
         reference: `DEV-SIM-${wamid}`,
       });
-      await processUnpaidOrdersForCustomer(order.customerId);
+      await payOrder({
+        orderId: order.id,
+        customerId: order.customerId,
+        actor: { type: "customer", customerId: order.customerId },
+      });
       return null; // the wa-events push delivers "payment received"
     }
 
