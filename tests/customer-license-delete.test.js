@@ -111,4 +111,20 @@ describe("customer portal — delete a license from the register", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(await customerLicenseRepo.findById(license.id), null, "license gone");
   });
+
+  test("a license only on a Cancelled request is still deletable", async () => {
+    // Cancelled is terminal like Rejected: a withdrawn quote must not pin the
+    // document that backed it (countActiveByLicenseId excludes both).
+    const { customer, accessToken } = await registerActiveCustomer(6);
+    const license = await seedLicense(customer.id);
+    await seedRequestWithLicense(customer.id, license.id, "Cancelled");
+
+    const res = await request(app)
+      .delete(`${LICENSES}/${license.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({});
+
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(await customerLicenseRepo.findById(license.id), null, "license gone");
+  });
 });
