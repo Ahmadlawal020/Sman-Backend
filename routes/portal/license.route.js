@@ -12,7 +12,12 @@ const {
 } = require("../../controllers/portal/license.controller");
 
 // Every route is the signed-in customer acting on their OWN license register.
-router.get("/", authenticateCustomer, listMyLicenses);
+router.get(
+  "/",
+  authenticateCustomer,
+  validate({ query: licenseSchemas.listMyLicenses }),
+  listMyLicenses
+);
 router.get("/upload-signature", authenticateCustomer, getUploadSignature);
 router.post(
   "/",

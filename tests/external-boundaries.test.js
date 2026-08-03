@@ -18,7 +18,7 @@ const TURNSTILE_HOST = "https://challenges.cloudflare.com";
 const TURNSTILE_PATH = "/turnstile/v0/siteverify";
 // Termii v3 base URL — the default sms.service uses when TERMII_BASE_URL is unset.
 const TERMII_HOST = "https://v3.api.termii.com";
-const TERMII_PATH = "/sms/send";
+const TERMII_PATH = "/api/sms/send";
 
 /**
  * Real network is blocked here (loopback to Postgres/the app stays allowed), so

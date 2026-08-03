@@ -99,10 +99,11 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
 
 /** GET /api/customer/dangote-orders — the customer's own requests, newest first. */
 const listMyDangoteOrders = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 50, status, search } = req.query;
+  const { page = 1, limit = 50, status, paymentStatus, search } = req.query;
   const result = await dangoteOrderRequestRepo.findAll({
     customerId: req.customer.id,
     status,
+    paymentStatus,
     search,
     page,
     limit,
@@ -177,10 +178,68 @@ const payMyDangoteOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * POST /api/customer/dangote-orders/:id/cancel — the customer withdraws their
+ * OWN quote request while it is still unpaid. Pending Review and Approved +
+ * Unpaid both cancel; Paid or already-terminal requests cannot. Lands as
+ * Cancelled (distinct from staff Rejected).
+ */
+const cancelMyDangoteOrder = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  const existing = await dangoteOrderRequestRepo.findById(id);
+  if (!existing || existing.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+
+  if (existing.status === "Cancelled" || existing.status === "Rejected") {
+    return res.status(409).json({
+      success: false,
+      message: `This request is already ${existing.status.toLowerCase()}.`,
+    });
+  }
+
+  if (existing.paymentStatus === "Paid") {
+    return res.status(409).json({
+      success: false,
+      message: "A paid quote can't be cancelled here — contact support.",
+    });
+  }
+
+  // Only withdraw before payment: under review, or approved but still unpaid.
+  if (existing.status !== "Pending Review" && existing.status !== "Approved") {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot cancel a request in ${existing.status} status.`,
+    });
+  }
+
+  // The checks above are a friendly fast-path off a stale read; this is the one
+  // that actually decides. The conditional UPDATE re-verifies ownership, status
+  // and unpaid-ness atomically, so a wallet payment that lands between the read
+  // and here loses the race (zero rows) instead of leaving a Paid-but-Cancelled
+  // request with the money already debited.
+  const cancelled = await dangoteOrderRequestRepo.cancelIfWithdrawable(id, req.customer.id);
+  if (!cancelled) {
+    return res.status(409).json({
+      success: false,
+      message: "This request can no longer be cancelled — it may have just been paid. Please refresh.",
+    });
+  }
+
+  const request = await dangoteOrderRequestRepo.findByIdFull(id);
+  res.json({
+    success: true,
+    message: "Quote request cancelled",
+    data: { request },
+  });
+});
+
 module.exports = {
   getDangoteCatalog,
   createMyDangoteOrder,
   listMyDangoteOrders,
   getMyDangoteOrder,
   payMyDangoteOrder,
+  cancelMyDangoteOrder,
 };

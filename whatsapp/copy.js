@@ -37,7 +37,7 @@ const menuGreeting = (name) =>
   name ? `Hello ${name}. What would you like to do?` : "Hello. What would you like to do?";
 
 const menuButtons = () => ({
-  order: "Place an order",
+  order: "Place depot order",
   prices: "Check prices",
   track: "Track my order",
 });
@@ -80,7 +80,7 @@ const helpText = () =>
   "• *track*: check the status of your orders\n" +
   "• *cancel*: cancel the order currently in progress\n" +
   "• *help*: display this message\n\n" +
-  "To place an order, select *Place an order* from the menu.";
+  "To place a depot order, select *Place depot order* from the menu.";
 
 // -------------------------------------------------------------------- track
 
@@ -141,7 +141,7 @@ const trackOrderGone = () =>
   "We could not find that order. It may have been completed. Please type *track* to see your current orders.";
 
 const trackNoOrder = () =>
-  "You do not have any orders with us yet. Please select *Place an order* from the menu to begin.";
+  "You do not have any orders with us yet. Please select *Place depot order* from the menu to begin.";
 
 // ------------------------------------------------------------------- prices
 
@@ -153,7 +153,7 @@ const pricesDepotLine = (depotName, productParts) => `\n${depotName}: ${productP
 
 const pricesProductPart = (productName, price) => `${productName} ${naira(price)}/L`;
 
-const pricesFooter = () => "\n\nSelect *Place an order* from the menu when you are ready.";
+const pricesFooter = () => "\n\nSelect *Place depot order* from the menu when you are ready.";
 
 // -------------------------------------------------------------------- depot
 
