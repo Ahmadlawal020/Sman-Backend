@@ -146,8 +146,8 @@ const update = async (id, data) => {
 };
 
 // How many of a customer's Dangote requests still point at this license, not
-// counting Rejected ones. Used to block a license delete while an active or
-// approved request depends on the document that backed it.
+// counting Rejected or Cancelled ones. Used to block a license delete while an
+// active or approved request depends on the document that backed it.
 const countActiveByLicenseId = async (licenseId) => {
   const [{ total }] = await db
     .select({ total: count() })
@@ -155,7 +155,7 @@ const countActiveByLicenseId = async (licenseId) => {
     .where(
       and(
         eq(dangoteOrderRequests.licenseId, licenseId),
-        sql`${dangoteOrderRequests.status} <> 'Rejected'`
+        sql`${dangoteOrderRequests.status} NOT IN ('Rejected', 'Cancelled')`
       )
     );
   return total;

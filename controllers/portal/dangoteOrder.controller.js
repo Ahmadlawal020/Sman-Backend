@@ -177,10 +177,57 @@ const payMyDangoteOrder = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * POST /api/customer/dangote-orders/:id/cancel — the customer withdraws their
+ * OWN quote request while it is still unpaid. Pending Review and Approved +
+ * Unpaid both cancel; Paid or already-terminal requests cannot. Lands as
+ * Cancelled (distinct from staff Rejected).
+ */
+const cancelMyDangoteOrder = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  const existing = await dangoteOrderRequestRepo.findById(id);
+  if (!existing || existing.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order request not found" });
+  }
+
+  if (existing.status === "Cancelled" || existing.status === "Rejected") {
+    return res.status(409).json({
+      success: false,
+      message: `This request is already ${existing.status.toLowerCase()}.`,
+    });
+  }
+
+  if (existing.paymentStatus === "Paid") {
+    return res.status(409).json({
+      success: false,
+      message: "A paid quote can't be cancelled here — contact support.",
+    });
+  }
+
+  // Only withdraw before payment: under review, or approved but still unpaid.
+  if (existing.status !== "Pending Review" && existing.status !== "Approved") {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot cancel a request in ${existing.status} status.`,
+    });
+  }
+
+  await dangoteOrderRequestRepo.update(id, { status: "Cancelled" });
+
+  const request = await dangoteOrderRequestRepo.findByIdFull(id);
+  res.json({
+    success: true,
+    message: "Quote request cancelled",
+    data: { request },
+  });
+});
+
 module.exports = {
   getDangoteCatalog,
   createMyDangoteOrder,
   listMyDangoteOrders,
   getMyDangoteOrder,
   payMyDangoteOrder,
+  cancelMyDangoteOrder,
 };

@@ -13,6 +13,7 @@ const {
   payMyOrder,
   payMyOrderByRef,
   cancelMyOrder,
+  cancelMyOrderByRef,
   updateMyOrderTrucks,
 } = require("../../controllers/portal/order.controller");
 
@@ -66,6 +67,17 @@ router.patch(
   requireCsrfForCookieAuth("customer"),
   validate({ params: orderSchemas.refParam, body: orderSchemas.updateMyTrucks }),
   updateMyOrderTrucks
+);
+
+// Cancel an unpaid pending order by its order number — same key the pay and
+// trucks routes use so the dashboard never needs the numeric id.
+router.post(
+  "/by-ref/:ref/cancel",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: orderSchemas.refParam }),
+  cancelMyOrderByRef
 );
 
 router.get(

@@ -246,21 +246,16 @@ const payMyOrderByRef = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /api/customer/orders/:id/cancel — the customer cancels their OWN order
- * while it is still Pending/unpaid. Reuses the shared cancelOrder service, which
- * releases the reserved stock and depot capacity. A Paid or further-along order
- * can't be self-cancelled here — that's a support/finance action.
+ * Cancel the caller's own still-Pending order. Shared by the numeric-id and
+ * by-ref routes — same Pending/ownership guards either way.
  */
-const cancelMyOrder = asyncHandler(async (req, res) => {
-  const order = await orderRepo.findById(req.params.id);
-  if (!order || order.customerId !== req.customer.id) {
-    return res.status(404).json({ success: false, message: "Order not found" });
-  }
+async function cancelOwnedPendingOrder(order, req) {
   if (order.status !== "Pending") {
-    return res.status(409).json({
-      success: false,
-      message: `Only an unpaid, pending order can be cancelled here — this one is ${order.status}. Contact support.`,
-    });
+    const err = new Error(
+      `Only an unpaid, pending order can be cancelled here — this one is ${order.status}. Contact support.`
+    );
+    err.status = 409;
+    throw err;
   }
 
   await cancelOrder({
@@ -271,8 +266,60 @@ const cancelMyOrder = asyncHandler(async (req, res) => {
     userAgent: req.headers["user-agent"],
   });
 
-  const fresh = await orderRepo.findByIdFull(order.id);
-  res.json({ success: true, message: "Order cancelled", data: { order: await withOwnerDetail(fresh) } });
+  return orderRepo.findByIdFull(order.id);
+}
+
+/**
+ * POST /api/customer/orders/:id/cancel — the customer cancels their OWN order
+ * while it is still Pending/unpaid. Reuses the shared cancelOrder service, which
+ * releases the reserved stock and depot capacity. A Paid or further-along order
+ * can't be self-cancelled here — that's a support/finance action.
+ */
+const cancelMyOrder = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findById(req.params.id);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  try {
+    const fresh = await cancelOwnedPendingOrder(order, req);
+    res.json({
+      success: true,
+      message: "Order cancelled",
+      data: { order: await withOwnerDetail(fresh) },
+    });
+  } catch (err) {
+    if (err.status === 409) {
+      return res.status(409).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
+});
+
+/**
+ * POST /api/customer/orders/by-ref/:ref/cancel — same cancel, keyed by order
+ * NUMBER so the dashboard (which holds refs, not numeric ids) can cancel
+ * without a second lookup.
+ */
+const cancelMyOrderByRef = asyncHandler(async (req, res) => {
+  const order = await orderRepo.findByNumber(req.params.ref);
+  if (!order || order.customerId !== req.customer.id) {
+    return res.status(404).json({ success: false, message: "Order not found" });
+  }
+
+  try {
+    const fresh = await cancelOwnedPendingOrder(order, req);
+    res.json({
+      success: true,
+      message: "Order cancelled",
+      data: { order: await withOwnerDetail(fresh) },
+    });
+  } catch (err) {
+    if (err.status === 409) {
+      return res.status(409).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
 });
 
 /**
@@ -313,5 +360,6 @@ module.exports = {
   payMyOrder,
   payMyOrderByRef,
   cancelMyOrder,
+  cancelMyOrderByRef,
   updateMyOrderTrucks,
 };

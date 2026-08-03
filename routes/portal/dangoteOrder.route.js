@@ -9,6 +9,7 @@ const {
   listMyDangoteOrders,
   getMyDangoteOrder,
   payMyDangoteOrder,
+  cancelMyDangoteOrder,
 } = require("../../controllers/portal/dangoteOrder.controller");
 
 // Every route is the signed-in customer acting on their OWN quote requests.
@@ -43,6 +44,16 @@ router.post(
   requireCsrfForCookieAuth("customer"),
   validate({ params: dangoteSchemas.idParam }),
   payMyDangoteOrder
+);
+
+// Withdraw an unpaid quote request (Pending Review, or Approved + Unpaid).
+router.post(
+  "/:id/cancel",
+  authenticateCustomer,
+  requireActiveCustomer,
+  requireCsrfForCookieAuth("customer"),
+  validate({ params: dangoteSchemas.idParam }),
+  cancelMyDangoteOrder
 );
 
 module.exports = router;
