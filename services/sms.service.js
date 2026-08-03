@@ -29,7 +29,9 @@ const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
   }
 
   const response = await axios.post(
-    `${process.env.TERMII_BASE_URL || "https://v3.api.termii.com"}/sms/send`,
+    // Termii's send endpoint is /api/sms/send. The bare /sms/send path 404s,
+    // which is what surfaced as "Termii ... channel error ... status code 404".
+    `${process.env.TERMII_BASE_URL || "https://v3.api.termii.com"}/api/sms/send`,
     {
       to: formatPhoneForTermii(phone),
       from: process.env.TERMII_SENDER_ID || "Soroman",
@@ -80,9 +82,16 @@ const sendOrderSummarySMS = async (phone, orderData) => {
 };
 
 const sendTicketSummarySMS = async (phone, ticketData) => {
-  const { ticketNumber, customerName, productName, quantity, unit, depotName } = ticketData;
+  const { ticketNumber, customerName, productName, quantity, unit, depotName, deliveryType, orderNumber } = ticketData;
 
-  const sms = `Hi ${customerName}, your pickup ticket ${ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} at ${depotName || "depot"} has been generated. Present QR code in your email to redeem. Thank you for choosing Soroman!`;
+  // Delivery orders have nothing to "present at the depot" — the same order-level
+  // ticket exists so the load can pass the gate, but the buyer isn't collecting
+  // it. Telling a delivery customer to redeem a pickup QR is wrong, so the copy
+  // branches on deliveryType.
+  const sms =
+    deliveryType === "delivery"
+      ? `Hi ${customerName}, your order ${orderNumber || ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} from ${depotName || "the depot"} is confirmed and being prepared for delivery. We'll keep you updated. Thank you for choosing Soroman!`
+      : `Hi ${customerName}, your pickup ticket ${ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} at ${depotName || "depot"} has been generated. Present QR code in your email to redeem. Thank you for choosing Soroman!`;
 
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
     try {
