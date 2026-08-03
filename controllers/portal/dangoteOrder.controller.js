@@ -213,7 +213,18 @@ const cancelMyDangoteOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  await dangoteOrderRequestRepo.update(id, { status: "Cancelled" });
+  // The checks above are a friendly fast-path off a stale read; this is the one
+  // that actually decides. The conditional UPDATE re-verifies ownership, status
+  // and unpaid-ness atomically, so a wallet payment that lands between the read
+  // and here loses the race (zero rows) instead of leaving a Paid-but-Cancelled
+  // request with the money already debited.
+  const cancelled = await dangoteOrderRequestRepo.cancelIfWithdrawable(id, req.customer.id);
+  if (!cancelled) {
+    return res.status(409).json({
+      success: false,
+      message: "This request can no longer be cancelled — it may have just been paid. Please refresh.",
+    });
+  }
 
   const request = await dangoteOrderRequestRepo.findByIdFull(id);
   res.json({

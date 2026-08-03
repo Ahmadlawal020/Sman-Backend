@@ -145,6 +145,31 @@ const update = async (id, data) => {
   return row || null;
 };
 
+// Atomically move a request to Cancelled ONLY while it is still withdrawable:
+// owned by this customer, under review or approved, and not yet paid. The guard
+// lives in the WHERE clause so a concurrent pay (a plain wallet debit that flips
+// paymentStatus to Paid, with no row lock of its own) can't be raced past — the
+// UPDATE matches zero rows instead of stranding a Paid request as Cancelled.
+// Returns the updated row, or null when nothing was cancellable.
+const cancelIfWithdrawable = async (id, customerId) => {
+  const [row] = await db
+    .update(dangoteOrderRequests)
+    .set({ status: "Cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(dangoteOrderRequests.id, id),
+        eq(dangoteOrderRequests.customerId, customerId),
+        or(
+          eq(dangoteOrderRequests.status, "Pending Review"),
+          eq(dangoteOrderRequests.status, "Approved")
+        ),
+        sql`${dangoteOrderRequests.paymentStatus} <> 'Paid'`
+      )
+    )
+    .returning();
+  return row || null;
+};
+
 // How many of a customer's Dangote requests still point at this license, not
 // counting Rejected or Cancelled ones. Used to block a license delete while an
 // active or approved request depends on the document that backed it.
@@ -207,6 +232,7 @@ module.exports = {
   findAll,
   create,
   update,
+  cancelIfWithdrawable,
   countActiveByLicenseId,
   generateRequestNumber,
   findPayableDangoteOrders,
