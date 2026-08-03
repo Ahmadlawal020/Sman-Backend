@@ -95,6 +95,7 @@ describe("customer portal — a customer places their own order", () => {
     state: "Lagos",
     quantity: QTY,
     deliveryType: "pickup",
+    companyName: "Test Buyer Co",
     ...extra,
   });
 
@@ -111,6 +112,35 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(res.body.data.order.status, "Pending");
     assert.equal(res.body.data.order.paymentStatus, "Unpaid");
     assert.ok(res.body.data.payment.accountNumber, "an account to transfer into is returned");
+    assert.equal(res.body.data.order.companyName, "Test Buyer Co", "the company the order is for is stored");
+  });
+
+  test("company name is required — an order without one is refused (400)", async () => {
+    const { accessToken } = await registerActiveCustomer("50");
+    const { companyName, ...noCompany } = body();
+
+    const res = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(noCompany);
+
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.ok(
+      res.body.errors.some((e) => e.path === "companyName"),
+      `expected a companyName error, got ${JSON.stringify(res.body.errors)}`,
+    );
+  });
+
+  test("a blank company name is refused too — not just an absent one (400)", async () => {
+    const { accessToken } = await registerActiveCustomer("51");
+
+    const res = await request(app)
+      .post(ORDERS)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(body({ companyName: "   " }));
+
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.ok(res.body.errors.some((e) => e.path === "companyName"));
   });
 
   test("a funded wallet pays an order after placement, advancing it to Paid", async () => {

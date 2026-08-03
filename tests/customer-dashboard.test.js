@@ -86,7 +86,7 @@ describe("customer portal — dashboard", () => {
     request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ depot: depotId, product: productId, state: "Lagos", quantity: QTY, deliveryType: "pickup" });
+      .send({ depot: depotId, product: productId, state: "Lagos", quantity: QTY, deliveryType: "pickup", companyName: "Dash Co" });
 
   test("requires authentication", async () => {
     const res = await request(app).get(DASHBOARD);

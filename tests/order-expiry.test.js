@@ -91,7 +91,7 @@ describe("order expiry — unpaid orders lapse after the window, distinct from c
     request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ depot: depotId, product: productId, state: "Lagos", quantity: QTY, deliveryType: "pickup" });
+      .send({ depot: depotId, product: productId, state: "Lagos", quantity: QTY, deliveryType: "pickup", companyName: "Expiry Co" });
 
   /** Move an order's creation time into the past so the sweep sees it as stale. */
   const backdate = (orderId, hoursAgo) =>
