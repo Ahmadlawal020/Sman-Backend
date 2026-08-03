@@ -101,6 +101,12 @@ app.use("/api/dangote-catalog", require("./routes/portal/dangoteCatalog.route"))
 app.use("/api/customer/dangote-orders", require("./routes/portal/dangoteOrder.route"));
 // Customer-facing license register (list/add own, upload signature).
 app.use("/api/customer/licenses", require("./routes/portal/license.route"));
+// Customer-facing Cloudinary cleanup — delete a file the customer uploaded
+// (e.g. replacing a licence document before saving it).
+app.use("/api/customer/uploads", require("./routes/portal/upload.route"));
+// Customer-facing wallet ledger — paginated credit/debit history behind the
+// dashboard balance.
+app.use("/api/customer/wallet", require("./routes/portal/wallet.route"));
 // Public: sanitised order tracking by reference — movement only, no price or
 // buyer identity. The order number is the shared secret.
 app.use("/api/tracking", require("./routes/portal/tracking.route"));

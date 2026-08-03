@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, gte, lte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { deposits, customers, staff } = require("../db/schema");
 
@@ -99,6 +99,52 @@ const findAll = async ({ customer, page = 1, limit = 50, type = "credit" } = {})
   };
 };
 
+/**
+ * One customer's wallet ledger — both credits and debits, newest first, with an
+ * optional created-at window. Powers the portal's transaction-history screen.
+ * Scoped to the caller by customerId; only the columns the app renders are
+ * projected (no staff recorder, no paystack payload).
+ */
+const findCustomerHistory = async ({ customerId, page = 1, limit = 50, dateFrom, dateTo } = {}) => {
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = [eq(deposits.customerId, customerId)];
+  if (dateFrom) conditions.push(gte(deposits.createdAt, dateFrom));
+  if (dateTo) conditions.push(lte(deposits.createdAt, dateTo));
+  const whereClause = and(...conditions);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({
+        id: deposits.id,
+        type: deposits.type,
+        amount: deposits.amount,
+        reference: deposits.reference,
+        description: deposits.description,
+        balanceAfter: deposits.balanceAfter,
+        createdAt: deposits.createdAt,
+      })
+      .from(deposits)
+      .where(whereClause)
+      .orderBy(desc(deposits.createdAt))
+      .limit(limitNum)
+      .offset(offset),
+    db.select({ total: count() }).from(deposits).where(whereClause),
+  ]);
+
+  return {
+    rows,
+    pagination: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: Math.ceil(total / limitNum),
+    },
+  };
+};
+
 const create = async (data, tx = db) => {
   const [row] = await tx.insert(deposits).values(data).returning();
   return row;
@@ -117,6 +163,7 @@ module.exports = {
   findByIdFull,
   findByReference,
   findAll,
+  findCustomerHistory,
   create,
   countByCustomer,
 };
