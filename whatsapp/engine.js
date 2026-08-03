@@ -137,6 +137,15 @@ const isPlausibleName = (raw) => {
   return s.length >= 2 && s.length <= 60 && /[A-Za-z]/.test(s) && !/^\d+$/.test(s);
 };
 
+// A company name is freer than a person's — digits and punctuation are common
+// ("7-Eleven", "A.G. Leventis") — but it must contain a letter and be a
+// sensible length. The backend caps company_name at 255; the chat keeps it
+// tighter so the confirm summary stays readable.
+const isPlausibleCompany = (raw) => {
+  const s = String(raw ?? "").trim();
+  return s.length >= 2 && s.length <= 100 && /[A-Za-z]/.test(s);
+};
+
 // ------------------------------------------------------------- context reading
 
 const depotsOf = (context) => (Array.isArray(context.depots) ? context.depots : []);
@@ -181,6 +190,7 @@ const nextStep = (cart) => {
   if (!cart.depotId) return STATES.DEPOT;
   if (!cart.productId) return STATES.PRODUCT;
   if (!cart.quantity) return STATES.QUANTITY;
+  if (!cart.companyName) return STATES.COMPANY;
   if (!cart.deliveryType) return STATES.COLLECT;
   if (cart.deliveryType === "delivery" && !cart.address) return STATES.LOGISTICS;
   if (cart.deliveryType === "pickup" && !trucksComplete(cart)) return STATES.LOGISTICS;
@@ -228,6 +238,12 @@ const clearCollect = (cart) => {
   const { deliveryType, trucks, truckCount, currentLitres, address, ...rest } = cart;
   return rest;
 };
+// Company is order-level: it hangs off nothing priced or sized, so clearing
+// depot/product/quantity/collect leaves it intact. Only an explicit edit drops it.
+const clearCompany = (cart) => {
+  const { companyName, ...rest } = cart;
+  return rest;
+};
 
 /**
  * A short deterministic fingerprint of the order-defining cart fields. The
@@ -249,6 +265,7 @@ const cartToken = (cart) => {
     String(cart.depotId ?? ""),
     String(cart.productId ?? ""),
     Number(cart.quantity) || 0,
+    String(cart.companyName || ""),
     String(cart.deliveryType || ""),
     trucks,
     String(cart.address || ""),
@@ -294,6 +311,8 @@ const promptFor = (state, session, context) => {
       if (!depot || !product) return [depotList({}, context)];
       return [text(copy.quantityPrompt(product.name, depot.name))];
     }
+    case STATES.COMPANY:
+      return [text(copy.companyPrompt())];
     case STATES.COLLECT:
       return [buttons(copy.collectPrompt(), copy.collectButtons())];
     case STATES.LOGISTICS: {
@@ -478,6 +497,7 @@ const confirmReply = (session, context) => {
     productName: product.name,
     quantity: cart.quantity,
     depotName: depot.name,
+    companyName: cart.companyName,
     deliveryType: cart.deliveryType,
     unitPrice: product.price,
     total,
@@ -787,6 +807,8 @@ const reduceInner = (session, inbound, ctx, expired) => {
       return handleProduct(session, ctx, value);
     case STATES.QUANTITY:
       return handleQuantity(session, inbound, ctx, value);
+    case STATES.COMPANY:
+      return handleCompany(session, inbound, ctx);
     case STATES.COLLECT:
       return handleCollect(session, ctx, value);
     case STATES.LOGISTICS:
@@ -1017,6 +1039,15 @@ const handleQuantity = (session, inbound, ctx, value) => {
   return goTo({ ...session, cart }, nextStep(cart), ctx);
 };
 
+const handleCompany = (session, inbound, ctx) => {
+  const raw = typeof inbound.value === "string" ? inbound.value.trim() : "";
+  if (inbound.type === INBOUND.TEXT && isPlausibleCompany(raw)) {
+    const cart = { ...session.cart, companyName: raw };
+    return goTo({ ...session, cart }, nextStep(cart), ctx);
+  }
+  return fumble(session, ctx, [text(copy.companyInvalid())]);
+};
+
 const handleCollect = (session, ctx, value) => {
   if (value === "pickup" || value === "delivery") {
     const cart = { ...clearCollect(session.cart), deliveryType: value };
@@ -1118,9 +1149,11 @@ const handleConfirm = (session, ctx, value) => {
           ? clearProduct(cart)
           : field === "quantity"
             ? clearQuantity(cart)
-            : field === "collect"
-              ? clearCollect(cart)
-              : null;
+            : field === "company"
+              ? clearCompany(cart)
+              : field === "collect"
+                ? clearCollect(cart)
+                : null;
     if (cleared) {
       return goTo({ ...session, cart: cleared }, nextStep(cleared), ctx);
     }
@@ -1133,6 +1166,7 @@ const handleConfirm = (session, ctx, value) => {
         { id: "edit:depot", title: rows.depot.title },
         { id: "edit:product", title: rows.product.title },
         { id: "edit:quantity", title: rows.quantity.title },
+        { id: "edit:company", title: rows.company.title },
         { id: "edit:collect", title: rows.collect.title },
       ]),
     ]);
@@ -1160,6 +1194,7 @@ const handleConfirm = (session, ctx, value) => {
       depotId: cart.depotId,
       productId: cart.productId,
       quantity: cart.quantity,
+      companyName: cart.companyName,
       deliveryType: cart.deliveryType,
     };
     if (cart.deliveryType === "pickup") {
@@ -1189,4 +1224,5 @@ module.exports = {
   maxTrucksFor,
   isPlausiblePlate,
   isPlausibleName,
+  isPlausibleCompany,
 };

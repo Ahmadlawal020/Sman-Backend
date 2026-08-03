@@ -149,6 +149,7 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
       state: "Lagos",
       quantity: 100,
       deliveryType: "pickup",
+      companyName: "Acme",
       price: "0.01",
       totalAmount: "1",
     });

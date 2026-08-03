@@ -13,6 +13,9 @@ const STATES = Object.freeze({
   DEPOT: "DEPOT",
   PRODUCT: "PRODUCT",
   QUANTITY: "QUANTITY",
+  // The company this order is placed for — required, like the web flow. Asked
+  // once the quantity is known, before the collection choice.
+  COMPANY: "COMPANY",
   COLLECT: "COLLECT",
   LOGISTICS: "LOGISTICS",
   CONFIRM: "CONFIRM",
