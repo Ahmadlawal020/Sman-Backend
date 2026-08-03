@@ -7,7 +7,7 @@ exports[`every copy string, pinned 1`] = `
   "menuGreetingNamed": "Hello Ada Obi. What would you like to do?",
   "menuGreetingAnonymous": "Hello. What would you like to do?",
   "menuButtons": {
-    "order": "Place an order",
+    "order": "Place depot order",
     "prices": "Check prices",
     "track": "Track my order"
   },
@@ -57,7 +57,7 @@ exports[`every copy string, pinned 1`] = `
   },
   "noStockAnywhere": "We regret that all depots are currently out of stock. Please check back later, as stock is updated throughout the day.",
   "inactiveCustomer": "Your account is not currently active, so we are unable to process an order at this time. Please contact us on +234-800-SOROMAN for assistance.",
-  "helpText": "The following commands are available at any time:\\n\\n• *menu*: return to the main menu\\n• *track*: check the status of your orders\\n• *cancel*: cancel the order currently in progress\\n• *help*: display this message\\n\\nTo place an order, select *Place an order* from the menu.",
+  "helpText": "The following commands are available at any time:\\n\\n• *menu*: return to the main menu\\n• *track*: check the status of your orders\\n• *cancel*: cancel the order currently in progress\\n• *help*: display this message\\n\\nTo place a depot order, select *Place depot order* from the menu.",
   "trackStatusPendingPickup": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Awaiting payment*\\n\\nWe are awaiting your bank transfer of ₦25,500,000 to Wema Bank 9930001111. Your order will be confirmed automatically once payment is received.",
   "trackStatusPaid": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Payment received*\\n\\nYour payment has been received and your loading ticket is being prepared. We will notify you here when your order is released.",
   "trackStatusReleasedPickup": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Released*\\n\\nYour order has been released. Your truck may proceed to the depot for loading.",
@@ -75,8 +75,8 @@ exports[`every copy string, pinned 1`] = `
     "description": "30,000 L PMS, Warri. Loading"
   },
   "trackOrderGone": "We could not find that order. It may have been completed. Please type *track* to see your current orders.",
-  "trackNoOrder": "You do not have any orders with us yet. Please select *Place an order* from the menu to begin.",
-  "pricesExample": "Today's Prices\\n\\n*Delta*\\nWarri: PMS ₦850/L, AGO ₦1,020/L\\n\\nSelect *Place an order* from the menu when you are ready.",
+  "trackNoOrder": "You do not have any orders with us yet. Please select *Place depot order* from the menu to begin.",
+  "pricesExample": "Today's Prices\\n\\n*Delta*\\nWarri: PMS ₦850/L, AGO ₦1,020/L\\n\\nSelect *Place depot order* from the menu when you are ready.",
   "stateListPrompt": "Please select the state you would like to order from.",
   "stateListButton": "Choose a state",
   "stateRowDescriptionOne": "1 depot",
