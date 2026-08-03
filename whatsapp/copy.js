@@ -266,7 +266,7 @@ const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPr
 };
 
 const confirmWalletHint = (balance) =>
-  `Your wallet balance is ${naira(balance)}, which is sufficient to cover this order. If you confirm, payment will be made from your wallet immediately, and no transfer will be required.`;
+  `Your wallet balance is ${naira(balance)}, which covers this order. After you confirm, you can pay from your wallet in one tap — no transfer needed.`;
 
 const confirmOutdated = () =>
   "Your order has changed since this summary was provided, so the previous button is no longer valid. Please review the updated summary below.";
@@ -292,11 +292,23 @@ const orderPending = () =>
 const orderCreated = (order) =>
   `Your order *${order.orderNumber}* has been created.\n\n` +
   `*Total: ${naira(order.totalAmount)}*\n\n` +
-  `Please make payment by bank transfer to your dedicated account:\n` +
+  `To pay by bank transfer, send to your dedicated account:\n` +
   `Bank: ${order.virtualAccountBank}\n` +
   `Account Number: *${order.virtualAccountNumber}*\n` +
   `Account Name: ${order.virtualAccountName}\n\n` +
-  "Payment will be confirmed automatically, and you will be notified here once it is received.";
+  "A transfer is confirmed automatically. Or use the buttons below.";
+
+/** Short body for the Pay now / Cancel buttons sent right after creation. */
+const orderCreatedActions = (canPayFromWallet) =>
+  canPayFromWallet
+    ? "Pay now from your Soroman wallet, or transfer using the details above."
+    : "We'll confirm your transfer automatically. You can also cancel below.";
+
+/** The wallet payment failed (rare — the balance dropped after the button was shown). */
+const payFailed = (message) =>
+  message && /balance/i.test(message)
+    ? "That didn't go through — your wallet no longer covers this order. Please transfer to the account above instead."
+    : "We couldn't take the payment. Please try again, or transfer to the account above.";
 
 const orderPaidWallet = (order) =>
   `Your order *${order.orderNumber}* has been created and has been paid in full.\n\n` +
@@ -329,6 +341,7 @@ const awaitPaymentNudge = (order) =>
   `We are still awaiting your transfer for order *${order.orderNumber}*. Amount: ${naira(order.totalAmount)}. Bank: ${order.virtualAccountBank}. Account Number: *${order.virtualAccountNumber}*.`;
 
 const awaitPaymentCancelButton = () => "Cancel this order";
+const payNowButton = () => "Pay now";
 
 const cancelOrderConfirm = (orderNumber) =>
   `Do you wish to cancel ${orderNumber ? `order *${orderNumber}*` : "this order"}? This order has not been paid. No amount will be charged, and the stock will be released.`;
@@ -434,6 +447,8 @@ module.exports = {
   editRows,
   orderPending,
   orderCreated,
+  orderCreatedActions,
+  payFailed,
   portalManageHint,
   invoiceCaption,
   orderFailedStock,
@@ -443,6 +458,7 @@ module.exports = {
   devSimulating,
   awaitPaymentNudge,
   awaitPaymentCancelButton,
+  payNowButton,
   cancelOrderConfirm,
   cancelOrderButtons,
   orderCancelled,

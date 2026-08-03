@@ -316,13 +316,27 @@ const promptFor = (state, session, context) => {
       return [confirmReply(session, context)];
     case STATES.AWAIT_PAYMENT: {
       if (!cart.awaiting) return [text(copy.helpText())];
-      const defs = { cancelorder: copy.awaitPaymentCancelButton() };
-      if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
-      return [buttons(copy.awaitPaymentNudge(cart.awaiting), defs)];
+      return [buttons(copy.awaitPaymentNudge(cart.awaiting), awaitPaymentButtonDefs(cart, context))];
     }
     default:
       return [menuReply(session, context)];
   }
+};
+
+/**
+ * The Pay now / Cancel buttons for an unpaid order. Pay now appears only when
+ * the wallet balance covers the total — otherwise the tap would just fail and
+ * a transfer is the real path. Cancel is always offered; the dev "paid" button
+ * only in test mode. Always ≤ 3 buttons (WhatsApp's limit).
+ */
+const awaitPaymentButtonDefs = (cart, context) => {
+  const total = Number(cart.awaiting?.totalAmount) || 0;
+  const balance = Number(context.customer?.balance) || 0;
+  const defs = {};
+  if (total > 0 && balance >= total) defs.paynow = copy.payNowButton();
+  defs.cancelorder = copy.awaitPaymentCancelButton();
+  if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
+  return defs;
 };
 
 const cancelOrderConfirmReply = (session) =>
@@ -605,9 +619,15 @@ const reduceInner = (session, inbound, ctx, expired) => {
       if (order.deliveryType === "pickup" && ctx.portalUrl) {
         replies.push(text(copy.portalManageHint(ctx.portalUrl)));
       }
-      if (!paidFromWallet && ctx.devSimulatePayment) {
-        // Test environments only: let the tester "pay" with a tap.
-        replies.push(buttons(copy.devPaidPrompt(), { devpaid: copy.devPaidButton() }));
+      if (!paidFromWallet) {
+        // Orders are created Unpaid: offer Pay now (from wallet, when it
+        // covers the total) and Cancel right away, so the customer never has
+        // to hunt for how to pay.
+        const total = Number(order.totalAmount) || 0;
+        const canPay = total > 0 && (Number(ctx.customer?.balance) || 0) >= total;
+        replies.push(
+          buttons(copy.orderCreatedActions(canPay), awaitPaymentButtonDefs(next.cart, ctx)),
+        );
       }
       return done(next, replies);
     }
@@ -633,6 +653,15 @@ const reduceInner = (session, inbound, ctx, expired) => {
         return done(session, [
           text(copy.cancelFailed(ctx.supportPhone || "our support line")),
           ...promptFor(session.state, session, ctx),
+        ]);
+      }
+      if (inbound.reason === "pay") {
+        // Wallet payment failed (usually the balance dropped after the button
+        // was shown). The order still stands — keep it in AWAIT_PAYMENT and
+        // point at the transfer path.
+        return done(session, [
+          text(copy.payFailed(inbound.message)),
+          ...promptFor(STATES.AWAIT_PAYMENT, session, ctx),
         ]);
       }
       return done({ ...next, state: STATES.CONFIRM }, [
@@ -779,6 +808,14 @@ const handleAwaitPayment = (session, ctx, value) => {
     // settlement, so the async payment-confirmed push cannot arrive first.
     return done(session, [], [
       { type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } },
+    ]);
+  }
+  // Pay now: settle the unpaid order from wallet balance. The engine only
+  // shows this button when the balance covers the total; the effect (and
+  // payOrder itself) re-check, so a stale tap can't overspend.
+  if (value === "paynow" && session.lastOrderId) {
+    return done(session, [], [
+      { type: EFFECTS.PAY_ORDER, payload: { orderId: session.lastOrderId, customerId: session.customerId } },
     ]);
   }
   // Cancelling an unpaid order: confirm first, then a real effect.

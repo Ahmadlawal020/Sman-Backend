@@ -4,7 +4,7 @@ const { loadContext } = require("./context");
 const { EFFECTS, INBOUND, REPLY } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
-const { placeOrder, cancelOrder } = require("../services/order.service");
+const { placeOrder, cancelOrder, payOrder } = require("../services/order.service");
 const walletService = require("../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../services/payment.service");
 const { sendReply, sendTypingIndicator } = require("./client");
@@ -109,6 +109,24 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
         // the engine tells the customer to call rather than pretending.
         console.error("[wa-pipeline] CANCEL_ORDER failed:", err.message);
         return { type: INBOUND.ORDER_FAILED, reason: "cancel" };
+      }
+    }
+
+    case EFFECTS.PAY_ORDER: {
+      try {
+        const order = await payOrder({
+          orderId: effect.payload.orderId,
+          customerId: effect.payload.customerId,
+          actor: { type: "customer", customerId: effect.payload.customerId },
+        });
+        // Success travels the same path as a confirmed transfer.
+        return { type: INBOUND.PAYMENT_CONFIRMED, order };
+      } catch (err) {
+        // payOrder scopes to the customer and re-checks the balance, so this
+        // is a legitimate refusal (insufficient balance, already paid). The
+        // engine keeps the order and points at the transfer path.
+        console.error("[wa-pipeline] PAY_ORDER failed:", err.message);
+        return { type: INBOUND.ORDER_FAILED, reason: "pay", message: err.message };
       }
     }
 
