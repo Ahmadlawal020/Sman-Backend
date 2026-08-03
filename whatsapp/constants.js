@@ -74,6 +74,10 @@ const EFFECTS = Object.freeze({
   CREATE_ORDER: "CREATE_ORDER",
   CREATE_CUSTOMER: "CREATE_CUSTOMER",
   CANCEL_ORDER: "CANCEL_ORDER",
+  // Pay an unpaid order from the customer's wallet balance (the "Pay now"
+  // button). Orders are always created Unpaid now, so this is how a
+  // wallet-funded customer settles without a bank transfer.
+  PAY_ORDER: "PAY_ORDER",
   // Test environments only: the "I've paid" button simulates the transfer.
   DEV_SIMULATE_PAYMENT: "DEV_SIMULATE_PAYMENT",
 });

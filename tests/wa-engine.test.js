@@ -917,13 +917,38 @@ describe("order outcomes", () => {
     invoiceUrl: "https://files.example/invoice.pdf",
   };
 
-  it("ORDER_CREATED: invoice document, payment details, portal hint — then AWAIT_PAYMENT", () => {
+  it("ORDER_CREATED: invoice, payment details, portal hint, then Pay now / Cancel", () => {
     const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
     const r = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
     assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
     assert.equal(r.session.lastOrderId, 501);
-    assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.TEXT, REPLY.TEXT]);
+    assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.TEXT, REPLY.TEXT, REPLY.BUTTONS]);
     assert.ok(r.replies[1].body.includes("9930001111"));
+    // No wallet balance in baseCtx → Pay now is withheld; Cancel always shows.
+    assert.deepEqual(buttonIds(r.replies[3]), ["cancelorder"]);
+  });
+
+  it("ORDER_CREATED offers Pay now when the wallet covers the total", () => {
+    const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
+    const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } });
+    const r = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, ctx);
+    assert.deepEqual(buttonIds(r.replies[3]), ["paynow", "cancelorder"]);
+  });
+
+  it("tapping Pay now emits PAY_ORDER for the customer's own order", () => {
+    const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-1", totalAmount: 100 } }, { lastOrderId: 501, customerId: 7 });
+    const r = reduce(s, btn("paynow"), baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "500" } }));
+    assert.deepEqual(effectTypes(r), [EFFECTS.PAY_ORDER]);
+    assert.equal(r.effects[0].payload.orderId, 501);
+    assert.equal(r.effects[0].payload.customerId, 7);
+  });
+
+  it("a refused wallet payment keeps the order in AWAIT_PAYMENT and points at transfer", () => {
+    const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-1", totalAmount: 100 } }, { lastOrderId: 501 });
+    const r = reduce(s, { type: INBOUND.ORDER_FAILED, reason: "pay", message: "Insufficient wallet balance." }, baseCtx());
+    assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
+    assert.match(r.replies[0].body, /transfer/i);
+    assert.deepEqual(effectTypes(r), []);
   });
 
   it("an order already paid from the wallet asks for NO transfer and awaits nothing", () => {
@@ -968,15 +993,17 @@ describe("order outcomes", () => {
     assert.deepEqual(effectTypes(retried), [EFFECTS.CREATE_ORDER]);
   });
 
-  it("test mode offers the 'I've paid' button; production never does", () => {
+  it("the order-created buttons carry the dev 'I've paid' button only in test mode", () => {
     const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
     const dev = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx({ devSimulatePayment: true }));
     const devButtons = dev.replies.find((r) => r.kind === REPLY.BUTTONS);
-    assert.ok(devButtons, "dev context gets the simulate button");
-    assert.deepEqual(buttonIds(devButtons), ["devpaid"]);
+    assert.ok(devButtons, "order-created always gets a buttons message now");
+    // No wallet balance here, so Pay now is absent; dev adds the simulate button.
+    assert.deepEqual(buttonIds(devButtons), ["cancelorder", "devpaid"]);
 
     const prod = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
-    assert.ok(!prod.replies.some((r) => r.kind === REPLY.BUTTONS), "no flag, no button");
+    const prodButtons = prod.replies.find((r) => r.kind === REPLY.BUTTONS);
+    assert.deepEqual(buttonIds(prodButtons), ["cancelorder"], "production never offers the dev button");
   });
 
   it("tapping 'I've paid' emits the simulate effect in test mode only", () => {

@@ -123,7 +123,7 @@ exports[`every copy string, pinned 1`] = `
   "confirmPickup": "Please review your order details.\\n\\nProduct: 30,000 L PMS\\nDepot: Warri\\nLoading by my truck: ABC-123-XY\\nPrice: ₦850/L\\n*Total: ₦25,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmPickupMultiTruck": "Please review your order details.\\n\\nProduct: 110,000 L PMS\\nDepot: Warri\\nLoading by my trucks: AAA-111-AA (60,000 L), BBB-222-BB (50,000 L)\\nPrice: ₦850/L\\n*Total: ₦93,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmDelivery": "Please review your order details.\\n\\nProduct: 10,000 L AGO\\nDepot: Lagos\\nDelivery by Soroman truck to: 14 Airport Road, Warri, Delta\\nPrice: ₦1,020/L\\n*Total: ₦10,200,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
-  "confirmWalletHint": "Your wallet balance is ₦30,000,000, which is sufficient to cover this order. If you confirm, payment will be made from your wallet immediately, and no transfer will be required.",
+  "confirmWalletHint": "Your wallet balance is ₦30,000,000, which covers this order. After you confirm, you can pay from your wallet in one tap — no transfer needed.",
   "orderPaidWallet": "Your order *SOR-1042* has been created and has been paid in full.\\n\\n₦25,500,000 was paid from your wallet balance, so no transfer is required. Your loading ticket is being prepared, and you will be kept informed at each step.",
   "confirmOutdated": "Your order has changed since this summary was provided, so the previous button is no longer valid. Please review the updated summary below.",
   "confirmButtons": {
@@ -148,7 +148,11 @@ exports[`every copy string, pinned 1`] = `
     }
   },
   "orderPending": "Please wait while your order is being created.",
-  "orderCreated": "Your order *SOR-1042* has been created.\\n\\n*Total: ₦25,500,000*\\n\\nPlease make payment by bank transfer to your dedicated account:\\nBank: Wema Bank\\nAccount Number: *9930001111*\\nAccount Name: SOROMANNIGERI/ AO\\n\\nPayment will be confirmed automatically, and you will be notified here once it is received.",
+  "orderCreated": "Your order *SOR-1042* has been created.\\n\\n*Total: ₦25,500,000*\\n\\nTo pay by bank transfer, send to your dedicated account:\\nBank: Wema Bank\\nAccount Number: *9930001111*\\nAccount Name: SOROMANNIGERI/ AO\\n\\nA transfer is confirmed automatically. Or use the buttons below.",
+  "orderCreatedActionsCanPay": "Pay now from your Soroman wallet, or transfer using the details above.",
+  "orderCreatedActionsTransfer": "We'll confirm your transfer automatically. You can also cancel below.",
+  "payFailedInsufficient": "That didn't go through — your wallet no longer covers this order. Please transfer to the account above instead.",
+  "payFailedGeneric": "We couldn't take the payment. Please try again, or transfer to the account above.",
   "portalManageHint": "To change a truck or plate number at a later time, please manage this order at https://portal.example/orders/1042",
   "invoiceCaption": "Invoice for order SOR-1042",
   "orderFailedStockSome": "We regret that part of the requested stock at Warri is no longer available. Please try a smaller quantity.",
@@ -159,6 +163,7 @@ exports[`every copy string, pinned 1`] = `
   "devSimulating": "Simulating your transfer. Confirmation will follow shortly.",
   "awaitPaymentNudge": "We are still awaiting your transfer for order *SOR-1042*. Amount: ₦25,500,000. Bank: Wema Bank. Account Number: *9930001111*.",
   "awaitPaymentCancelButton": "Cancel this order",
+  "payNowButton": "Pay now",
   "cancelOrderConfirm": "Do you wish to cancel order *SOR-1042*? This order has not been paid. No amount will be charged, and the stock will be released.",
   "cancelOrderButtons": {
     "cancelorder:yes": "Yes, cancel it",

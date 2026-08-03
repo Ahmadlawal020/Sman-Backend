@@ -10,6 +10,9 @@ const { eq } = require("drizzle-orm");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { normalizeInbound } = require("../whatsapp/normalize");
 const { processInbound, processSend, processEvent, performEffect } = require("../whatsapp/pipeline");
+const { INBOUND } = require("../whatsapp/constants");
+const { placeOrder } = require("../services/order.service");
+const walletService = require("../services/wallet.service");
 const { runMaintenance } = require("../whatsapp/worker");
 const { stopQueue } = require("../config/queue");
 const { closeDb } = require("./helpers");
@@ -249,6 +252,47 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     const after = await orderRepo.findById(session.lastOrderId);
     assert.equal(after.paymentStatus, "Paid", "wallet credit + real settlement paid it");
     assert.equal(after.status, "Paid");
+  });
+
+  test("the PAY_ORDER effect settles an unpaid order from wallet balance", async () => {
+    const customer = await customerRepo.findByPhone(PHONE);
+    // A fresh, own order — Unpaid on creation, like every order now.
+    const { order } = await placeOrder({
+      customerId: customer.id,
+      state: this.depot.state,
+      depotId: this.depot.id,
+      productId: this.product.id,
+      quantity: 3000,
+      deliveryType: "pickup",
+      trucks: [],
+    });
+    assert.equal(order.paymentStatus, "Unpaid");
+    // Fund the wallet so "Pay now" can actually cover it.
+    await walletService.credit({
+      customerId: customer.id,
+      amount: Number(order.totalAmount),
+      description: "Top-up for PAY_ORDER test",
+      reference: `PIPE-PAYNOW-${RUN}`,
+    });
+
+    const inbound = await performEffect(
+      { type: "PAY_ORDER", payload: { orderId: order.id, customerId: customer.id } },
+      { wamid: `wamid.PIPE-${RUN}-PAYNOW`, waPhone: PHONE }
+    );
+
+    assert.equal(inbound.type, INBOUND.PAYMENT_CONFIRMED, "success re-enters as a confirmed payment");
+    assert.equal(inbound.order.id, order.id);
+    const paid = await orderRepo.findById(order.id);
+    assert.equal(paid.paymentStatus, "Paid");
+
+    // A stale second tap is refused (already paid), re-entering as ORDER_FAILED
+    // reason=pay — the engine keeps the order and points at transfer.
+    const repeat = await performEffect(
+      { type: "PAY_ORDER", payload: { orderId: order.id, customerId: customer.id } },
+      { wamid: `wamid.PIPE-${RUN}-PAYNOW2`, waPhone: PHONE }
+    );
+    assert.equal(repeat.type, INBOUND.ORDER_FAILED);
+    assert.equal(repeat.reason, "pay");
   });
 
   test("a stale inbound recovered by the janitor is skipped, never replayed", async () => {
