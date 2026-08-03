@@ -143,6 +143,10 @@ test("every copy string, pinned", (t) => {
     orderPending: copy.orderPending(),
 
     orderCreated: copy.orderCreated(ORDER),
+    orderCreatedActionsCanPay: copy.orderCreatedActions(true),
+    orderCreatedActionsTransfer: copy.orderCreatedActions(false),
+    payFailedInsufficient: copy.payFailed("Insufficient wallet balance."),
+    payFailedGeneric: copy.payFailed("Payment failed"),
     portalManageHint: copy.portalManageHint("https://portal.example/orders/1042"),
     invoiceCaption: copy.invoiceCaption("SOR-1042"),
     orderFailedStockSome: copy.orderFailedStock(true, "Warri"),
@@ -153,6 +157,7 @@ test("every copy string, pinned", (t) => {
     devSimulating: copy.devSimulating(),
     awaitPaymentNudge: copy.awaitPaymentNudge(ORDER),
     awaitPaymentCancelButton: copy.awaitPaymentCancelButton(),
+    payNowButton: copy.payNowButton(),
     cancelOrderConfirm: copy.cancelOrderConfirm("SOR-1042"),
     cancelOrderButtons: copy.cancelOrderButtons(),
     orderCancelled: copy.orderCancelled(ORDER),
