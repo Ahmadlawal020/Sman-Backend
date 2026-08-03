@@ -136,6 +136,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
     pagination: {
       total,
       page: pageNum,
+      limit: limitNum,
       pages: Math.ceil(total / limitNum),
     },
   };
