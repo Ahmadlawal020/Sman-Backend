@@ -1,0 +1,1 @@
+ALTER TYPE "public"."wa_session_state" ADD VALUE 'COMPANY' BEFORE 'COLLECT';

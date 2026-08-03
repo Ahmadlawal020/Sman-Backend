@@ -239,6 +239,13 @@
       "when": 1785768936175,
       "tag": "0034_rare_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785774700321,
+      "tag": "0035_wa_state_company",
+      "breakpoints": true
     }
   ]
 }

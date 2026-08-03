@@ -208,6 +208,14 @@ const overStockButtons = () => ({
   menu: "Back to menu",
 });
 
+// ------------------------------------------------------------------ company
+
+const companyPrompt = () =>
+  "Please enter the name of the company this order is for.";
+
+const companyInvalid = () =>
+  "Please enter a valid company name, between 2 and 100 characters.";
+
 // ------------------------------------------------------------------ collect
 
 const collectPrompt = () => "How would you like to receive your order?";
@@ -246,7 +254,7 @@ const addressInvalid = () =>
 
 // ------------------------------------------------------------------ confirm
 
-const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPrice, total, trucks = [], address }) => {
+const confirmSummary = ({ productName, quantity, depotName, companyName, deliveryType, unitPrice, total, trucks = [], address }) => {
   const truckLine = trucks
     .map((t) => (trucks.length > 1 ? `${t.plate} (${litres(t.quantity)})` : t.plate))
     .join(", ");
@@ -258,6 +266,7 @@ const confirmSummary = ({ productName, quantity, depotName, deliveryType, unitPr
     "Please review your order details.\n\n" +
     `Product: ${litres(quantity)} ${productName}\n` +
     `Depot: ${depotName}\n` +
+    `Company: ${companyName}\n` +
     `${collect}\n` +
     `Price: ${naira(unitPrice)}/L\n` +
     `*Total: ${naira(total)}*\n\n` +
@@ -281,6 +290,7 @@ const editRows = () => ({
   depot: { title: "Depot" },
   product: { title: "Product" },
   quantity: { title: "Quantity" },
+  company: { title: "Company" },
   collect: { title: "Collection" },
 });
 
@@ -426,6 +436,8 @@ module.exports = {
   quantityAboveCap,
   quantityOverStock,
   overStockButtons,
+  companyPrompt,
+  companyInvalid,
   collectPrompt,
   collectButtons,
   truckCountPrompt,

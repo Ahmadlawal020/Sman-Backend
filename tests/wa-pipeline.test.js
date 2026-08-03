@@ -134,18 +134,21 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.ok(outbound.length >= 1, "welcome menu went out");
   });
 
-  test("order → depot → product → quantity → collect → plate lands on CONFIRM", async () => {
+  test("order → depot → product → quantity → company → collect → plate lands on CONFIRM", async () => {
     await say("order");
     await say(this.depot.name.toLowerCase()); // typed depot name matches
     await say(this.product.name);
     await say("5,000");
+    await say("Acme Fuels Ltd"); // the required company this order is for
     await say("pickup");
     const { session, outbound } = await say("abc-123-xy");
     assert.equal(session.state, "CONFIRM");
+    assert.equal(session.cart.companyName, "Acme Fuels Ltd");
     assert.deepEqual(session.cart.trucks, [{ quantity: 5000, plate: "ABC-123-XY" }]);
     const summary = outbound[outbound.length - 1].payload;
     assert.equal(summary.kind, "buttons");
     assert.match(summary.body, /500,000/); // 5,000 L × ₦100 — the server-side total
+    assert.match(summary.body, /Acme Fuels Ltd/); // the company is on the summary
   });
 
   test("confirm places a REAL order through placeOrder, idempotency key = wamid", async () => {
@@ -166,6 +169,7 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.equal(order.idempotencyKey, wamid, "the confirm message's wamid is the dedupe key");
     assert.equal(order.quantity, 5000);
     assert.equal(order.deliveryType, "pickup");
+    assert.equal(order.companyName, "Acme Fuels Ltd", "the company collected in chat is stored on the order");
     assert.equal(order.status, "Pending"); // zero wallet balance — awaits transfer
 
     const paymentMsg = outbound.find((m) => m.payload.kind === "text" && /VPIPE/.test(m.payload.body));
