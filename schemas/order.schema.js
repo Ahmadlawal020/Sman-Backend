@@ -125,8 +125,8 @@ const truckAllocation = z
     quantity: quantity("Truck quantity"),
     driverName: optionalString("Driver name", 255),
     driverPhone: optionalString("Driver phone", 50),
-    loaderName: optionalString("Loader name", 255),
-    loaderPhone: optionalString("Loader phone", 50),
+    loaderName: optionalString("Loader name", 255).nullable(),
+    loaderPhone: optionalString("Loader phone", 50).nullable(),
     compartments: z
       .array(
         z.object({
@@ -135,7 +135,7 @@ const truckAllocation = z
         })
       )
       .max(10, "A tanker has at most 10 compartments")
-      .optional(),
+      .nullish(),
   })
   .refine((t) => t.truckId != null || (t.truckNumber && t.truckNumber.length), {
     message: "Each truck needs a plate — a fleet truckId or a truckNumber",
@@ -168,7 +168,7 @@ const gateIn = z.object({
       })
     )
     .max(10, "A tanker has at most 10 compartments")
-    .optional(),
+    .nullish(),
 });
 
 // Ticket-generation body. Optional because the truck usually loads as declared;

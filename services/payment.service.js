@@ -317,19 +317,21 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
       if (!existingHold || existingHold.status !== "active") continue;
     }
 
-    await orderRepo.update(order.id, { paymentStatus: "Paid" });
-
     // Drive the lifecycle Pending→Paid through the state machine (system actor)
     // so the order reaches the "Paid" stage release requires and an order.paid
     // audit row is written. Guarded on status so an order already moved on (or
     // cancelled) is left untouched. The funds are committed as an active hold
     // above; convertHold books the ledger entry when the order completes.
+    //
+    // paymentStatus is set atomically inside the transition so both fields
+    // update in the same UPDATE — a failed transition (409) never leaves the
+    // order with paymentStatus="Paid" but status still "Pending".
     if (order.status === "Pending") {
       try {
         await orderStatus.transition(order.id, "Paid", {
           actor: { type: "system" },
           action: "order.paid",
-          set: { paymentConfirmedAt: new Date() },
+          set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
           metadata: { via: "settlement", amount: String(orderTotal) },
         });
         // Keep the bot's promise — "we'll message you here the moment it
@@ -338,12 +340,17 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
         notifyWhatsAppPaymentConfirmed(order.id);
       } catch (stErr) {
         console.error(`Failed to advance order ${order.orderNumber} to Paid:`, stErr.message);
+        continue;
       }
+    } else {
+      // Non-Pending orders (e.g. already Released) — update paymentStatus
+      // directly since no lifecycle transition is needed.
+      await orderRepo.update(order.id, { paymentStatus: "Paid" });
     }
 
     // Generate loading ticket so order automatically passes through
     try {
-      await generateTicketForOrder(order.orderNumber);
+      await generateTicketForOrder(order.id);
       console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
     } catch (tktErr) {
       console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);

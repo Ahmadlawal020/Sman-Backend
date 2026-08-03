@@ -56,9 +56,10 @@ const driverBase = {
   phone: optionalString("Phone", 30),
   licenseNumber: optionalString("License number", 100),
   licenseClass: optionalString("License class", 50),
-  rating: optionalString("Rating", 20),
+  licenseExpiry: optionalString("License expiry", 40),
+  rating: numberLike("Rating").optional(),
   status: enumOf("Status", ["Active", "On Trip", "Off Duty"]).optional(),
-  safetyScore: optionalString("Safety score", 20),
+  safetyScore: numberLike("Safety score").optional(),
 };
 const createDriver = z.object({ ...driverBase, name: requiredString("Name", 255) });
 const updateDriver = z.object(driverBase).partial();
