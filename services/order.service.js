@@ -707,7 +707,7 @@ async function expireIfStale({ orderId, customerId = null }) {
  *
  * @returns {{ticket: boolean, commission: boolean}} what succeeded this run
  */
-async function runPostPaymentEffects(orderId) {
+async function runPostPaymentEffects(orderId, { notifyWhatsApp = true } = {}) {
   let ticket = false;
   let commission = false;
 
@@ -725,7 +725,10 @@ async function runPostPaymentEffects(orderId) {
     console.error(`[post-payment] commission failed for order ${orderId}:`, err.message);
   }
 
-  notifyWhatsAppPaymentConfirmed(orderId);
+  // Skipped when the caller already delivers the confirmation itself — the
+  // WhatsApp engine replies "Payment received" synchronously in the same turn,
+  // so the async push would be a duplicate.
+  if (notifyWhatsApp) notifyWhatsAppPaymentConfirmed(orderId);
 
   return { ticket, commission };
 }
@@ -745,7 +748,7 @@ async function runPostPaymentEffects(orderId) {
  * @param {{ type: string, staffId?: number, customerId?: number }} opts.actor
  * @returns {object} the updated order
  */
-async function payOrder({ orderId, customerId = null, actor }) {
+async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = true }) {
   // Lapsed orders are expired-and-refused, never paid at a stale price. The
   // guard commits the Expired flag first; the transaction below then sees it.
   await expireIfStale({ orderId, customerId });
@@ -807,7 +810,7 @@ async function payOrder({ orderId, customerId = null, actor }) {
 
     return order;
   }).then(async (order) => {
-    await runPostPaymentEffects(order.id);
+    await runPostPaymentEffects(order.id, { notifyWhatsApp });
 
     const fullOrder = await orderRepo.findByIdFull(order.id);
     return fullOrder;
