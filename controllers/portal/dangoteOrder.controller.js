@@ -99,10 +99,11 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
 
 /** GET /api/customer/dangote-orders — the customer's own requests, newest first. */
 const listMyDangoteOrders = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 50, status, search } = req.query;
+  const { page = 1, limit = 50, status, paymentStatus, search } = req.query;
   const result = await dangoteOrderRequestRepo.findAll({
     customerId: req.customer.id,
     status,
+    paymentStatus,
     search,
     page,
     limit,

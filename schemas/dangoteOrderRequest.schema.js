@@ -32,6 +32,7 @@ const listMyDangoteOrderRequests = pagination.extend({
     "Cancelled",
     "all",
   ]).optional(),
+  paymentStatus: enumOf("Payment status", ["Unpaid", "Paid"]).optional(),
 });
 
 const idParam = z.object({ id: id("Dangote order request id") });

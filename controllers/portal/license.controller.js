@@ -4,12 +4,18 @@ const { generateSignature } = require("../../services/upload.service");
 
 /**
  * GET /api/customer/licenses — the signed-in customer's own license register,
- * newest first. The wizard's picker: an approved, unexpired license can be
- * attached to a new Dangote quote request without another upload.
+ * newest first. Supports page/limit (and optional status) so the dashboard
+ * table can page; the wizard still asks for a high limit and reads `licenses`.
  */
 const listMyLicenses = asyncHandler(async (req, res) => {
-  const licenses = await customerLicenseRepo.findByCustomerId(req.customer.id);
-  res.json({ success: true, data: { licenses } });
+  const { page = 1, limit = 50, status } = req.query;
+  const result = await customerLicenseRepo.findAll({
+    customerId: req.customer.id,
+    status,
+    page,
+    limit,
+  });
+  res.json({ success: true, data: result });
 });
 
 /**

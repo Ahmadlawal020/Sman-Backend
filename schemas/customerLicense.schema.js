@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, requiredString } = require("./fields");
+const { id, requiredString, pagination } = require("./fields");
 
 const createLicense = z.object({
   customerId: id("Customer id"),
@@ -42,12 +42,18 @@ const licenseIdParam = z.object({ id: id("License id") });
 // The customer portal forces customerId from the session, so the body omits it.
 const createMyLicense = createLicense.omit({ customerId: true });
 
+/** Portal register list — scoped to the signed-in customer in the controller. */
+const listMyLicenses = pagination.extend({
+  status: z.enum(["pending", "approved", "rejected"]).optional(),
+});
+
 module.exports = {
   createLicense,
   createMyLicense,
   updateLicense,
   reviewLicense,
   getAllLicensesQuery,
+  listMyLicenses,
   customerIdParam,
   licenseIdParam,
 };

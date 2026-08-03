@@ -55,7 +55,14 @@ const findByIdFull = async (id) => {
   return row || null;
 };
 
-const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}) => {
+const findAll = async ({
+  search,
+  status,
+  paymentStatus,
+  customerId,
+  page = 1,
+  limit = 50,
+} = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -69,6 +76,10 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
 
   if (status && status !== "all") {
     conditions.push(eq(dangoteOrderRequests.status, status));
+  }
+
+  if (paymentStatus) {
+    conditions.push(eq(dangoteOrderRequests.paymentStatus, paymentStatus));
   }
 
   if (search) {
@@ -125,6 +136,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
     pagination: {
       total,
       page: pageNum,
+      limit: limitNum,
       pages: Math.ceil(total / limitNum),
     },
   };

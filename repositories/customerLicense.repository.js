@@ -50,6 +50,7 @@ const findByIdWithCustomer = async (id, tx = db) => {
 const findAll = async ({
   status,
   search,
+  customerId,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -58,6 +59,7 @@ const findAll = async ({
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+  if (customerId) conditions.push(eq(customerLicenses.customerId, customerId));
   if (status) conditions.push(eq(customerLicenses.status, status));
   if (search) conditions.push(ilike(customerLicenses.companyName, `%${search}%`));
 
@@ -92,7 +94,12 @@ const findAll = async ({
 
   return {
     licenses: rows,
-    pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
+    pagination: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: Math.ceil(total / limitNum),
+    },
   };
 };
 
