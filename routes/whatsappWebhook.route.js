@@ -42,20 +42,33 @@ router.post(
     // (receipts for our sends). Process every one individually — batching is
     // not guaranteed to be stable.
     const changes = (body.entry || []).flatMap((e) => e.changes || []);
+    const msgCount = changes.reduce((n, c) => n + (c.value?.messages?.length || 0), 0);
+    const statusCount = changes.reduce((n, c) => n + (c.value?.statuses?.length || 0), 0);
+    // Reaching this line means the signature already passed — so its presence
+    // (or absence) in the logs distinguishes an inbound/queue problem from a
+    // signature rejection upstream.
+    console.log(
+      `[wa-webhook] accepted POST: ${changes.length} change(s), ${msgCount} message(s), ${statusCount} status(es)`
+    );
 
     for (const change of changes) {
       const value = change.value || {};
 
       for (const message of value.messages || []) {
+        const waPhone = toE164(`+${message.from}`) || `+${message.from}`;
         try {
-          const waPhone = toE164(`+${message.from}`) || `+${message.from}`;
           const row = await waMessageRepo.recordInbound({
             wamid: message.id,
             waPhone,
             payload: message,
           });
-          if (!row) continue; // Meta retry — already recorded, already queued
+          if (!row) {
+            // Meta retry — already recorded, already queued.
+            console.log(`[wa-webhook] inbound ${message.id} from ${waPhone}: duplicate, already queued`);
+            continue;
+          }
           await enqueue(QUEUES.WA_INBOUND, { waMessageId: row.id });
+          console.log(`[wa-webhook] inbound ${message.id} from ${waPhone}: recorded (row ${row.id}) + queued`);
         } catch (err) {
           // The message row (if written) is the janitor's re-entry point; the
           // error is logged, and Meta gets its 200 — retrying the whole batch
@@ -72,6 +85,9 @@ router.post(
       for (const status of value.statuses || []) {
         try {
           const detail = status.errors?.[0]?.message || status.errors?.[0]?.title || "";
+          console.log(
+            `[wa-webhook] status ${status.id}: ${status.status}${detail ? ` — ${detail}` : ""}`
+          );
           await waMessageRepo.applyStatusUpdate(status.id, status.status, detail);
         } catch (err) {
           console.error(
@@ -89,7 +105,7 @@ router.post(
 function verifyMetaSignature(req, res, buf) {
   const secret = process.env.WHATSAPP_APP_SECRET;
   if (!secret) {
-    console.error("WHATSAPP_APP_SECRET not set – rejecting webhook");
+    console.error("[wa-webhook] WHATSAPP_APP_SECRET not set – rejecting webhook");
     throw new Error("Webhook signing key not configured");
   }
 
@@ -100,6 +116,22 @@ function verifyMetaSignature(req, res, buf) {
   const a = Buffer.from(header);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    // Diagnostics WITHOUT leaking the secret or the payload. This reads the
+    // three distinct failure modes apart:
+    //   bodyBytes === 0        → the raw body never reached us (a body parser
+    //                            ran before this route; the HMAC is over empty)
+    //   hasSignatureHeader:false → Meta isn't signing / wrong URL subscribed
+    //   lengths equal, still no match → the App Secret here != Meta's App Secret
+    console.warn(
+      "[wa-webhook] SIGNATURE REJECTED " +
+        JSON.stringify({
+          hasSignatureHeader: header.length > 0,
+          headerLen: a.length,
+          expectedLen: b.length,
+          bodyBytes: buf ? buf.length : 0,
+          appSecretConfigured: true,
+        })
+    );
     throw new Error("Invalid WhatsApp signature");
   }
 }
