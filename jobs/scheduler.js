@@ -21,7 +21,7 @@ const start = async () => {
   });
 
   // Hourly by default; override with a standard cron expression.
-  const cron = process.env.ORDER_EXPIRY_CRON || "0 * * * *";
+  const cron = process.env.ORDER_EXPIRY_CRON || "* * * * *";
   await scheduleCron(EXPIRY_QUEUE, cron);
   console.log(`[scheduler] order-expiry sweep scheduled (${cron})`);
 };

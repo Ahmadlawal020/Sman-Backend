@@ -50,11 +50,13 @@ async function verify(token, remoteIp) {
     const res = await axios.post(VERIFY_URL, form, { timeout: TIMEOUT_MS });
     data = res.data;
   } catch (err) {
-    // Fail OPEN. Blocking every signup because Cloudflare is unreachable is a
-    // worse outcome than absorbing some bot traffic — and the daily send cap
-    // still bounds what "some" can cost us.
-    console.error(`[botCheck] Turnstile unreachable, allowing request: ${err.message}`);
-    return { ok: true, degraded: true };
+    // In production, fail CLOSED for registration (the costlier action) — the
+    // daily send cap alone is a weak gate against mass account creation.
+    // In non-production, fail open so development is not blocked by Cloudflare
+    // outages.
+    const isProduction = process.env.NODE_ENV === "production";
+    console.error(`[botCheck] Turnstile unreachable (${isProduction ? "blocking" : "allowing"}): ${err.message}`);
+    return { ok: !isProduction, degraded: true };
   }
 
   if (data?.success === true) return { ok: true };

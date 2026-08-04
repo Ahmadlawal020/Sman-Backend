@@ -271,7 +271,12 @@ const convertHold = async (orderId, description = "", tx) => {
       return { success: false, noActiveHold: true, hold: hold || null };
     }
 
-    const customer = await customerRepo.findById(hold.customerId);
+    const [customer] = await trx
+      .select()
+      .from(customers)
+      .where(eq(customers.id, hold.customerId))
+      .for("update")
+      .limit(1);
 
     const [deposit] = await trx
       .insert(deposits)
@@ -295,8 +300,8 @@ const convertHold = async (orderId, description = "", tx) => {
   return tx ? run(tx) : db.transaction(run);
 };
 
-const findHoldByOrder = async (orderId) => {
-  const [hold] = await db
+const findHoldByOrder = async (orderId, tx = db) => {
+  const [hold] = await tx
     .select()
     .from(walletHolds)
     .where(eq(walletHolds.orderId, orderId))

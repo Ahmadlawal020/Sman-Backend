@@ -13,8 +13,8 @@ const {
 
 router.get("/", verifyStaff, validate({ query: misc.listTrucks }), getTrucks);
 router.get("/:id", verifyStaff, validate({ params: misc.idParam }), getTruckById);
-router.post("/", verifyStaff, createTruck);
-router.patch("/:id", verifyStaff, validate({ params: misc.idParam }), updateTruck);
+router.post("/", verifyStaff, validate({ body: misc.createProduct }), createTruck);
+router.patch("/:id", verifyStaff, validate({ params: misc.idParam, body: misc.updateProduct }), updateTruck);
 router.delete("/:id", verifyStaff, validate({ params: misc.idParam }), deleteTruck);
 
 module.exports = router;

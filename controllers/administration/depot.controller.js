@@ -15,11 +15,12 @@ const getDepots = asyncHandler(async (req, res) => {
         depotRepo.getProductPrices(depot.id),
         depotRepo.getStaff(depot.id),
       ]);
-      // Override capacities with real-time PFI stock
+      // Real-time available stock comes from active PFIs; the configured
+      // holding capacity (capacity) is a fixed maximum and never mutates.
       const pfiProducts = await getDepotCapacities(depot.id);
       const enrichedCapacities = capacities.map((pc) => ({
         ...pc,
-        capacity: pfiProducts[pc.productId] !== undefined ? pfiProducts[pc.productId] : pc.capacity,
+        availableStock: pfiProducts[pc.productId] !== undefined ? pfiProducts[pc.productId] : 0,
       }));
       return { ...depot, productCapacities: enrichedCapacities, productPrices: prices, staff, staffIds: staff };
     })
@@ -44,11 +45,12 @@ const getDepotById = asyncHandler(async (req, res) => {
     depotRepo.getStaff(depot.id),
   ]);
 
-  // Override capacities with PFI-computed values
+  // Real-time available stock comes from active PFIs; the configured holding
+  // capacity (capacity) is a fixed maximum and never mutates.
   const pfiProducts = await getDepotCapacities(depot.id);
   const enrichedCapacities = capacities.map((pc) => ({
     ...pc,
-    capacity: pfiProducts[pc.productId] !== undefined ? pfiProducts[pc.productId] : pc.capacity,
+    availableStock: pfiProducts[pc.productId] !== undefined ? pfiProducts[pc.productId] : 0,
   }));
 
   res.json({

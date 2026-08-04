@@ -3,7 +3,7 @@ const { expireStaleOrders } = require("../../services/order.service");
 
 /**
  * Expire every Pending, unpaid order older than ORDER_EXPIRY_HOURS, returning
- * its reserved stock and depot capacity.
+ * its reserved stock.
  *
  * Idempotent and safe behind a cron: an order already Paid, Cancelled or
  * Expired is not Pending, so a second run in a row expires nothing new.

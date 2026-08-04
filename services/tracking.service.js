@@ -49,6 +49,7 @@ const NOTE = {
       : `All ${o.trucks.length} trucks loaded at ${o.depotName}.`;
   },
   completed: () => "Loaded and signed out at the depot gate.",
+  cancelled: () => "This order has been cancelled.",
 };
 
 const currentStage = (o) => {
@@ -100,6 +101,7 @@ const trackByRef = async (ref) => {
       releasedAt: orders.releasedAt,
       loadingStartedAt: orders.loadingStartedAt,
       completedAt: orders.completedAt,
+      cancelledAt: orders.cancelledAt,
       depotName: depots.name,
       depotState: depots.state,
       productName: products.name,
@@ -113,7 +115,26 @@ const trackByRef = async (ref) => {
     .limit(1);
 
   if (!row) return null;
-  if (row.status === "Cancelled") return null;
+  if (row.status === "Cancelled") {
+    return {
+      ref: row.orderNumber,
+      placedAt: row.createdAt,
+      depotName: row.depotName,
+      depotState: row.depotState,
+      lines: [
+        {
+          category: row.productCategory || null,
+          name: row.productName,
+          quantity: row.quantity,
+          unit: row.productUnit || "Liters",
+        },
+      ],
+      stage: "cancelled",
+      reached: { received: row.createdAt, cancelled: row.cancelledAt || row.updatedAt || row.createdAt },
+      note: "This order has been cancelled.",
+      trucks: [],
+    };
+  }
 
   // Every allocated truck and where it is, once trucks have been assigned at
   // release. Plate + status only — never the driver's name or phone.

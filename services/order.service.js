@@ -52,13 +52,63 @@ function isOrderExpired(order, now = Date.now()) {
 }
 
 /**
+ * Compute the expiration deadline for an order. Returns an ISO string if the
+ * order is Pending and unpaid; null otherwise (Paid/Released/Completed orders
+ * never expire, Expired/Cancelled orders already have expiredAt).
+ */
+function computeExpiresAt(order) {
+  if (order.status !== "Pending" || order.paymentStatus === "Paid") return null;
+  const created = new Date(order.createdAt).getTime();
+  return new Date(created + orderExpiryMs()).toISOString();
+}
+
+/**
+ * Enrich an order (or array of orders) with a computed `expiresAt` field — the
+ * deadline before which the customer must pay. The frontend uses this directly
+ * for the countdown badge instead of knowing ORDER_EXPIRY_HOURS.
+ *
+ * For single orders, also checks if the deadline has passed and immediately
+ * expires the order before returning it. This ensures the frontend never sees
+ * an order in the "imminent" window (deadline passed but not yet swept).
+ */
+async function withExpiresAt(orderOrOrders) {
+  if (Array.isArray(orderOrOrders)) {
+    const results = [];
+    for (const o of orderOrOrders) {
+      results.push(await expireAndAttach(o));
+    }
+    return results;
+  }
+  return expireAndAttach(orderOrOrders);
+}
+
+/**
+ * Internal helper: expire an order if past its deadline, then attach expiresAt.
+ */
+async function expireAndAttach(order) {
+  // If pending and unpaid, check if deadline has passed
+  if (order.status === "Pending" && order.paymentStatus !== "Paid") {
+    const deadline = new Date(order.createdAt).getTime() + orderExpiryMs();
+    if (Date.now() >= deadline) {
+      try {
+        const expired = await expireOrder(order.id);
+        return { ...expired, expiresAt: null };
+      } catch {
+        // Already expired or concurrent update — fall through with original
+      }
+    }
+  }
+  return { ...order, expiresAt: computeExpiresAt(order) };
+}
+
+/**
  * Place an order — the ONE creation path, shared by the desk
  * (POST /api/orders) and the customer portal (POST /api/customer/orders).
  *
  * The only thing that differs between the two callers is WHO the customer is:
  * the desk passes a body customer id, the portal passes the authenticated
  * customer's own id. Everything else — server-side pricing, the dedicated
- * virtual account, the single atomic reserve→debit→create→ledger→capacity
+ * virtual account, the single atomic reserve→debit→create→ledger
  * transaction, the wallet-pays Pending→Paid transition, and the best-effort
  * invoice email/SMS — is identical, so it lives here once.
  *
@@ -204,10 +254,16 @@ async function placeOrder({
   // the quantity per truck here; the plate is optional (it can be filled or
   // corrected at the gate and at ticketing). Delivery orders never carry trucks
   // at order time — their fleet is allocated at release.
+  //
+  // The desk is exempt: it places orders FOR a customer and can book any pickup
+  // quantity as a single order — security still captures each arriving truck at
+  // the gate. Self-service pickups (customer portal / WhatsApp) must declare the
+  // split up front, so the requirement above is enforced only for them.
   const declaredTrucks = Array.isArray(trucks) ? trucks : [];
   if (deliveryType === "delivery" && declaredTrucks.length) {
     throw httpError(400, "Delivery trucks are allocated at release, not at order");
   }
+  const isStaffOrder = actor?.type === "staff";
   if (deliveryType === "pickup") {
     if (declaredTrucks.length) {
       const sum = declaredTrucks.reduce((s, t) => s + Number(t.quantity), 0);
@@ -223,7 +279,7 @@ async function placeOrder({
       if (tooBig) {
         throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
       }
-    } else if (Number(quantity) > 60000) {
+    } else if (Number(quantity) > 60000 && !isStaffOrder) {
       throw httpError(
         400,
         "A pickup over 60,000 L must be split across trucks — declare each truck and its quantity"
@@ -234,8 +290,8 @@ async function placeOrder({
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
   // --- Atomic order creation -------------------------------------------------
-  // Stock reservation, the order row, the capacity change and the declared
-  // pickup loads are ONE unit: a failure anywhere rolls all of it back. Orders
+  // Stock reservation, the order row and the declared pickup loads are ONE
+  // unit: a failure anywhere rolls all of it back. Orders
   // are always created Unpaid — payment happens later via a manual "Pay Now"
   // action (staff or customer) that places a wallet hold.
   let order;
@@ -303,8 +359,6 @@ async function placeOrder({
       },
       tx
     );
-
-    await depotRepo.decrementProductCapacity(depotId, productId, Number(quantity), tx);
 
     // Pickup: materialise the customer's declared trucks as pending loads now,
     // one row per truck (plate + its quantity), inside the same transaction.
@@ -410,10 +464,32 @@ async function placeOrder({
 }
 
 /**
+ * Release reserved stock, delete truck loads, and release any wallet hold for
+ * a cancelled or expired order. Shared by cancelOrder and expireOrder so the
+ * restitution logic lives in one place.
+ */
+async function releaseOrderResources(order, tx) {
+  if (order.pfiId) {
+    const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
+    if (allocations.length > 0) {
+      for (const alloc of allocations) {
+        await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
+      }
+      await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
+    } else {
+      // Fallback for orders created before multi-PFI
+      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+    }
+  }
+  await orderTruckRepo.deleteByOrder(order.id, tx);
+  await walletService.releaseHold(order.id, tx);
+}
+
+/**
  * Cancel a live order (any status through Released). One transaction: the
  * state machine locks the row and rejects an illegal or concurrent cancel
- * BEFORE any restitution, then stock release, capacity restore and the hold
- * release run as the same unit. Shared by the staff endpoint and the
+ * BEFORE any restitution, then stock release and the hold release run as the
+ * same unit. Shared by the staff endpoint and the
  * WhatsApp customer cancel — the actor in the audit row tells them apart.
  */
 async function cancelOrder({
@@ -438,24 +514,7 @@ async function cancelOrder({
       userAgent,
     });
 
-    if (order.pfiId) {
-      const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
-      if (allocations.length > 0) {
-        for (const alloc of allocations) {
-          await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
-        }
-        await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
-      } else {
-        // Fallback for orders created before multi-PFI
-        await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
-      }
-    }
-    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
-
-    // Return any held funds. The hold — not a debit/credit pair — is the
-    // record, so a cancelled order leaves no ledger churn. On an Unpaid order
-    // there is no active hold and this is a no-op.
-    await walletService.releaseHold(order.id, tx);
+    await releaseOrderResources(order, tx);
 
     return order;
   });
@@ -463,7 +522,7 @@ async function cancelOrder({
 
 /**
  * Expire a single order: drive Pending→Expired (system actor) and return its
- * reserved stock and depot capacity, mirroring a cancel minus the human. The
+ * reserved stock, mirroring a cancel minus the human. The
  * state machine only allows Expired from Pending, so a concurrently paid or
  * cancelled order throws 409 here and is skipped by the sweep. Joins an existing
  * transaction when one is passed (the pre-payment guard).
@@ -478,21 +537,7 @@ async function expireOrder(orderId, { tx } = {}) {
       metadata: { reason: "unpaid past expiry window", expiryHours: orderExpiryHours() },
     });
 
-    if (order.pfiId) {
-      const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
-      if (allocations.length > 0) {
-        for (const alloc of allocations) {
-          await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
-        }
-        await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
-      } else {
-        // Fallback for orders created before multi-PFI
-        await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
-      }
-    }
-    await depotRepo.incrementProductCapacity(order.depotId, order.productId, order.quantity, tx);
-    // Unpaid orders carry no active hold; this is a defensive no-op.
-    await walletService.releaseHold(order.id, tx);
+    await releaseOrderResources(order, tx);
 
     return order;
   };
@@ -828,5 +873,7 @@ module.exports = {
   expireOrder,
   expireStaleOrders,
   isOrderExpired,
+  computeExpiresAt,
+  withExpiresAt,
   httpError,
 };

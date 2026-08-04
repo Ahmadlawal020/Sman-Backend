@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const verifyStaff = require("../../middleware/verifyStaff");
 const { authenticateStaff, requireRole } = verifyStaff;
+const validate = require("../../middleware/validate");
+const misc = require("../../schemas/misc.schema");
 const {
   getDangoteProducts,
   getDangoteProductsActive,
@@ -22,8 +24,8 @@ const {
 router.get("/dangote-products", verifyStaff, getDangoteProducts);
 router.get("/dangote-products/active", verifyStaff, getDangoteProductsActive);
 router.get("/dangote-products/:id", verifyStaff, getDangoteProductById);
-router.post("/dangote-products", verifyStaff, createDangoteProduct);
-router.put("/dangote-products/:id", verifyStaff, updateDangoteProduct);
+router.post("/dangote-products", verifyStaff, validate({ body: misc.createDangoteProduct }), createDangoteProduct);
+router.put("/dangote-products/:id", verifyStaff, validate({ body: misc.updateDangoteProduct }), updateDangoteProduct);
 
 // Dangote Order Requests
 router.get("/dangote-order-requests/payable", verifyStaff, getPayableDangoteOrders);

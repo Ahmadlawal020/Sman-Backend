@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { orderRepo } = require("../../repositories");
-const { placeOrder, updatePickupTrucks, payOrder, cancelOrder } = require("../../services/order.service");
+const { placeOrder, updatePickupTrucks, payOrder, cancelOrder, withExpiresAt } = require("../../services/order.service");
 const walletService = require("../../services/wallet.service");
 const { processUnpaidOrdersForCustomer } = require("../../services/payment.service");
 const {
@@ -104,7 +104,7 @@ const createMyOrder = asyncHandler(async (req, res) => {
       order.paymentStatus === "Paid"
         ? "Order placed and paid from your wallet balance."
         : "Order placed. Transfer the total to the account shown to have it released.",
-    data: { order, payment },
+    data: { order: await withExpiresAt(order), payment },
   });
 });
 
@@ -125,7 +125,7 @@ const listMyOrders = asyncHandler(async (req, res) => {
     page,
     limit,
   });
-  res.json({ success: true, data: result });
+  res.json({ success: true, data: { ...result, orders: await withExpiresAt(result.orders) } });
 });
 
 /**
@@ -140,7 +140,7 @@ const getMyOrder = asyncHandler(async (req, res) => {
   if (!order || order.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order not found" });
   }
-  res.json({ success: true, data: { order: await withOwnerDetail(order) } });
+  res.json({ success: true, data: { order: await withExpiresAt(await withOwnerDetail(order)) } });
 });
 
 /**
@@ -154,7 +154,7 @@ const getMyOrderByRef = asyncHandler(async (req, res) => {
   if (!order || order.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order not found" });
   }
-  res.json({ success: true, data: { order: await withOwnerDetail(order) } });
+  res.json({ success: true, data: { order: await withExpiresAt(await withOwnerDetail(order)) } });
 });
 
 /**
@@ -218,7 +218,7 @@ const payMyOrder = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: `Order ${order.orderNumber} paid from your wallet balance.`,
-    data: { order: await withOwnerDetail(order) },
+    data: { order: await withExpiresAt(await withOwnerDetail(order)) },
   });
 });
 
@@ -243,7 +243,7 @@ const payMyOrderByRef = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: `Order ${order.orderNumber} paid from your wallet balance.`,
-    data: { order: await withOwnerDetail(order) },
+    data: { order: await withExpiresAt(await withOwnerDetail(order)) },
   });
 });
 
@@ -274,7 +274,7 @@ async function cancelOwnedPendingOrder(order, req) {
 /**
  * POST /api/customer/orders/:id/cancel — the customer cancels their OWN order
  * while it is still Pending/unpaid. Reuses the shared cancelOrder service, which
- * releases the reserved stock and depot capacity. A Paid or further-along order
+ * releases the reserved stock. A Paid or further-along order
  * can't be self-cancelled here — that's a support/finance action.
  */
 const cancelMyOrder = asyncHandler(async (req, res) => {
@@ -288,7 +288,7 @@ const cancelMyOrder = asyncHandler(async (req, res) => {
     res.json({
       success: true,
       message: "Order cancelled",
-      data: { order: await withOwnerDetail(fresh) },
+      data: { order: await withExpiresAt(await withOwnerDetail(fresh)) },
     });
   } catch (err) {
     if (err.status === 409) {
@@ -314,7 +314,7 @@ const cancelMyOrderByRef = asyncHandler(async (req, res) => {
     res.json({
       success: true,
       message: "Order cancelled",
-      data: { order: await withOwnerDetail(fresh) },
+      data: { order: await withExpiresAt(await withOwnerDetail(fresh)) },
     });
   } catch (err) {
     if (err.status === 409) {
@@ -349,7 +349,7 @@ const updateMyOrderTrucks = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: "Truck details saved",
-    data: { order: await withOwnerDetail(fresh) },
+    data: { order: await withExpiresAt(await withOwnerDetail(fresh)) },
   });
 });
 

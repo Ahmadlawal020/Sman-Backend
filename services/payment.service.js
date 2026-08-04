@@ -1,6 +1,7 @@
 const axios = require("axios");
 
 const { getCustomerInitials } = require("../utils/helpers");
+const { db } = require("../config/db");
 
 const {
   customerRepo,
@@ -294,61 +295,58 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
     const orderTotal = Number(order.totalAmount || 0);
     if (orderTotal <= 0) continue;
 
-    // The hold is the sufficiency check: it either commits the funds under a
-    // row lock or fails, so concurrent runs can't pay the same order twice
-    // (unique hold per order) or spend the same money twice (locked balance).
-    // This supersedes a bare guarded UPDATE (`WHERE balance >= amount`
-    // without a paired ledger write) — the hold and its eventual ledger entry
-    // are the same transactional unit, so there is no window where the
-    // balance has moved but no record says why.
-    const holdResult = await walletService.placeHold({
-      customerId,
-      orderId: order.id,
-      amount: orderTotal,
-      description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
-    });
-
-    if (!holdResult.success) {
-      // alreadyHeld on an unpaid order means an earlier run placed the hold
-      // and crashed before marking it paid — finish that job. An inactive
-      // (released/converted) hold is history, not a claim; skip.
-      if (!holdResult.alreadyHeld) continue;
-      const existingHold = await walletService.findHoldByOrder(order.id);
-      if (!existingHold || existingHold.status !== "active") continue;
+    // Expire stale orders before attempting payment — prevents the settlement
+    // sweep from paying an order at a price that is no longer current. Lazy
+    // require to avoid circular dependency (order.service → payment.service).
+    try {
+      const { expireIfStale } = require("./order.service");
+      const expired = await expireIfStale({ orderId: order.id, customerId });
+      if (expired) continue;
+    } catch (expErr) {
+      console.error(`[settlement] expiry check failed for ${order.orderNumber}:`, expErr.message);
+      continue;
     }
 
-    // Drive the lifecycle Pending→Paid through the state machine (system actor)
-    // so the order reaches the "Paid" stage release requires and an order.paid
-    // audit row is written. Guarded on status so an order already moved on (or
-    // cancelled) is left untouched. The funds are committed as an active hold
-    // above; convertHold books the ledger entry when the order completes.
-    //
-    // paymentStatus is set atomically inside the transition so both fields
-    // update in the same UPDATE — a failed transition (409) never leaves the
-    // order with paymentStatus="Paid" but status still "Pending".
-    if (order.status === "Pending") {
-      try {
+    // Hold + transition in ONE transaction so a crash between them never
+    // leaves an orphaned active hold locking the customer's funds.
+    try {
+      await db.transaction(async (tx) => {
+        const holdResult = await walletService.placeHold({
+          customerId,
+          orderId: order.id,
+          amount: orderTotal,
+          description: `Auto-payment for Order ${order.orderNumber} (Wallet Balance)`,
+        }, tx);
+
+        if (!holdResult.success) {
+          // alreadyHeld on an unpaid order means an earlier run placed the hold
+          // and crashed before marking it paid — finish that job. An inactive
+          // (released/converted) hold is history, not a claim; skip.
+          if (!holdResult.alreadyHeld) return;
+          const existingHold = await walletService.findHoldByOrder(order.id, tx);
+          if (!existingHold || existingHold.status !== "active") return;
+        }
+
+        // Only Pending orders can be paid. Non-Pending orders that are still
+        // Unpaid are an edge case that should not be force-transitioned.
+        if (order.status !== "Pending") return;
+
         await orderStatus.transition(order.id, "Paid", {
+          tx,
           actor: { type: "system" },
           action: "order.paid",
           set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
           metadata: { via: "settlement", amount: String(orderTotal) },
         });
-        // Keep the bot's promise — "we'll message you here the moment it
-        // lands." Best-effort enqueue; the worker skips customers who never
-        // used WhatsApp, and a failure here never blocks the settlement.
-        notifyWhatsAppPaymentConfirmed(order.id);
-      } catch (stErr) {
-        console.error(`Failed to advance order ${order.orderNumber} to Paid:`, stErr.message);
-        continue;
-      }
-    } else {
-      // Non-Pending orders (e.g. already Released) — update paymentStatus
-      // directly since no lifecycle transition is needed.
-      await orderRepo.update(order.id, { paymentStatus: "Paid" });
+      });
+    } catch (txErr) {
+      console.error(`[settlement] failed to pay order ${order.orderNumber}:`, txErr.message);
+      continue;
     }
 
-    // Generate loading ticket so order automatically passes through
+    // Post-commit effects — idempotent, best-effort, never block the sweep.
+    notifyWhatsAppPaymentConfirmed(order.id);
+
     try {
       await generateTicketForOrder(order.id);
       console.log(`Order ${order.orderNumber} automatically paid with wallet balance and ticket generated.`);
@@ -356,7 +354,6 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
       console.error(`Failed to generate ticket for auto-paid order ${order.orderNumber}:`, tktErr.message);
     }
 
-    // Auto-create commission record for the paid order
     try {
       await commissionService.createForOrder(order.id);
     } catch (commErr) {

@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
   depots,
@@ -215,42 +215,6 @@ const setProductCapacities = async (depotId, capacitiesList) => {
   }
 };
 
-const decrementProductCapacity = async (depotId, productId, amount, tx = db) => {
-  const numericProductId = parseInt(productId, 10) || productId;
-  const [row] = await tx
-    .update(depotProductCapacities)
-    .set({
-      capacity: sql`${depotProductCapacities.capacity} - ${amount}`,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(depotProductCapacities.depotId, depotId),
-        eq(depotProductCapacities.productId, numericProductId)
-      )
-    )
-    .returning();
-  return row || null;
-};
-
-const incrementProductCapacity = async (depotId, productId, amount, tx = db) => {
-  const numericProductId = parseInt(productId, 10) || productId;
-  const [row] = await tx
-    .update(depotProductCapacities)
-    .set({
-      capacity: sql`${depotProductCapacities.capacity} + ${amount}`,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(depotProductCapacities.depotId, depotId),
-        eq(depotProductCapacities.productId, numericProductId)
-      )
-    )
-    .returning();
-  return row || null;
-};
-
 // ─── Product Prices ──────────────────────────────────────────────────────────
 
 const getProductPrices = async (depotId) => {
@@ -358,8 +322,6 @@ module.exports = {
   getProductCapacities,
   setProductCapacities,
   upsertProductCapacity,
-  decrementProductCapacity,
-  incrementProductCapacity,
   getProductPrices,
   getProductPrice,
   upsertProductPrice,

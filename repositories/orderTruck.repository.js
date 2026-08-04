@@ -1,4 +1,4 @@
-const { eq, and, asc, count } = require("drizzle-orm");
+const { eq, and, asc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orderTrucks } = require("../db/schema");
 
@@ -54,6 +54,20 @@ const countByOrder = async (orderId, tx = db) => {
   return Number(row?.n || 0);
 };
 
+/** How many loads on an order are NOT in a terminal (loaded/gated_out) state. */
+const countRemainingByOrder = async (orderId, tx = db) => {
+  const [row] = await tx
+    .select({ n: count() })
+    .from(orderTrucks)
+    .where(
+      and(
+        eq(orderTrucks.orderId, orderId),
+        sql`${orderTrucks.status} NOT IN ('loaded', 'gated_out')`
+      )
+    );
+  return Number(row?.n || 0);
+};
+
 const deleteByOrder = async (orderId, tx = db) => {
   await tx.delete(orderTrucks).where(eq(orderTrucks.orderId, orderId));
 };
@@ -66,4 +80,5 @@ module.exports = {
   deleteByOrder,
   countByOrderAndStatus,
   countByOrder,
+  countRemainingByOrder,
 };

@@ -24,10 +24,10 @@ router.get("/stock-summary", verifyStaff, getStockSummary);
 router.post("/assign-orders", verifyStaff, assignOrdersToPfi);
 
 router.get("/", verifyStaff, validate({ query: misc.listPfis }), getPfis);
-router.post("/", verifyStaff, createPfi);
+router.post("/", verifyStaff, validate({ body: misc.createPfi }), createPfi);
 
 router.get("/:id", verifyStaff, validate({ params: misc.idParam }), getPfiById);
-router.patch("/:id", verifyStaff, validate({ params: misc.idParam }), updatePfi);
+router.patch("/:id", verifyStaff, validate({ params: misc.idParam, body: misc.updatePfi }), updatePfi);
 router.delete("/:id", verifyStaff, validate({ params: misc.idParam }), deletePfi);
 
 router.post("/:id/finish", verifyStaff, validate({ params: misc.idParam }), finishPfi);

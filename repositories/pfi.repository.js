@@ -127,7 +127,12 @@ const reserveStock = async (pfiId, quantity, tx = db) => {
 };
 
 const releaseStock = async (pfiId, quantity, tx = db) => {
-  const [pfi] = await tx.select().from(pfis).where(eq(pfis.id, pfiId)).limit(1);
+  const [pfi] = await tx
+    .select()
+    .from(pfis)
+    .where(eq(pfis.id, pfiId))
+    .for("update")
+    .limit(1);
   if (!pfi) return null;
 
   const wasFinished = pfi.status === "finished";
@@ -135,7 +140,7 @@ const releaseStock = async (pfiId, quantity, tx = db) => {
   const [row] = await tx
     .update(pfis)
     .set({
-      soldQtyLitres: sql`${pfis.soldQtyLitres} - ${quantity}`,
+      soldQtyLitres: sql`GREATEST(${pfis.soldQtyLitres} - ${quantity}, 0)`,
       status: wasFinished ? "active" : pfi.status,
       updatedAt: new Date(),
     })

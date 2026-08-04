@@ -177,6 +177,85 @@ const createStaff = z.object({
 const updateStaff = z.object(staffBase).partial();
 const listStaff = pagination.extend({ search: searchTerm });
 
+// --- bank accounts --------------------------------------------------------
+
+const bankAccountBase = {
+  bankName: requiredString("Bank name", 255),
+  accountName: requiredString("Account name", 255),
+  accountNumber: requiredString("Account number", 50),
+  accountType: optionalString("Account type", 50),
+  status: enumOf("Status", ["Active", "Inactive", "Suspended"]).optional(),
+  depotIds: z.array(z.union([id("Depot id"), z.string(), z.number()])).optional(),
+  notes: optionalString("Notes", 1000),
+};
+const createBankAccount = z.object(bankAccountBase);
+const updateBankAccount = z.object(bankAccountBase).partial();
+
+// --- bank statements ------------------------------------------------------
+
+const createBankStatement = z.object({
+  bankAccountId: id("Bank account"),
+  fileName: optionalString("File name", 255),
+  statementDate: optionalString("Statement date", 40),
+  lines: z.array(z.record(z.unknown())).optional(),
+});
+const bankStatementMapping = z.object({
+  mapping: z.record(z.unknown()),
+});
+const matchBankLines = z.object({
+  lineIds: z.array(id("Line id")).min(1, "At least one line is required"),
+  depositId: id("Deposit"),
+});
+
+// --- expenses --------------------------------------------------------------
+
+const expenseBase = {
+  description: requiredString("Description", 500),
+  amount: money("Amount", { min: 0.01 }),
+  categoryId: id("Category").optional().nullable(),
+  category: optionalString("Category", 100),
+  expenseDate: optionalString("Expense date", 40),
+  reference: optionalString("Reference", 100),
+  notes: optionalString("Notes", 1000),
+};
+const createExpense = z.object(expenseBase);
+const updateExpense = z.object(expenseBase).partial();
+const categoryBase = {
+  name: requiredString("Category name", 255),
+  description: optionalString("Description", 500),
+};
+const createCategory = z.object(categoryBase);
+const updateCategory = z.object(categoryBase).partial();
+
+// --- dangote products -----------------------------------------------------
+
+const dangoteProductBase = {
+  name: requiredString("Product name", 255),
+  code: optionalString("Code", 50),
+  description: optionalString("Description", 1000),
+  price: money("Price", { min: 0.01 }).optional(),
+  unit: optionalString("Unit", 50),
+  isActive: z.boolean().optional(),
+};
+const createDangoteProduct = z.object(dangoteProductBase);
+const updateDangoteProduct = z.object(dangoteProductBase).partial();
+
+// --- PFI create/update ----------------------------------------------------
+
+const pfiBase = {
+  pfiNumber: requiredString("PFI number", 100),
+  productId: id("Product"),
+  depotId: id("Depot"),
+  location: optionalString("Location", 255),
+  startingQtyLitres: quantity("Starting quantity").optional(),
+  unitPrice: money("Unit price", { min: 0.01 }).optional(),
+  vesselName: optionalString("Vessel name", 255),
+  surveyorName: optionalString("Surveyor name", 255),
+  notes: optionalString("Notes", 1000),
+};
+const createPfi = z.object(pfiBase);
+const updatePfi = z.object(pfiBase).partial();
+
 module.exports = {
   idParam,
   createProduct, updateProduct, listProducts,
@@ -187,4 +266,9 @@ module.exports = {
   createStation, updateStation, listStations,
   createInventory, updateInventory, listInventory,
   createStaff, updateStaff, listStaff,
+  createBankAccount, updateBankAccount,
+  createBankStatement, bankStatementMapping, matchBankLines,
+  createExpense, updateExpense, createCategory, updateCategory,
+  createDangoteProduct, updateDangoteProduct,
+  createPfi, updatePfi,
 };

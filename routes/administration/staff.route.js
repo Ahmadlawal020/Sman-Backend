@@ -18,7 +18,7 @@ router.use(verifyStaff);
 router.post("/", requireRole("super_admin"), validate({ body: misc.createStaff }), createAdmin);
 router.get("/", validate({ query: misc.listStaff }), getAllAdmins);
 router.get("/:id", validate({ params: misc.idParam }), getAdminById);
-router.patch("/:id", validate({ params: misc.idParam, body: misc.updateStaff }), updateAdmin);
+router.patch("/:id", requireRole("super_admin"), validate({ params: misc.idParam, body: misc.updateStaff }), updateAdmin);
 router.delete("/:id", requireRole("super_admin"), validate({ params: misc.idParam }), deleteAdmin);
 router.post("/:id/resend-invite", validate({ params: misc.idParam }), resendInvite);
 

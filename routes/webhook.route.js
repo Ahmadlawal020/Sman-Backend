@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const crypto = require("crypto");
 const { webhookEventRepo } = require("../repositories");
-const { processPaystackPayment } = require("../services/payment.service");
+const { processPaystackPayment, processUnpaidOrdersForCustomer } = require("../services/payment.service");
 
 const HANDLED_EVENTS = [
   "charge.success",
@@ -53,6 +53,15 @@ router.post(
     try {
       const result = await processPaystackPayment(event.data, eventName);
 
+      // Auto-settle: credit landed in the customer's wallet — try to pay
+      // their oldest Pending order immediately so they don't wait for the
+      // batch settlement sweep.
+      if (result.success && result.customer?.id) {
+        processUnpaidOrdersForCustomer(result.customer.id).catch((err) =>
+          console.error("[webhook] auto-settle failed:", err.message)
+        );
+      }
+
       if (webhookRecord) {
         if (result.success) {
           await webhookEventRepo.update(webhookRecord.id, {
@@ -97,7 +106,9 @@ function verifyPaystackSignature(req, res, buf) {
     .update(buf)
     .digest("hex");
 
-  if (hash !== req.headers["x-paystack-signature"]) {
+  const a = Buffer.from(hash);
+  const b = Buffer.from(req.headers["x-paystack-signature"] || "");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     throw new Error("Invalid Paystack signature");
   }
 }

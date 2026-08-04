@@ -53,7 +53,10 @@ function sameSite() {
 function isSecure() {
   // Off in development so the cookie works over plain http on localhost.
   // SameSite=None is meaningless without Secure, so force it in that case.
-  return process.env.NODE_ENV === "production" || sameSite() === "none";
+  // Also force Secure when live Paystack keys are present (real money),
+  // even if NODE_ENV is not production.
+  const hasLiveKeys = (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_live_");
+  return process.env.NODE_ENV === "production" || sameSite() === "none" || hasLiveKeys;
 }
 
 /** Opt-in value for body transport. Anything else means cookie. */

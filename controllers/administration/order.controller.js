@@ -13,7 +13,7 @@ const walletService = require("../../services/wallet.service");
 const { generateTicketForTruck } = require("../../services/ticket.service");
 const orderStatus = require("../../services/orderStatus.service");
 const orderService = require("../../services/order.service");
-const { placeOrder } = orderService;
+const { placeOrder, withExpiresAt } = orderService;
 
 /** Small helper: an HTTP error the error handler renders with its status. */
 function httpErr(status, message) {
@@ -34,7 +34,7 @@ const getOrders = asyncHandler(async (req, res) => {
     limit,
   });
 
-  res.json({ success: true, data: result });
+  res.json({ success: true, data: { ...result, orders: await withExpiresAt(result.orders) } });
 });
 
 const getOrderById = asyncHandler(async (req, res) => {
@@ -44,7 +44,7 @@ const getOrderById = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Order not found" });
   }
 
-  res.json({ success: true, data: { order } });
+  res.json({ success: true, data: { order: await withExpiresAt(order) } });
 });
 
 // The desk places an order FOR a customer: the customer id comes from the
@@ -72,7 +72,7 @@ const createOrder = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     message: "Order placed successfully",
-    data: { order, payment },
+    data: { order: await withExpiresAt(order), payment },
   });
 });
 
@@ -114,6 +114,14 @@ const releaseOrder = asyncHandler(async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Allocated truck quantity (${allocated}) must equal the order quantity (${order.quantity})`,
+      });
+    }
+    // Each truck must carry a positive quantity.
+    const zeroTruck = trucks.find((t) => Number(t.quantity) <= 0);
+    if (zeroTruck) {
+      return res.status(400).json({
+        success: false,
+        message: "Each truck must carry a positive quantity",
       });
     }
   } else if (trucks.length > 0) {
@@ -187,7 +195,7 @@ const releaseOrder = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: "Order released for loading",
-    data: { order: fullOrder, trucks: loads },
+    data: { order: await withExpiresAt(fullOrder), trucks: loads },
   });
 });
 
@@ -196,8 +204,8 @@ const releaseOrder = asyncHandler(async (req, res) => {
 // The status change now goes through the state machine FIRST (inside the same
 // transaction): it locks the row, rejects an illegal move (Loading/Completed →
 // 409) or a concurrent double-cancel (the loser gets 409 before any refund),
-// and writes the audit row. Only then do stock release, capacity restore and
-// the refund + its ledger row run — all one unit, so a failure anywhere rolls
+// and writes the audit row. Only then do stock release and the refund + its
+// ledger row run — all one unit, so a failure anywhere rolls
 // the whole cancel back (AUDIT H2/H6), and no order is ever refunded twice.
 const cancelOrder = asyncHandler(async (req, res) => {
   const { reason } = req.body;
@@ -212,7 +220,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
   });
 
   const updatedOrder = await orderRepo.findByIdFull(Number(req.params.id));
-  res.json({ success: true, message: "Order cancelled successfully", data: { order: updatedOrder } });
+  res.json({ success: true, message: "Order cancelled successfully", data: { order: await withExpiresAt(updatedOrder) } });
 });
 
 // --- The truck gate flow ----------------------------------------------------
@@ -449,6 +457,11 @@ const gateOutTruck = asyncHandler(async (req, res) => {
     if (load.status === "pending") {
       throw httpErr(409, "Truck must be marked as entered before it can exit");
     }
+    // A truck that arrived but never loaded cannot leave. It must be marked
+    // loaded (ticketing) before it can pass through the exit gate.
+    if (load.status === "gated_in") {
+      throw httpErr(409, "Truck must be marked as loaded before it can exit");
+    }
 
     const updated = await orderTruckRepo.update(
       loadId,
@@ -479,8 +492,7 @@ const gateOutTruck = asyncHandler(async (req, res) => {
     // Last truck out completes the order. "Last" = no load remains in a
     // non-terminal state. Under the order lock this is race-free.
     let completed = false;
-    const remaining = await orderTruckRepo.countByOrder(orderId, tx) -
-      (await orderTruckRepo.countByOrderAndStatus(orderId, "gated_out", tx));
+    const remaining = await orderTruckRepo.countRemainingByOrder(orderId, tx);
     if (remaining === 0 && order.status === "Loading") {
       await orderStatus.transition(orderId, "Completed", {
         tx,
@@ -512,7 +524,7 @@ const gateOutTruck = asyncHandler(async (req, res) => {
 
 const getPayableOrders = asyncHandler(async (req, res) => {
   const orders = await orderRepo.findPayableOrders();
-  res.json({ success: true, data: { orders } });
+  res.json({ success: true, data: { orders: await withExpiresAt(orders) } });
 });
 
 const payOrder = asyncHandler(async (req, res) => {
@@ -523,7 +535,7 @@ const payOrder = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: `Order ${order.orderNumber} paid successfully from wallet`,
-    data: { order },
+    data: { order: await withExpiresAt(order) },
   });
 });
 
@@ -599,6 +611,28 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
     const created = [];
     for (let i = 0; i < trucks.length; i++) {
       const t = trucks[i];
+      const plate = String(t.truckNumber).trim();
+
+      // Idempotency: skip trucks that already exist on this order (same plate,
+      // quantity and driver). A retry or impatient double-submit won't create
+      // duplicate loads. If the driver changed, update the existing load so the
+      // ticket names the correct person.
+      const driverName = String(t.driverName).trim();
+      const driverPhone = String(t.driverPhone).trim();
+      const dup = existing.find(
+        (l) => l.truckNumber === plate && String(l.quantity) === String(t.quantity)
+      );
+      if (dup) {
+        if (dup.driverName !== driverName || dup.driverPhone !== driverPhone) {
+          await orderTruckRepo.update(dup.id, { driverName, driverPhone }, tx);
+          dup.driverName = driverName;
+          dup.driverPhone = driverPhone;
+        }
+        const ticket = await generateTicketForTruck(order, dup, tx);
+        created.push({ load: dup, ticket, alreadyExisted: true });
+        continue;
+      }
+
       const load = await orderTruckRepo.create(
         {
           orderId,
@@ -639,11 +673,18 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
       );
     }
 
-    // First generation moves the order onto the loading floor. The order's
-    // plate is backfilled from the first truck when it has none.
-    const patch = {};
-    if (order.status === "Released") patch.status = "Loading";
-    if (Object.keys(patch).length) await orderRepo.update(orderId, patch, tx);
+    // First generation moves the order onto the loading floor. Routed through
+    // the state machine so the transition is audited and row-locked.
+    if (order.status === "Released") {
+      await orderStatus.transition(orderId, "Loading", {
+        tx,
+        actor: { type: "staff", staffId: req.user.id },
+        set: { loadingStartedAt: new Date() },
+        metadata: { trigger: "generate-tickets", truckCount: created.length },
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+    }
 
     // ── Deduct PFI stock ───────────────────────────────────────────────────
     // Stock moves at ticket generation, not at payment or release: a ticket is

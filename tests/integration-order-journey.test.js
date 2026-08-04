@@ -366,4 +366,60 @@ describe("integration — customer register → order → release → gates → 
       "a customer-placed order reaches the same pipeline end"
     );
   });
+
+  test("the desk can place a pickup of any amount without declaring trucks", async () => {
+    const phone = `+234813${String(RUN).slice(-6)}7`;
+
+    const registered = await request(app)
+      .post(`${PORTAL}/register`)
+      .send({ name: "Big Pickup", phone });
+    assert.equal(registered.status, 200, JSON.stringify(registered.body));
+
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`)
+      .set(NATIVE_TRANSPORT)
+      .send({ phone, code: DEV_CODE });
+    assert.equal(verified.status, 200, JSON.stringify(verified.body));
+
+    const cust = await customerRepo.findByPhone(phone);
+    await customerRepo.update(cust.id, {
+      virtualAccountNumber: "1234500007",
+      virtualAccountBank: "Test Bank",
+      virtualAccountName: "SOROMANNIGERI/ BP",
+    });
+
+    // 120,000 L — well over one tanker — with no trucks declared. The desk
+    // must be able to book it as a single pickup; security splits it across
+    // trucks at the gate.
+    const placed = await request(app)
+      .post("/api/orders")
+      .set("Authorization", `Bearer ${desk.accessToken}`)
+      .send({
+        customer: cust.id,
+        depot: depotId,
+        product: productId,
+        state: "Lagos",
+        quantity: 120000,
+        deliveryType: "pickup",
+      });
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const orderId = placed.body.data.order.id;
+
+    const loads = await orderTruckRepo.findByOrder(orderId);
+    assert.equal(loads.length, 0, "no loads declared at order; captured at the gate");
+
+    // A customer placing their OWN over-60k pickup still has to split it.
+    const refused = await request(app)
+      .post("/api/customer/orders")
+      .set("Authorization", `Bearer ${verified.body.data.accessToken}`)
+      .send({
+        depot: depotId,
+        product: productId,
+        state: "Lagos",
+        quantity: 90000,
+        deliveryType: "pickup",
+      });
+    assert.equal(refused.status, 400, "the portal still requires the truck split");
+    assert.match(refused.body.message, /split across trucks/i);
+  });
 });

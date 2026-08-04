@@ -174,7 +174,7 @@ const findAll = async ({
   }
 
   if (customer) {
-    conditions.push(eq(orders.customerId, customer));
+    conditions.push(eq(orders.customerId, Number(customer)));
   }
 
   if (depot) {
