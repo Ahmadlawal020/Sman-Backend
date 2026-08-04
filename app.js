@@ -12,13 +12,17 @@ const helmet = require("helmet");
 // Middleware
 app.use(helmet());
 app.use(logger);
-app.use(cors(corsOptions));
 
-// Webhooks must be mounted BEFORE global express.json() so their raw-body
-// parsers run and the HMAC verify callbacks actually fire.
+// Webhooks (Meta, Paystack) are server-to-server POSTs with NO Origin header
+// and a raw body. They must be mounted:
+//   - BEFORE cors(): the CORS policy rejects no-Origin requests with 403, which
+//     would kill every webhook at the door (before the HMAC check ever runs).
+//   - BEFORE express.json(): so their own raw-body parsers run and the HMAC
+//     verify callbacks actually fire over the exact bytes the sender signed.
 app.use("/api/webhooks", require("./routes/webhook.route"));
 app.use("/api/whatsapp/webhook", require("./routes/whatsappWebhook.route"));
 
+app.use(cors(corsOptions));
 app.use(express.json());
 // `res.cookie` is built in, but `req.cookies` is not and never was — parsing
 // the Cookie header has always been cookie-parser's job, in Express 4 as well.
