@@ -13,7 +13,7 @@ const {
   auditLogRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
-const { createDedicatedAccount } = require("./payment.service");
+const { createDedicatedAccount, transferToDepotSubaccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
 const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
 const { findPfiForOrder } = require("./pfi.service");
@@ -757,6 +757,7 @@ async function expireIfStale({ orderId, customerId = null }) {
 async function runPostPaymentEffects(orderId, { notifyWhatsApp = true } = {}) {
   let ticket = false;
   let commission = false;
+  let subaccountTransfer = null;
 
   try {
     await generateTicketForOrder(orderId);
@@ -772,12 +773,22 @@ async function runPostPaymentEffects(orderId, { notifyWhatsApp = true } = {}) {
     console.error(`[post-payment] commission failed for order ${orderId}:`, err.message);
   }
 
+  // Transfer depot share to subaccount (best-effort)
+  try {
+    const orderForTransfer = await orderRepo.findByIdFull(orderId);
+    if (orderForTransfer) {
+      subaccountTransfer = await transferToDepotSubaccount(orderForTransfer);
+    }
+  } catch (err) {
+    console.error(`[post-payment] subaccount transfer failed for order ${orderId}:`, err.message);
+  }
+
   // Skipped when the caller already delivers the confirmation itself — the
   // WhatsApp engine replies "Payment received" synchronously in the same turn,
   // so the async push would be a duplicate.
   if (notifyWhatsApp) notifyWhatsAppPaymentConfirmed(orderId);
 
-  return { ticket, commission };
+  return { ticket, commission, subaccountTransfer };
 }
 
 /**

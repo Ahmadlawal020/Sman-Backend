@@ -310,6 +310,18 @@ const getPriceHistory = async (depotProductPriceId) => {
     .orderBy(desc(depotPriceHistory.setAt));
 };
 
+const updateSubaccountFields = async (id, data) => {
+  const [row] = await db
+    .update(depots)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(depots.id, id))
+    .returning();
+  return row || null;
+};
+
 module.exports = {
   findById,
   findByCode,
@@ -326,4 +338,5 @@ module.exports = {
   getProductPrice,
   upsertProductPrice,
   getPriceHistory,
+  updateSubaccountFields,
 };

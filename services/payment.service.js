@@ -8,6 +8,7 @@ const {
   deliverySaleRepo,
   depositRepo,
   orderRepo,
+  depotRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
@@ -360,6 +361,13 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
       console.error(`Failed to create commission for order ${order.orderNumber}:`, commErr.message);
     }
 
+    // Transfer depot share to subaccount (best-effort)
+    try {
+      await transferToDepotSubaccount(order);
+    } catch (subErr) {
+      console.error(`[settlement] subaccount transfer failed for order ${order.orderNumber}:`, subErr.message);
+    }
+
     processedOrders.push(order);
   }
 
@@ -393,10 +401,89 @@ const processAllUnpaidOrders = async () => {
   return totalProcessed;
 };
 
+/**
+ * Transfer the depot's share of an order payment to its Paystack subaccount.
+ * Called after an order is confirmed as Paid. The full amount sits in the
+ * main merchant balance; this pushes the depot's portion to their subaccount
+ * via Paystack's Transfer API.
+ */
+const transferToDepotSubaccount = async (order) => {
+  try {
+    const depot = await depotRepo.findById(order.depotId);
+    if (!depot) return { success: false, message: "Depot not found" };
+
+    const subaccountCode = depot.paystackSubaccountCode || depot.paystack_subaccount_code;
+    const isActive = depot.subaccountActive ?? depot.subaccount_active;
+
+    if (!subaccountCode || !isActive) {
+      return { success: false, message: "Depot subaccount not active" };
+    }
+
+    const splitPct = depot.subaccountSplitPercentage ?? depot.subaccount_split_percentage ?? 100;
+    const orderAmount = Number(order.totalAmount || 0);
+    const transferAmount = Math.round(orderAmount * (splitPct / 100) * 100); // kobo
+
+    if (transferAmount <= 0) {
+      return { success: false, message: "Transfer amount is zero" };
+    }
+
+    // 1. Create a transfer recipient for the subaccount
+    const recipientResponse = await axios.post(
+      `${PAYSTACK_BASE_URL}/transferrecipient`,
+      {
+        type: "subaccount",
+        subaccount: subaccountCode,
+        name: `Depot ${depot.code || depot.name}`,
+      },
+      { headers: getPaystackHeaders() }
+    );
+
+    if (!recipientResponse.data.status) {
+      return { success: false, message: "Failed to create transfer recipient" };
+    }
+
+    const recipientCode = recipientResponse.data.data.recipient_code;
+
+    // 2. Initiate the transfer
+    const reference = `depot-${depot.id}-order-${order.id}-${Date.now()}`;
+    const transferResponse = await axios.post(
+      `${PAYSTACK_BASE_URL}/transfer`,
+      {
+        source: "balance",
+        amount: transferAmount,
+        recipient: recipientCode,
+        reason: `Order ${order.orderNumber || order.id} - depot share (${splitPct}%)`,
+        reference,
+      },
+      { headers: getPaystackHeaders() }
+    );
+
+    if (transferResponse.data.status) {
+      console.log(
+        `[subaccount] Transfer ${reference}: ${transferAmount / 100} NGN → depot ${depot.id} (${subaccountCode})`
+      );
+      return {
+        success: true,
+        reference,
+        amount: transferAmount / 100,
+        transferCode: transferResponse.data.data.transfer_code,
+      };
+    }
+
+    return { success: false, message: "Transfer initiation failed" };
+  } catch (error) {
+    const errMsg =
+      error.response?.data?.message || error.message || "Transfer error";
+    console.error(`[subaccount] transfer failed for order ${order.id}:`, errMsg);
+    return { success: false, message: errMsg };
+  }
+};
+
 module.exports = {
   createDedicatedAccount,
   verifyTransaction,
   processPaystackPayment,
   processUnpaidOrdersForCustomer,
   processAllUnpaidOrders,
+  transferToDepotSubaccount,
 };
