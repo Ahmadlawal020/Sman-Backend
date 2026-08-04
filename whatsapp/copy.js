@@ -100,7 +100,7 @@ const trackStatusLabel = (status) =>
 const trackNextStep = (order) => {
   switch (order.status) {
     case "Pending":
-      return `We are awaiting your bank transfer of ${naira(order.totalAmount)} to ${order.virtualAccountBank} ${order.virtualAccountNumber}. Your order will be confirmed automatically once payment is received.`;
+      return `We are awaiting payment of ${naira(order.totalAmount)}. Transfer to ${order.virtualAccountBank} ${order.virtualAccountNumber}, then choose *Finish payment* from the menu to confirm this order.`;
     case "Paid":
       return "Your payment has been received and your loading ticket is being prepared. We will notify you here when your order is released.";
     case "Released":
@@ -306,13 +306,13 @@ const orderCreated = (order) =>
   `Bank: ${order.virtualAccountBank}\n` +
   `Account Number: *${order.virtualAccountNumber}*\n` +
   `Account Name: ${order.virtualAccountName}\n\n` +
-  "A transfer is confirmed automatically. Or use the buttons below.";
+  "Once your transfer reflects, tap *Pay now* below to confirm your order.";
 
 /** Short body for the Pay now / Cancel buttons sent right after creation. */
 const orderCreatedActions = (canPayFromWallet) =>
   canPayFromWallet
     ? "Pay now from your Soroman wallet, or transfer using the details above."
-    : "We'll confirm your transfer automatically. You can also cancel below.";
+    : "Transfer to the account above to fund your wallet, then choose *Finish payment* from the menu to confirm. You can also cancel below.";
 
 /** The wallet payment failed (rare — the balance dropped after the button was shown). */
 const payFailed = (message) =>
