@@ -184,12 +184,17 @@ describe("public order tracking", () => {
     assert.deepEqual(res.body.data.tracked.trucks, [], "empty until assigned at release");
   });
 
-  test("a cancelled order is not publicly trackable", async () => {
+  test("a cancelled order is publicly trackable, shown as cancelled", async () => {
     const { accessToken } = await activeCustomer("4");
     const order = await place(accessToken);
     await db.update(orders).set({ status: "Cancelled", cancelledAt: new Date() }).where(eq(orders.id, order.id));
 
     const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
-    assert.equal(res.status, 404, "its state is the customer's business, behind sign-in");
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const tracked = res.body.data.tracked;
+    assert.equal(tracked.stage, "cancelled");
+    assert.match(tracked.note, /cancelled/i);
+    assert.ok(tracked.reached.cancelled, "the cancellation is timestamped");
+    assert.deepEqual(tracked.trucks, [], "no trucks on a cancelled order");
   });
 });
