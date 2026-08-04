@@ -5,6 +5,27 @@ const { waMessageRepo } = require("../repositories");
 const { QUEUES, enqueue } = require("../config/queue");
 const { toE164 } = require("../utils/phone");
 
+// Meta retries undelivered webhooks for up to 7 days, so after an outage it
+// redelivers the whole backlog at once. Acted on, a burst of hours-old messages
+// (each "hi" is a menu command) hijacks whatever live conversation is happening
+// now. This is how long Meta may have held a message before we still act on it;
+// past it, we record for audit but do not process. Measured at the webhook, so
+// "now" is receipt time — our own queue backlog can never trip it, only a real
+// Meta-side delay (an outage/retry) can.
+const STALE_INBOUND_SECONDS = Number(process.env.WA_STALE_INBOUND_SECONDS) || 300;
+
+/**
+ * Seconds Meta held this message between the customer sending it
+ * (message.timestamp, unix seconds) and this webhook receiving it. 0 when the
+ * timestamp is missing or unparseable — an absent clock must never be read as
+ * "very old" and silently drop a fresh message.
+ */
+const heldSeconds = (metaTimestamp) => {
+  const sentMs = Number(metaTimestamp) * 1000;
+  if (!Number.isFinite(sentMs) || sentMs <= 0) return 0;
+  return Math.max(0, Math.round((Date.now() - sentMs) / 1000));
+};
+
 /**
  * The Meta webhook. Same mounting pattern as the Paystack webhook: raw body
  * before global express.json(), HMAC verified over the exact bytes Meta
@@ -65,6 +86,22 @@ router.post(
           if (!row) {
             // Meta retry — already recorded, already queued.
             console.log(`[wa-webhook] inbound ${message.id} from ${waPhone}: duplicate, already queued`);
+            continue;
+          }
+          // Stale guard: a message Meta held far past when the customer sent it
+          // is a post-outage redelivery, not something to act on now. Record it
+          // for the audit trail, mark it skipped (so the stuck-inbound janitor,
+          // which only re-enqueues 'received' rows, leaves it alone), and don't
+          // queue it — otherwise a backlog of old greetings resets a live chat.
+          const held = heldSeconds(message.timestamp);
+          if (held > STALE_INBOUND_SECONDS) {
+            await waMessageRepo.markSkipped(
+              row.id,
+              `stale inbound: Meta held ${held}s (> ${STALE_INBOUND_SECONDS}s), likely post-outage redelivery`
+            );
+            console.log(
+              `[wa-webhook] inbound ${message.id} from ${waPhone}: SKIPPED stale (held ${held}s > ${STALE_INBOUND_SECONDS}s), not queued`
+            );
             continue;
           }
           await enqueue(QUEUES.WA_INBOUND, { waMessageId: row.id });
