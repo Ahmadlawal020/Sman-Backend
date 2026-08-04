@@ -340,14 +340,30 @@ describe("MENU", () => {
 describe("global commands beat state", () => {
   const cart = { depotId: 1, productId: 10 };
 
-  it("'menu' from mid-order returns to MENU", () => {
+  it("'menu' from mid-order returns to MENU (the deliberate reset always wins)", () => {
     const r = reduce(mkSession(STATES.QUANTITY, cart), txt("menu"), baseCtx());
     assert.equal(r.session.state, STATES.MENU);
   });
 
-  it("'hi' from CONFIRM returns to MENU", () => {
+  it("a bare 'hi' mid-order does NOT discard the cart — it re-shows the step", () => {
+    // A stray or post-outage-redelivered greeting must not blow away a
+    // half-built order. It's absorbed: same state, cart intact, prompt re-shown.
     const r = reduce(mkSession(STATES.CONFIRM, fullPickupCart()), txt("HI"), baseCtx());
+    assert.equal(r.session.state, STATES.CONFIRM);
+    assert.deepEqual(r.session.cart, fullPickupCart());
+    assert.deepEqual(kinds(r), [REPLY.BUTTONS]); // the confirm summary again
+  });
+
+  it("'hi' with an empty cart still opens the menu", () => {
+    const r = reduce(mkSession(STATES.MENU, {}), txt("hi"), baseCtx());
     assert.equal(r.session.state, STATES.MENU);
+    assert.deepEqual(kinds(r), [REPLY.LIST]);
+  });
+
+  it("'cancel' still discards an in-progress order from any step", () => {
+    const r = reduce(mkSession(STATES.CONFIRM, fullPickupCart()), txt("cancel"), baseCtx());
+    assert.equal(r.session.state, STATES.MENU);
+    assert.deepEqual(r.session.cart, {});
   });
 
   it("'cancel' discards the cart and says so", () => {

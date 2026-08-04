@@ -34,6 +34,19 @@ const {
 } = require("./constants");
 const copy = require("./copy");
 
+// The states where a cart is actively being built. A stray or redelivered
+// greeting ("hi"/"hello"/"start") in one of these must NOT discard the
+// half-built order — only the explicit "menu" and "cancel" commands do that.
+const ORDER_BUILDING_STATES = new Set([
+  STATES.DEPOT,
+  STATES.PRODUCT,
+  STATES.QUANTITY,
+  STATES.COMPANY,
+  STATES.COLLECT,
+  STATES.LOGISTICS,
+  STATES.CONFIRM,
+]);
+
 // ---------------------------------------------------------------- reply kit
 
 const clamp = (str, max) => {
@@ -732,9 +745,20 @@ const reduceInner = (session, inbound, ctx, expired) => {
   // here on the next tap (observed in UAT as "it keeps re-introducing
   // itself"). Greetings during IDENTIFY just get the name question, warmly.
   const nameless = session.state === STATES.IDENTIFY && !ctx.customer;
-  if (COMMANDS.MENU.includes(value)) {
+  // "menu" is the deliberate reset and always wins. The greeting words
+  // ("hi"/"hello"/"start") normally open the menu too, but NOT when a cart is
+  // being built — a stray or post-outage-redelivered greeting must not blow away
+  // a half-finished order. There, we absorb it and re-show the current step.
+  const explicitMenu = value === "menu";
+  const greeting = COMMANDS.MENU.includes(value) && !explicitMenu;
+  const buildingOrder =
+    ORDER_BUILDING_STATES.has(session.state) && Object.keys(session.cart).length > 0;
+  if (explicitMenu || (greeting && !buildingOrder)) {
     if (nameless) return done(session, [text(copy.identifyGreeting())]);
     return goTo(session, STATES.MENU, ctx);
+  }
+  if (greeting && buildingOrder) {
+    return done(session, promptFor(session.state, session, ctx));
   }
   if (COMMANDS.CANCEL.includes(value)) {
     if (nameless) return done(session, [text(copy.identifyGreeting())]);
