@@ -54,7 +54,12 @@ const countByOrder = async (orderId, tx = db) => {
   return Number(row?.n || 0);
 };
 
-/** How many loads on an order are NOT in a terminal (loaded/gated_out) state. */
+/**
+ * How many loads on an order are still in the depot — i.e. have NOT gated out.
+ * The order completes only when this hits zero (the last truck has physically
+ * left). A `loaded` truck still counts: it is loaded but has not departed, so a
+ * multi-truck order must not complete the moment the first truck exits.
+ */
 const countRemainingByOrder = async (orderId, tx = db) => {
   const [row] = await tx
     .select({ n: count() })
@@ -62,7 +67,7 @@ const countRemainingByOrder = async (orderId, tx = db) => {
     .where(
       and(
         eq(orderTrucks.orderId, orderId),
-        sql`${orderTrucks.status} NOT IN ('loaded', 'gated_out')`
+        sql`${orderTrucks.status} <> 'gated_out'`
       )
     );
   return Number(row?.n || 0);
