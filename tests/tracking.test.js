@@ -79,7 +79,7 @@ describe("public order tracking", () => {
     const res = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ depot: depotId, product: productId, state: "Delta", quantity: QTY, deliveryType: "pickup" });
+      .send({ depot: depotId, product: productId, state: "Delta", quantity: QTY, deliveryType: "pickup", companyName: "Tracking Co" });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     return res.body.data.order;
   };

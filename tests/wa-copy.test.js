@@ -88,6 +88,9 @@ test("every copy string, pinned", (t) => {
     quantityOverStock: copy.quantityOverStock("Warri"),
     overStockButtons: copy.overStockButtons(),
 
+    companyPrompt: copy.companyPrompt(),
+    companyInvalid: copy.companyInvalid(),
+
     collectPrompt: copy.collectPrompt(),
     collectButtons: copy.collectButtons(),
 
@@ -106,6 +109,7 @@ test("every copy string, pinned", (t) => {
       productName: "PMS",
       quantity: 30000,
       depotName: "Warri",
+      companyName: "Acme Fuels Ltd",
       deliveryType: "pickup",
       unitPrice: 850,
       total: 25500000,
@@ -115,6 +119,7 @@ test("every copy string, pinned", (t) => {
       productName: "PMS",
       quantity: 110000,
       depotName: "Warri",
+      companyName: "Acme Fuels Ltd",
       deliveryType: "pickup",
       unitPrice: 850,
       total: 93500000,
@@ -127,6 +132,7 @@ test("every copy string, pinned", (t) => {
       productName: "AGO",
       quantity: 10000,
       depotName: "Lagos",
+      companyName: "Ada Logistics",
       deliveryType: "delivery",
       unitPrice: 1020,
       total: 10200000,

@@ -100,6 +100,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     state: "Lagos",
     quantity: extra.quantity,
     deliveryType: "pickup",
+    companyName: "Pickup Co",
     ...extra,
   });
 

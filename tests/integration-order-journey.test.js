@@ -143,6 +143,7 @@ describe("integration — customer register → order → release → gates → 
         state: "Lagos",
         quantity: ORDER_QTY,
         deliveryType: "delivery",
+        companyName: "Journey Co",
       });
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;
@@ -300,6 +301,7 @@ describe("integration — customer register → order → release → gates → 
         state: "Lagos",
         quantity: ORDER_QTY,
         deliveryType: "delivery",
+        companyName: "Journey Co",
       });
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;

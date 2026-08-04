@@ -203,6 +203,7 @@ const waSessionStateEnum = pgEnum("wa_session_state", [
   "DEPOT",
   "PRODUCT",
   "QUANTITY",
+  "COMPANY",
   "COLLECT",
   "LOGISTICS",
   "CONFIRM",
