@@ -25,4 +25,32 @@ function getCustomerInitials(name) {
     .join(" ");
 }
 
-module.exports = { escapeRegex, getCustomerInitials };
+/**
+ * Generates standardized order reference: INITIALS/ORDER_ID
+ *
+ * Initials extracted from company name:
+ * - Multiple words: first letter of each word ("Honeywell Adada" → "HA")
+ * - Single word: first 2 letters ("Soroman" → "SO")
+ * - Default: "SO" if no company name
+ *
+ * @param {string|null} companyName - Customer's company name
+ * @param {number|string} orderId - Order ID
+ * @returns {string} Order reference (e.g., "HA/10831")
+ */
+function generateOrderReference(companyName, orderId) {
+  let initials = "SO";
+
+  if (companyName && companyName.trim()) {
+    const words = companyName.trim().split(/\s+/).filter(Boolean);
+
+    if (words.length > 1) {
+      initials = words.map((w) => w.charAt(0).toUpperCase()).join("");
+    } else if (words.length === 1) {
+      initials = words[0].substring(0, 2).toUpperCase();
+    }
+  }
+
+  return `${initials}/${orderId}`;
+}
+
+module.exports = { escapeRegex, getCustomerInitials, generateOrderReference };
