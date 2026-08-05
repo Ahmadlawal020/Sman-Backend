@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { lpgOrderRequestRepo, lpgStationRepo, customerRepo } = require("../../repositories");
 const { sendLpgRequestReceivedEmail } = require("../../services/email.service");
+const { withRequestExpiresAt } = require("../../services/requestExpiry.service");
 
 /**
  * GET /api/lpg-catalog — public, read-only: open LPG stations with their price
@@ -91,7 +92,10 @@ const listMyLpgOrders = asyncHandler(async (req, res) => {
     page,
     limit,
   });
-  res.json({ success: true, data: result });
+  const requests = await withRequestExpiresAt(
+    result.requests.map((r) => ({ ...r, _type: "lpg" }))
+  );
+  res.json({ success: true, data: { ...result, requests } });
 });
 
 /** GET /api/customer/lpg-orders/:id — one of the customer's own requests. */
@@ -100,7 +104,8 @@ const getMyLpgOrder = asyncHandler(async (req, res) => {
   if (!request || request.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
-  res.json({ success: true, data: { request } });
+  const enriched = await withRequestExpiresAt({ ...request, _type: "lpg" });
+  res.json({ success: true, data: { request: enriched } });
 });
 
 module.exports = { getLpgCatalog, createMyLpgOrder, listMyLpgOrders, getMyLpgOrder };

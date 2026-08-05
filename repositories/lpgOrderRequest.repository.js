@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
   lpgOrderRequests,
@@ -198,6 +198,24 @@ const findPayableLpgOrders = async () => {
     .orderBy(lpgOrderRequests.createdAt);
 };
 
+/**
+ * Approved, unpaid LPG requests whose review timestamp is on or before
+ * `cutoff` — the expiry sweep's work list. Oldest first.
+ */
+const findStaleApproved = async (cutoff) => {
+  return db
+    .select({ id: lpgOrderRequests.id, requestNumber: lpgOrderRequests.requestNumber, reviewedAt: lpgOrderRequests.reviewedAt })
+    .from(lpgOrderRequests)
+    .where(
+      and(
+        eq(lpgOrderRequests.status, "Approved"),
+        eq(lpgOrderRequests.paymentStatus, "Unpaid"),
+        lte(lpgOrderRequests.reviewedAt, cutoff)
+      )
+    )
+    .orderBy(asc(lpgOrderRequests.reviewedAt));
+};
+
 module.exports = {
   findById,
   findByIdFull,
@@ -206,4 +224,5 @@ module.exports = {
   update,
   generateRequestNumber,
   findPayableLpgOrders,
+  findStaleApproved,
 };

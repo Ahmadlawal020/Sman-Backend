@@ -6,11 +6,17 @@ const request = require("supertest");
 const express = require("express");
 const cors = require("cors");
 const corsOptions = require("../config/corsOptions");
+const { mobileCorsBypass } = require("../config/corsOptions");
 
 describe("CORS configuration", () => {
   const createTestApp = () => {
     const app = express();
-    app.use(cors(corsOptions));
+    app.use(mobileCorsBypass);
+    const corsMiddleware = cors(corsOptions);
+    app.use((req, res, next) => {
+      if (req._mobileCorsBypassed) return next();
+      corsMiddleware(req, res, next);
+    });
     app.get("/api/test-cors", (req, res) => {
       res.json({ success: true, message: "CORS test endpoint" });
     });
@@ -62,13 +68,18 @@ describe("CORS configuration", () => {
     assert.ok(res.headers["access-control-allow-headers"].includes("Content-Type"));
   });
 
-  test("allows non-origin requests (e.g. Postman, cURL, mobile apps)", async () => {
-    const app = createTestApp();
-    const res = await request(app).get("/api/test-cors");
+  test("allows non-origin requests (e.g. Postman, cURL) when CORS_ALLOW_NO_ORIGIN is not false", async () => {
+    const original = process.env.CORS_ALLOW_NO_ORIGIN;
+    try {
+      delete process.env.CORS_ALLOW_NO_ORIGIN;
+      const app = createTestApp();
+      const res = await request(app).get("/api/test-cors");
 
-    assert.equal(res.status, 200);
-    assert.equal(res.body.success, true);
-    assert.equal(res.headers["access-control-allow-origin"], undefined);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.success, true);
+    } finally {
+      if (original !== undefined) process.env.CORS_ALLOW_NO_ORIGIN = original;
+    }
   });
 
   test("blocks requests from disallowed origins with 403 Forbidden", async () => {
@@ -116,5 +127,113 @@ describe("CORS configuration", () => {
       process.env.CORS_ALLOWED_ORIGINS = originalAllowed;
     }
   });
-});
 
+  test("handles preflight OPTIONS request for mobile headers (X-Auth-Transport, X-Api-Key)", async () => {
+    const app = createTestApp();
+    const res = await request(app)
+      .options("/api/test-cors")
+      .set("Origin", "http://localhost:8081")
+      .set("Access-Control-Request-Method", "GET")
+      .set("Access-Control-Request-Headers", "Content-Type, X-Auth-Transport, X-Api-Key, Authorization");
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["access-control-allow-origin"], "http://localhost:8081");
+    assert.ok(res.headers["access-control-allow-headers"].includes("X-Auth-Transport"));
+    assert.ok(res.headers["access-control-allow-headers"].includes("X-Api-Key"));
+  });
+
+  // ── Mobile bypass middleware tests ──────────────────────────────────────
+
+  test("mobileCorsBypass allows mobile GET with X-Auth-Transport: body (no Origin)", async () => {
+    const original = process.env.CORS_ALLOW_NO_ORIGIN;
+    try {
+      process.env.CORS_ALLOW_NO_ORIGIN = "false"; // would normally block
+      const app = createTestApp();
+      const res = await request(app)
+        .get("/api/test-cors")
+        .set("X-Auth-Transport", "body");
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["access-control-allow-origin"], "*");
+      assert.equal(res.body.success, true);
+    } finally {
+      if (original !== undefined) {
+        process.env.CORS_ALLOW_NO_ORIGIN = original;
+      } else {
+        delete process.env.CORS_ALLOW_NO_ORIGIN;
+      }
+    }
+  });
+
+  test("mobileCorsBypass allows mobile GET with X-Api-Key (no Origin)", async () => {
+    const original = process.env.CORS_ALLOW_NO_ORIGIN;
+    try {
+      process.env.CORS_ALLOW_NO_ORIGIN = "false";
+      const app = createTestApp();
+      const res = await request(app)
+        .get("/api/test-cors")
+        .set("X-Api-Key", "test-key-123");
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["access-control-allow-origin"], "*");
+      assert.equal(res.body.success, true);
+    } finally {
+      if (original !== undefined) {
+        process.env.CORS_ALLOW_NO_ORIGIN = original;
+      } else {
+        delete process.env.CORS_ALLOW_NO_ORIGIN;
+      }
+    }
+  });
+
+  test("mobileCorsBypass short-circuits OPTIONS preflight for mobile requests", async () => {
+    const original = process.env.CORS_ALLOW_NO_ORIGIN;
+    try {
+      process.env.CORS_ALLOW_NO_ORIGIN = "false";
+      const app = createTestApp();
+      const res = await request(app)
+        .options("/api/test-cors")
+        .set("X-Auth-Transport", "body");
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["access-control-allow-origin"], "*");
+      assert.ok(res.headers["access-control-allow-methods"].includes("POST"));
+    } finally {
+      if (original !== undefined) {
+        process.env.CORS_ALLOW_NO_ORIGIN = original;
+      } else {
+        delete process.env.CORS_ALLOW_NO_ORIGIN;
+      }
+    }
+  });
+
+  test("mobileCorsBypass does NOT bypass for browser requests (Origin header present)", async () => {
+    const app = createTestApp();
+    const res = await request(app)
+      .get("/api/test-cors")
+      .set("Origin", "https://unauthorized-evil-site.com")
+      .set("X-Auth-Transport", "body"); // attacker tries to add mobile header
+
+    // cors() should still reject the disallowed origin
+    assert.equal(res.status, 403);
+    assert.equal(res.body.message, "Not allowed by CORS");
+  });
+
+  test("mobileCorsBypass does NOT bypass for anonymous no-origin requests without mobile headers", async () => {
+    const original = process.env.CORS_ALLOW_NO_ORIGIN;
+    try {
+      process.env.CORS_ALLOW_NO_ORIGIN = "false";
+      const app = createTestApp();
+      const res = await request(app).get("/api/test-cors");
+
+      // Should be blocked by cors() since CORS_ALLOW_NO_ORIGIN=false and no mobile headers
+      assert.equal(res.status, 403);
+    } finally {
+      if (original !== undefined) {
+        process.env.CORS_ALLOW_NO_ORIGIN = original;
+      } else {
+        delete process.env.CORS_ALLOW_NO_ORIGIN;
+      }
+    }
+  });
+});

@@ -42,6 +42,7 @@ const dangoteOrderRequests = pgTable(
     virtualAccountName: varchar("virtual_account_name", { length: 255 }).default(""),
     reviewedBy: integer("reviewed_by").references(() => staff.id, { onDelete: "set null" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    expiredAt: timestamp("expired_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -1,18 +1,19 @@
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { lpgOrderRequests } = require("../db/schema");
+const { dangoteOrderRequests } = require("../db/schema");
 const { auditLogRepo } = require("../repositories");
 
 /**
- * The LPG order-request review-status machine — the ONE place
- * lpg_order_requests.status changes.
+ * The Dangote order-request review-status machine — the ONE place
+ * dangote_order_requests.status changes.
  *
  * Pipeline (the review axis only): Pending Review → Approved, with Rejected and
- * Cancelled as exits (Cancelled also allowed from Approved). Payment and
- * collection are separate, independently-guarded fields, not part of this
- * machine. Every transition locks the row, writes the new status and one
- * audit_logs row in a single transaction, so two staff acting at once can't
- * both win and the audit trail never disagrees with the row.
+ * Cancelled as exits (Cancelled also allowed from Approved). Expired is an
+ * automatic exit from Approved only (the expiry sweep, for approved orders
+ * never funded in time). Payment is a separate, independently-guarded field,
+ * not part of this machine. Every transition locks the row, writes the new
+ * status and one audit_logs row in a single transaction, so two staff acting at
+ * once can't both win and the audit trail never disagrees with the row.
  */
 const TRANSITIONS = Object.freeze({
   "Pending Review": ["Approved", "Rejected", "Cancelled"],
@@ -36,7 +37,7 @@ function httpError(status, message) {
  * @param {object} opts
  * @param {{type:"staff"|"customer"|"system", staffId?:number, customerId?:number}} opts.actor
  * @param {object} [opts.set]      extra columns to write alongside the status
- * @param {string} [opts.action]   audit label; defaults to lpg_order.<status>
+ * @param {string} [opts.action]   audit label; defaults to dangote_order.<status>
  * @param {object} [opts.metadata] audit metadata
  * @param {(order)=>({status:number,message:string}|null)} [opts.guard] runs
  *   inside the row lock; return a refusal to reject (e.g. a paid order on cancel)
@@ -47,8 +48,8 @@ async function transition(id, toStatus, opts = {}) {
   const run = async (tx) => {
     const [order] = await tx
       .select()
-      .from(lpgOrderRequests)
-      .where(eq(lpgOrderRequests.id, id))
+      .from(dangoteOrderRequests)
+      .where(eq(dangoteOrderRequests.id, id))
       .for("update")
       .limit(1);
 
@@ -61,20 +62,20 @@ async function transition(id, toStatus, opts = {}) {
 
     if (order.status === toStatus) throw httpError(409, `Order request is already ${toStatus}`);
     if (!isLegal(order.status, toStatus)) {
-      throw httpError(409, `An LPG order request cannot move from ${order.status} to ${toStatus}`);
+      throw httpError(409, `A Dangote order request cannot move from ${order.status} to ${toStatus}`);
     }
 
     const [updated] = await tx
-      .update(lpgOrderRequests)
+      .update(dangoteOrderRequests)
       .set({ status: toStatus, ...(opts.set || {}), updatedAt: new Date() })
-      .where(eq(lpgOrderRequests.id, id))
+      .where(eq(dangoteOrderRequests.id, id))
       .returning();
 
     await auditLogRepo.record(
       {
-        entityType: "lpg_order_request",
+        entityType: "dangote_order_request",
         entityId: id,
-        action: opts.action || `lpg_order.${toStatus.toLowerCase().replace(/\s+/g, "_")}`,
+        action: opts.action || `dangote_order.${toStatus.toLowerCase().replace(/\s+/g, "_")}`,
         prevState: order.status,
         newState: toStatus,
         actor: opts.actor,

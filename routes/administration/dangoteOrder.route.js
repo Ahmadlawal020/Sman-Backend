@@ -35,7 +35,7 @@ router.post("/dangote-order-requests", verifyStaff, createDangoteOrderRequest);
 router.put(
   "/dangote-order-requests/:id/review",
   authenticateStaff,
-  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  requireRole("orders_manager", "orders_operator", "super_admin", { message: "Order review access required" }),
   reviewDangoteOrderRequest
 );
 router.put(

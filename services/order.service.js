@@ -13,7 +13,7 @@ const {
   auditLogRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
-const { createDedicatedAccount, transferToDepotSubaccount } = require("./payment.service");
+const { createDedicatedAccount, transferToDepotSubaccount, switchCustomerDvaToSubaccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
 const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
 const { findPfiForOrder } = require("./pfi.service");
@@ -220,6 +220,20 @@ async function placeOrder({
   const depot = await depotRepo.findById(depotId);
   if (!depot) {
     throw httpError(404, "Depot not found");
+  }
+
+  // Automatically switch customer DVA to depot Paystack Subaccount
+  const depotSubaccountCode = depot.paystackSubaccountCode || depot.paystack_subaccount_code;
+  if (virtualAccountNumber && depotSubaccountCode) {
+    try {
+      await switchCustomerDvaToSubaccount({
+        accountNumber: virtualAccountNumber,
+        subaccountCode: depotSubaccountCode,
+      });
+      await customerRepo.update(customerId, { dvaSubaccountCode: depotSubaccountCode });
+    } catch (dvaErr) {
+      console.error(`[placeOrder] Failed to switch DVA to subaccount for depot ${depotId}:`, dvaErr.message);
+    }
   }
 
   const product = await productRepo.findById(productId);

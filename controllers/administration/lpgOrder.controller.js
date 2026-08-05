@@ -13,11 +13,16 @@ const { sendLpgOrderSMS } = require("../../services/sms.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const lpgOrderStatus = require("../../services/lpgOrderStatus.service");
+const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
 
 const getLpgOrderRequests = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 50 } = req.query;
   const result = await lpgOrderRequestRepo.findAll({ search, status, page, limit });
-  res.json({ success: true, data: result });
+  // Enrich every request with its computed expiresAt deadline
+  const enriched = await withRequestExpiresAt(
+    result.requests.map((r) => ({ ...r, _type: "lpg" }))
+  );
+  res.json({ success: true, data: { ...result, requests: enriched } });
 });
 
 const getLpgOrderRequestById = asyncHandler(async (req, res) => {
@@ -25,7 +30,8 @@ const getLpgOrderRequestById = asyncHandler(async (req, res) => {
   if (!request) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
-  res.json({ success: true, data: { request } });
+  const enriched = await withRequestExpiresAt({ ...request, _type: "lpg" });
+  res.json({ success: true, data: { request: enriched } });
 });
 
 const createLpgOrderRequest = asyncHandler(async (req, res) => {
@@ -325,12 +331,24 @@ const getPayableLpgOrders = asyncHandler(async (req, res) => {
 const payLpgOrder = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
 
+  // Pre-payment guard: if the request has lapsed, expire it and refuse.
+  const wasExpired = await expireIfStale({ requestId: id, type: "lpg" });
+  if (wasExpired) {
+    return res.status(409).json({
+      success: false,
+      message: "This order has expired because payment wasn't received in time.",
+    });
+  }
+
   const existing = await lpgOrderRequestRepo.findById(id);
   if (!existing) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
   if (existing.paymentStatus === "Paid") {
     return res.status(409).json({ success: false, message: "Order is already paid" });
+  }
+  if (existing.status === "Expired") {
+    return res.status(409).json({ success: false, message: "This order has expired." });
   }
   if (existing.status !== "Approved") {
     return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });

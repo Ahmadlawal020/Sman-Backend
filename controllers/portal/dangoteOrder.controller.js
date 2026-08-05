@@ -7,6 +7,7 @@ const {
 } = require("../../repositories");
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
 const walletService = require("../../services/wallet.service");
+const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
 
 /**
  * GET /api/dangote-catalog — public, read-only: the active Dangote products a
@@ -108,7 +109,10 @@ const listMyDangoteOrders = asyncHandler(async (req, res) => {
     page,
     limit,
   });
-  res.json({ success: true, data: result });
+  const requests = await withRequestExpiresAt(
+    result.requests.map((r) => ({ ...r, _type: "dangote" }))
+  );
+  res.json({ success: true, data: { ...result, requests } });
 });
 
 /** GET /api/customer/dangote-orders/:id — one of the customer's own requests. */
@@ -117,7 +121,8 @@ const getMyDangoteOrder = asyncHandler(async (req, res) => {
   if (!request || request.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
-  res.json({ success: true, data: { request } });
+  const enriched = await withRequestExpiresAt({ ...request, _type: "dangote" });
+  res.json({ success: true, data: { request: enriched } });
 });
 
 /**
@@ -130,12 +135,24 @@ const getMyDangoteOrder = asyncHandler(async (req, res) => {
 const payMyDangoteOrder = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
 
+  // Pre-payment guard: if the request has lapsed, expire it and refuse.
+  const wasExpired = await expireIfStale({ requestId: id, type: "dangote", customerId: req.customer.id });
+  if (wasExpired) {
+    return res.status(409).json({
+      success: false,
+      message: "This order has expired because payment wasn't received in time. Please submit a new request at current prices.",
+    });
+  }
+
   const existing = await dangoteOrderRequestRepo.findById(id);
   if (!existing || existing.customerId !== req.customer.id) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
   if (existing.paymentStatus === "Paid") {
     return res.status(409).json({ success: false, message: "Order is already paid" });
+  }
+  if (existing.status === "Expired") {
+    return res.status(409).json({ success: false, message: "This order has expired. Please submit a new request at current prices." });
   }
   if (existing.status !== "Approved") {
     return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });

@@ -9,6 +9,7 @@ const {
   depositRepo,
   orderRepo,
   depotRepo,
+  bankAccountRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
 const { generateTicketForOrder } = require("./ticket.service");
@@ -402,10 +403,10 @@ const processAllUnpaidOrders = async () => {
 };
 
 /**
- * Transfer the depot's share of an order payment to its Paystack subaccount.
+ * Transfer the depot's share of an order payment to its bank account.
  * Called after an order is confirmed as Paid. The full amount sits in the
- * main merchant balance; this pushes the depot's portion to their subaccount
- * via Paystack's Transfer API.
+ * main merchant balance; this pushes the depot's portion to their bank account
+ * via Paystack's Transfer API using a NUBAN recipient.
  */
 const transferToDepotSubaccount = async (order) => {
   try {
@@ -415,7 +416,7 @@ const transferToDepotSubaccount = async (order) => {
     const subaccountCode = depot.paystackSubaccountCode || depot.paystack_subaccount_code;
     const isActive = depot.subaccountActive ?? depot.subaccount_active;
 
-    if (!subaccountCode || !isActive) {
+    if (!isActive) {
       return { success: false, message: "Depot subaccount not active" };
     }
 
@@ -427,13 +428,27 @@ const transferToDepotSubaccount = async (order) => {
       return { success: false, message: "Transfer amount is zero" };
     }
 
-    // 1. Create a transfer recipient for the subaccount
+    // Get linked active bank account for this depot
+    const linkedAccounts = await bankAccountRepo.findAll({ depotId: depot.id, status: "Active" });
+    if (!linkedAccounts || linkedAccounts.length === 0) {
+      return { success: false, message: `No active bank account linked to depot ${depot.name}` };
+    }
+
+    const bankAccount = linkedAccounts[0];
+    if (!bankAccount.bankCode || !bankAccount.accountNumber) {
+      return { success: false, message: `Bank account ${bankAccount.id} missing bankCode or accountNumber` };
+    }
+
+    // 1. Create a transfer recipient for the bank account (Paystack requires type: "nuban")
     const recipientResponse = await axios.post(
       `${PAYSTACK_BASE_URL}/transferrecipient`,
       {
-        type: "subaccount",
-        subaccount: subaccountCode,
-        name: `Depot ${depot.code || depot.name}`,
+        type: "nuban",
+        name: bankAccount.accountName || `Depot ${depot.code || depot.name}`,
+        account_number: bankAccount.accountNumber,
+        bank_code: bankAccount.bankCode,
+        currency: bankAccount.currency || "NGN",
+        description: `Depot ${depot.code || depot.name}`,
       },
       { headers: getPaystackHeaders() }
     );
@@ -444,7 +459,7 @@ const transferToDepotSubaccount = async (order) => {
 
     const recipientCode = recipientResponse.data.data.recipient_code;
 
-    // 2. Initiate the transfer
+    // 2. Initiate the transfer from main balance to depot bank account
     const reference = `depot-${depot.id}-order-${order.id}-${Date.now()}`;
     const transferResponse = await axios.post(
       `${PAYSTACK_BASE_URL}/transfer`,
@@ -460,7 +475,7 @@ const transferToDepotSubaccount = async (order) => {
 
     if (transferResponse.data.status) {
       console.log(
-        `[subaccount] Transfer ${reference}: ${transferAmount / 100} NGN → depot ${depot.id} (${subaccountCode})`
+        `[subaccount] Transfer ${reference}: ${transferAmount / 100} NGN → depot ${depot.id} (${bankAccount.bankName} - ${bankAccount.accountNumber})`
       );
       return {
         success: true,
@@ -479,6 +494,36 @@ const transferToDepotSubaccount = async (order) => {
   }
 };
 
+/**
+ * Switch / bind a customer's Dedicated Virtual Account (DVA) to a depot's Paystack Subaccount.
+ * Uses Paystack API: POST /dedicated_account/split
+ */
+const switchCustomerDvaToSubaccount = async ({ accountNumber, subaccountCode }) => {
+  if (!accountNumber || !subaccountCode) {
+    return { success: false, message: "Missing account number or subaccount code" };
+  }
+  try {
+    const response = await axios.post(
+      `${PAYSTACK_BASE_URL}/dedicated_account/split`,
+      {
+        account_number: accountNumber,
+        subaccount: subaccountCode,
+      },
+      { headers: getPaystackHeaders() }
+    );
+
+    if (response.data?.status) {
+      console.log(`[dva-subaccount] Switched DVA ${accountNumber} to subaccount ${subaccountCode}`);
+      return { success: true, data: response.data.data };
+    }
+    return { success: false, message: response.data?.message || "Failed to split DVA to subaccount" };
+  } catch (error) {
+    const errMsg = error.response?.data?.message || error.message || "Paystack DVA split error";
+    console.error(`[dva-subaccount] Failed to switch DVA ${accountNumber} to subaccount ${subaccountCode}:`, errMsg);
+    return { success: false, message: errMsg };
+  }
+};
+
 module.exports = {
   createDedicatedAccount,
   verifyTransaction,
@@ -486,4 +531,6 @@ module.exports = {
   processUnpaidOrdersForCustomer,
   processAllUnpaidOrders,
   transferToDepotSubaccount,
+  switchCustomerDvaToSubaccount,
 };
+

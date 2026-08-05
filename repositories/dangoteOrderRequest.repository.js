@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { dangoteOrderRequests, customers, staff, customerLicenses } = require("../db/schema");
 
@@ -238,6 +238,24 @@ const findPayableDangoteOrders = async () => {
     .orderBy(dangoteOrderRequests.createdAt);
 };
 
+/**
+ * Approved, unpaid Dangote requests whose review timestamp is on or before
+ * `cutoff` — the expiry sweep's work list. Oldest first.
+ */
+const findStaleApproved = async (cutoff) => {
+  return db
+    .select({ id: dangoteOrderRequests.id, requestNumber: dangoteOrderRequests.requestNumber, reviewedAt: dangoteOrderRequests.reviewedAt })
+    .from(dangoteOrderRequests)
+    .where(
+      and(
+        eq(dangoteOrderRequests.status, "Approved"),
+        eq(dangoteOrderRequests.paymentStatus, "Unpaid"),
+        lte(dangoteOrderRequests.reviewedAt, cutoff)
+      )
+    )
+    .orderBy(asc(dangoteOrderRequests.reviewedAt));
+};
+
 module.exports = {
   findById,
   findByIdFull,
@@ -248,4 +266,5 @@ module.exports = {
   countActiveByLicenseId,
   generateRequestNumber,
   findPayableDangoteOrders,
+  findStaleApproved,
 };
