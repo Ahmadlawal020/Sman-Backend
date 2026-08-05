@@ -974,22 +974,27 @@ describe("order outcomes", () => {
     invoiceUrl: "https://files.example/invoice.pdf",
   };
 
-  it("ORDER_CREATED: invoice, payment details, portal hint, then Pay now / Cancel", () => {
+  it("ORDER_CREATED: invoice, then ONE Pay now / Cancel message carrying the transfer details, then portal hint", () => {
     const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
     const r = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
     assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
     assert.equal(r.session.lastOrderId, 501);
-    assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.TEXT, REPLY.TEXT, REPLY.BUTTONS]);
+    // The transfer details ARE the buttons message body — one message, not two,
+    // so the "how to pay" copy can't drift from the buttons that action it.
+    assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.BUTTONS, REPLY.TEXT]);
     assert.ok(r.replies[1].body.includes("9930001111"));
-    // No wallet balance in baseCtx → Pay now is withheld; Cancel always shows.
-    assert.deepEqual(buttonIds(r.replies[3]), ["cancelorder"]);
+    // Pay now is always offered now; the tap settles once the transfer funds the wallet.
+    assert.deepEqual(buttonIds(r.replies[1]), ["paynow", "cancelorder"]);
   });
 
-  it("ORDER_CREATED offers Pay now when the wallet covers the total", () => {
+  it("ORDER_CREATED offers Pay now whether or not the wallet already covers the total", () => {
     const s = mkSession(STATES.CONFIRM, { ...fullPickupCart(), pendingOrder: true });
-    const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } });
-    const r = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, ctx);
-    assert.deepEqual(buttonIds(r.replies[3]), ["paynow", "cancelorder"]);
+    const btns = (x) => x.replies.find((y) => y.kind === REPLY.BUTTONS);
+    const empty = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
+    const funded = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER },
+      baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } }));
+    assert.deepEqual(buttonIds(btns(empty)), ["paynow", "cancelorder"]);
+    assert.deepEqual(buttonIds(btns(funded)), ["paynow", "cancelorder"]);
   });
 
   it("tapping Pay now emits PAY_ORDER for the customer's own order", () => {
@@ -1055,12 +1060,12 @@ describe("order outcomes", () => {
     const dev = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx({ devSimulatePayment: true }));
     const devButtons = dev.replies.find((r) => r.kind === REPLY.BUTTONS);
     assert.ok(devButtons, "order-created always gets a buttons message now");
-    // No wallet balance here, so Pay now is absent; dev adds the simulate button.
-    assert.deepEqual(buttonIds(devButtons), ["cancelorder", "devpaid"]);
+    // Pay now + Cancel are always offered; dev mode adds the simulate button (3 = WhatsApp's max).
+    assert.deepEqual(buttonIds(devButtons), ["paynow", "cancelorder", "devpaid"]);
 
     const prod = reduce(s, { type: INBOUND.ORDER_CREATED, order: ORDER }, baseCtx());
     const prodButtons = prod.replies.find((r) => r.kind === REPLY.BUTTONS);
-    assert.deepEqual(buttonIds(prodButtons), ["cancelorder"], "production never offers the dev button");
+    assert.deepEqual(buttonIds(prodButtons), ["paynow", "cancelorder"], "production never offers the dev button");
   });
 
   it("tapping 'I've paid' emits the simulate effect in test mode only", () => {

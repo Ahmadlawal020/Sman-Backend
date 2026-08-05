@@ -149,8 +149,6 @@ test("every copy string, pinned", (t) => {
     orderPending: copy.orderPending(),
 
     orderCreated: copy.orderCreated(ORDER),
-    orderCreatedActionsCanPay: copy.orderCreatedActions(true),
-    orderCreatedActionsTransfer: copy.orderCreatedActions(false),
     payFailedInsufficient: copy.payFailed("Insufficient wallet balance."),
     payFailedGeneric: copy.payFailed("Payment failed"),
     portalManageHint: copy.portalManageHint("https://portal.example/orders/1042"),

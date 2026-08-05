@@ -172,8 +172,11 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.equal(order.companyName, "Acme Fuels Ltd", "the company collected in chat is stored on the order");
     assert.equal(order.status, "Pending"); // zero wallet balance — awaits transfer
 
-    const paymentMsg = outbound.find((m) => m.payload.kind === "text" && /VPIPE/.test(m.payload.body));
+    // The account details now ride ON the Pay now / Cancel buttons message —
+    // one message, not a separate text before it.
+    const paymentMsg = outbound.find((m) => /VPIPE/.test(m.payload.body || ""));
     assert.ok(paymentMsg, "the reply carries the dedicated account number");
+    assert.equal(paymentMsg.payload.kind, "buttons", "details ride on the Pay now / Cancel message");
   });
 
   test("re-running the processed confirm turn does nothing — and a NEW confirm cannot double-order", async () => {

@@ -308,16 +308,14 @@ const orderCreated = (order) =>
   `Account Name: ${order.virtualAccountName}\n\n` +
   "Once your transfer reflects, tap *Pay now* below to confirm your order.";
 
-/** Short body for the Pay now / Cancel buttons sent right after creation. */
-const orderCreatedActions = (canPayFromWallet) =>
-  canPayFromWallet
-    ? "Pay now from your Soroman wallet, or transfer using the details above."
-    : "Transfer to the account above to fund your wallet, then choose *Finish payment* from the menu to confirm. You can also cancel below.";
-
-/** The wallet payment failed (rare — the balance dropped after the button was shown). */
+/**
+ * The wallet payment couldn't go through — either the transfer hasn't landed
+ * yet (a Pay now tapped early) or the balance fell short. Either way the order
+ * still stands; point back at the transfer and the same Pay now button.
+ */
 const payFailed = (message) =>
   message && /balance/i.test(message)
-    ? "That didn't go through — your wallet no longer covers this order. Please transfer to the account above instead."
+    ? "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the dedicated account above, then tap *Pay now* again."
     : "We couldn't take the payment. Please try again, or transfer to the account above.";
 
 const orderPaidWallet = (order) =>
@@ -459,7 +457,6 @@ module.exports = {
   editRows,
   orderPending,
   orderCreated,
-  orderCreatedActions,
   payFailed,
   portalManageHint,
   invoiceCaption,
