@@ -7,6 +7,7 @@ const { logger } = require("./middleware/logger");
 const errorHandler = require("./middleware/errorHandler");
 const cors = require("cors");
 const corsOptions = require("./config/corsOptions");
+const { mobileCorsBypass } = require("./config/corsOptions");
 const helmet = require("helmet");
 
 // Middleware
@@ -22,7 +23,14 @@ app.use(logger);
 app.use("/api/webhooks", require("./routes/webhook.route"));
 app.use("/api/whatsapp/webhook", require("./routes/whatsappWebhook.route"));
 
-app.use(cors(corsOptions));
+app.use(mobileCorsBypass);
+// Skip cors() for requests already handled by the mobile bypass — otherwise
+// the cors library would still reject them (it can't see mobile headers).
+const corsMiddleware = cors(corsOptions);
+app.use((req, res, next) => {
+  if (req._mobileCorsBypassed) return next();
+  corsMiddleware(req, res, next);
+});
 app.use(express.json());
 // `res.cookie` is built in, but `req.cookies` is not and never was — parsing
 // the Cookie header has always been cookie-parser's job, in Express 4 as well.

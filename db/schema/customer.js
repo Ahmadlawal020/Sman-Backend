@@ -31,6 +31,7 @@ const customers = pgTable(
     virtualAccountNumber: varchar("virtual_account_number", { length: 30 }).default(""),
     virtualAccountBank: varchar("virtual_account_bank", { length: 100 }).default(""),
     virtualAccountName: varchar("virtual_account_name", { length: 255 }).default(""),
+    dvaSubaccountCode: varchar("dva_subaccount_code", { length: 100 }).default(""),
     // Commission payout bank details — where the company sends commission payments.
     commissionBankName: varchar("commission_bank_name", { length: 255 }).default(""),
     commissionAccountName: varchar("commission_account_name", { length: 255 }).default(""),

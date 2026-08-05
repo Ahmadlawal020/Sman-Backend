@@ -209,7 +209,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
 
   // ── guards ─────────────────────────────────────────────────────────────────
 
-  test("load before gate-in is refused 409; gate-out is arrival-based, not load-gated", async () => {
+  test("the gate order is enforced: load needs gate-in, exit needs load", async () => {
     const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
@@ -218,11 +218,10 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
       .set("Authorization", `Bearer ${ticketing.accessToken}`)
       .send({});
-    assert.equal(res.status, 409);
+    assert.equal(res.status, 409, "load before gate-in is refused");
 
-    // The gate rule is arrival-based: once a truck has entered (gated_in) it may
-    // exit, even without a separate load record. Only a truck that never
-    // arrived (still pending) is refused at the exit gate.
+    // Entered but not yet loaded: still cannot exit. A truck must not leave the
+    // depot gate without being loaded.
     await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
@@ -231,7 +230,18 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 409, "a gated-in but unloaded truck cannot exit");
+
+    // Once loaded, it may exit.
+    await request(app)
+      .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
+      .set("Authorization", `Bearer ${ticketing.accessToken}`)
+      .send({});
+    res = await request(app)
+      .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(res.status, 200, "a loaded truck may exit");
   });
 
   test("gating the same truck in twice is idempotent — the second entry reports the first", async () => {

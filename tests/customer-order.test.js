@@ -638,9 +638,12 @@ describe("customer portal — a customer places their own order", () => {
     const ticket = await ticketRepo.findByOrder(orderId);
     assert.ok(ticket, "payment generated a loading ticket");
 
-    // Reconcile again — must heal without duplicating.
+    // Reconcile again — must heal without duplicating. (runPostPaymentEffects
+    // also reports a subaccountTransfer effect now; we only assert the two this
+    // test is about — the ticket and commission heal idempotently.)
     const result = await orderService.runPostPaymentEffects(orderId);
-    assert.deepEqual(result, { ticket: true, commission: true }, "re-run succeeds");
+    assert.equal(result.ticket, true, "re-run heals the ticket");
+    assert.equal(result.commission, true, "re-run heals the commission");
     assert.equal(
       (await ticketRepo.findByOrder(orderId)).id,
       ticket.id,

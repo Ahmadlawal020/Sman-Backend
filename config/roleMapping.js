@@ -21,6 +21,46 @@ const ROLE_MAP = {
   17: "dispatch",
   18: "it_compliance",
   19: "security_exit",
+
+  // Tiered Subroles - Finance Department
+20: "finance_viewer",
+  21: "finance_operator",
+  22: "finance_manager",
+
+  // Tiered Subroles - Transport Department
+  23: "transport_viewer",
+  24: "transport_operator",
+  25: "transport_manager",
+
+  // Tiered Subroles - Security Department
+  26: "security_viewer",
+  27: "security_operator",
+  28: "security_manager",
+
+  // Tiered Subroles - Ticketing Department
+  29: "ticketing_viewer",
+  30: "ticketing_operator",
+  31: "ticketing_manager",
+
+  // Tiered Subroles - Orders Department
+  32: "orders_viewer",
+  33: "orders_operator",
+  34: "orders_manager",
+
+  // Tiered Subroles - Sales Department
+  35: "sales_viewer",
+  36: "sales_operator",
+  37: "sales_manager_tier",
+
+  // Tiered Subroles - Dangote Department
+  38: "dangote_viewer",
+  39: "dangote_operator",
+  40: "dangote_manager",
+
+  // Tiered Subroles - LPG Department
+  41: "lpg_viewer",
+  42: "lpg_operator",
+  43: "lpg_manager",
 };
 
 const mapRolesToBackend = (numericRoles) => {

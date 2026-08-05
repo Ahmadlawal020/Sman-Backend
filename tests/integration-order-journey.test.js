@@ -403,6 +403,7 @@ describe("integration — customer register → order → release → gates → 
         state: "Lagos",
         quantity: 120000,
         deliveryType: "pickup",
+        companyName: "Big Pickup Co",
       });
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;
@@ -420,6 +421,7 @@ describe("integration — customer register → order → release → gates → 
         state: "Lagos",
         quantity: 90000,
         deliveryType: "pickup",
+        companyName: "Big Pickup Co",
       });
     assert.equal(refused.status, 400, "the portal still requires the truck split");
     assert.match(refused.body.message, /split across trucks/i);

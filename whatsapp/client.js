@@ -37,6 +37,25 @@ const graphVersion = () => {
 };
 const GRAPH_VERSION = graphVersion();
 
+// A hung Meta connection must not pin the worker until pg-boss's 60s expiry
+// (that alone turned a blip into a ~2-minute wait). Bound every send with a
+// timeout, and retry only the TRANSIENT failures — a dropped socket, a
+// timeout, a 429, a Meta 5xx — a couple of times in-turn, so a hiccup never
+// costs a whole retry cycle. Auth/4xx (an expired token, a blocked recipient)
+// can't self-heal here, so they throw straight through to the job's backoff.
+const SEND_TIMEOUT_MS = Number(process.env.WA_SEND_TIMEOUT_MS) || 15000;
+const SEND_MAX_ATTEMPTS = Math.max(1, Number(process.env.WA_SEND_ATTEMPTS) || 3);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const isTransient = (err) => {
+  const status = err.response?.status;
+  return (
+    !err.response || // network error, DNS, connection refused
+    err.code === "ECONNABORTED" || // axios timeout
+    status === 429 || // rate limited
+    (status >= 500 && status <= 599) // Meta 5xx
+  );
+};
+
 const config = () => ({
   enabled: cleanEnv(process.env.WHATSAPP_ENABLED) === "true",
   token: cleanEnv(process.env.WHATSAPP_ACCESS_TOKEN),
@@ -148,22 +167,32 @@ const sendReply = async (to, reply) => {
     throw new Error("whatsapp/client: WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured");
   }
 
-  try {
-    const res = await axios.post(
-      `https://graph.facebook.com/${graphVersion()}/${phoneNumberId}/messages`,
-      toApiPayload(to, reply),
-      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
-    );
-    const wamid = res.data?.messages?.[0]?.id || null;
-    return { wamid };
-  } catch (err) {
-    // Surface Meta's actual complaint — "(#131030) Recipient not in allowed
-    // list" beats "Request failed with status code 400" in a ledger row.
-    const apiError = err.response?.data?.error;
-    if (apiError) {
-      throw new Error(`Cloud API ${apiError.code || ""}: ${apiError.message || "send rejected"}`);
+  const url = `https://graph.facebook.com/${graphVersion()}/${phoneNumberId}/messages`;
+  const opts = {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    timeout: SEND_TIMEOUT_MS,
+  };
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const res = await axios.post(url, toApiPayload(to, reply), opts);
+      const wamid = res.data?.messages?.[0]?.id || null;
+      return { wamid };
+    } catch (err) {
+      // A transient blip retries a couple of times, fast, before giving up to
+      // the job's own backoff — a dropped socket must not cost a retry cycle.
+      if (attempt < SEND_MAX_ATTEMPTS && isTransient(err)) {
+        await sleep(attempt * 500); // 0.5s, 1s, …
+        continue;
+      }
+      // Surface Meta's actual complaint — "(#131030) Recipient not in allowed
+      // list" beats "Request failed with status code 400" in a ledger row.
+      const apiError = err.response?.data?.error;
+      if (apiError) {
+        throw new Error(`Cloud API ${apiError.code || ""}: ${apiError.message || "send rejected"}`);
+      }
+      throw err;
     }
-    throw err;
   }
 };
 
@@ -189,7 +218,11 @@ const sendTypingIndicator = async (inboundWamid) => {
         message_id: inboundWamid,
         typing_indicator: { type: "text" },
       },
-      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        // A cosmetic call is only useful promptly; never let it hang.
+        timeout: Math.min(5000, SEND_TIMEOUT_MS),
+      }
     );
     return { ok: true };
   } catch (err) {

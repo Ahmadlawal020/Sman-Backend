@@ -1,5 +1,36 @@
 const { client } = require("../db");
 
+const DEFAULT_BANK_CODES = {
+  "Zenith Bank": "057",
+  "Guaranty Trust Bank (GTBank)": "058",
+  "GTBank": "058",
+  "First Bank of Nigeria": "011",
+  "First Bank": "011",
+  "Access Bank": "044",
+  "United Bank for Africa (UBA)": "033",
+  "UBA": "033",
+  "Wema Bank": "035",
+  "Sterling Bank": "232",
+  "Fidelity Bank": "070",
+  "Union Bank": "032",
+  "Stanbic IBTC Bank": "221",
+  "Kuda Bank": "50211",
+  "Moniepoint Microfinance Bank": "50515",
+  "OPay": "999992",
+  "Ecobank Nigeria": "050",
+  "First City Monument Bank (FCMB)": "214",
+  "Providus Bank": "101",
+};
+
+function resolveBankCode(bankName, providedCode) {
+  const trimmedName = bankName ? String(bankName).trim() : "";
+  if (trimmedName && DEFAULT_BANK_CODES[trimmedName]) {
+    return DEFAULT_BANK_CODES[trimmedName];
+  }
+  if (providedCode && String(providedCode).trim()) return String(providedCode).trim();
+  return "";
+}
+
 let tableInitialized = false;
 
 async function ensureTableExists() {
@@ -147,9 +178,12 @@ const bankAccountRepo = {
       notes = "",
     } = data;
 
-    const jsonDepotIds = JSON.stringify(
-      Array.isArray(depotIds) ? depotIds.map((i) => Number(i)).filter((i) => !isNaN(i)) : []
-    );
+    const numericDepotIds = Array.isArray(depotIds)
+      ? depotIds.map((i) => Number(i)).filter((i) => !isNaN(i))
+      : [];
+    const jsonDepotIds = JSON.stringify(numericDepotIds);
+
+    const finalBankCode = resolveBankCode(bankName, bankCode);
 
     if (isDefault) {
       await client`UPDATE bank_accounts SET is_default = false`;
@@ -173,7 +207,7 @@ const bankAccountRepo = {
         ${bankName},
         ${accountName},
         ${accountNumber},
-        ${bankCode},
+        ${finalBankCode},
         ${branchName},
         ${currency},
         ${status},
@@ -186,7 +220,19 @@ const bankAccountRepo = {
       RETURNING *
     `;
 
-    return await attachDepotsToAccount(rows[0]);
+    const result = await attachDepotsToAccount(rows[0]);
+
+    // Sync subaccounts for newly linked depots
+    if (numericDepotIds.length > 0) {
+      const { syncSubaccountForDepot } = require("../services/subaccount.service");
+      for (const depotId of numericDepotIds) {
+        syncSubaccountForDepot(depotId).catch((err) =>
+          console.error(`[bankAccount.create] subaccount sync failed for depot ${depotId}:`, err.message)
+        );
+      }
+    }
+
+    return result;
   },
 
   async update(id, data) {
@@ -200,7 +246,8 @@ const bankAccountRepo = {
     const bankName = data.bankName !== undefined ? data.bankName : existing.bankName;
     const accountName = data.accountName !== undefined ? data.accountName : existing.accountName;
     const accountNumber = data.accountNumber !== undefined ? data.accountNumber : existing.accountNumber;
-    const bankCode = data.bankCode !== undefined ? data.bankCode : existing.bankCode;
+    const rawBankCode = data.bankCode !== undefined ? data.bankCode : existing.bankCode;
+    const bankCode = resolveBankCode(bankName, rawBankCode);
     const branchName = data.branchName !== undefined ? data.branchName : existing.branchName;
     const currency = data.currency !== undefined ? data.currency : existing.currency;
     const status = data.status !== undefined ? data.status : existing.status;
@@ -208,9 +255,15 @@ const bankAccountRepo = {
     const depotIds = data.depotIds !== undefined ? data.depotIds : existing.depotIds;
     const notes = data.notes !== undefined ? data.notes : existing.notes;
 
-    const jsonDepotIds = JSON.stringify(
-      Array.isArray(depotIds) ? depotIds.map((i) => Number(i)).filter((i) => !isNaN(i)) : []
-    );
+    const numericDepotIds = Array.isArray(depotIds)
+      ? depotIds.map((i) => Number(i)).filter((i) => !isNaN(i))
+      : [];
+    const jsonDepotIds = JSON.stringify(numericDepotIds);
+
+    // Compute which depots were added or removed
+    const oldDepotIds = (existing.depotIds || []).map(Number);
+    const addedDepots = numericDepotIds.filter((dId) => !oldDepotIds.includes(dId));
+    const removedDepots = oldDepotIds.filter((dId) => !numericDepotIds.includes(dId));
 
     if (isDefault && !existing.isDefault) {
       await client`UPDATE bank_accounts SET is_default = false WHERE id != ${numericId}`;
@@ -235,7 +288,20 @@ const bankAccountRepo = {
     `;
 
     if (rows.length === 0) return null;
-    return await attachDepotsToAccount(rows[0]);
+    const result = await attachDepotsToAccount(rows[0]);
+
+    // Sync subaccounts for affected depots (both current and previously linked)
+    const affectedDepots = [...new Set([...numericDepotIds, ...oldDepotIds])];
+    if (affectedDepots.length > 0) {
+      const { syncSubaccountForDepot } = require("../services/subaccount.service");
+      for (const depotId of affectedDepots) {
+        syncSubaccountForDepot(depotId).catch((err) =>
+          console.error(`[bankAccount.update] subaccount sync failed for depot ${depotId}:`, err.message)
+        );
+      }
+    }
+
+    return result;
   },
 
   async delete(id) {
@@ -243,11 +309,27 @@ const bankAccountRepo = {
     const numericId = Number(id);
     if (isNaN(numericId)) return false;
 
+    // Fetch the account first so we know which depots to sync after deletion
+    const existing = await this.findById(numericId);
+
     const rows = await client`
       DELETE FROM bank_accounts
       WHERE id = ${numericId}
       RETURNING id
     `;
+
+    if (rows.length > 0 && existing) {
+      const affectedDepotIds = (existing.depotIds || []).map(Number).filter((d) => !isNaN(d));
+      if (affectedDepotIds.length > 0) {
+        const { syncSubaccountForDepot } = require("../services/subaccount.service");
+        for (const depotId of affectedDepotIds) {
+          syncSubaccountForDepot(depotId).catch((err) =>
+            console.error(`[bankAccount.delete] subaccount sync failed for depot ${depotId}:`, err.message)
+          );
+        }
+      }
+    }
+
     return rows.length > 0;
   },
 };

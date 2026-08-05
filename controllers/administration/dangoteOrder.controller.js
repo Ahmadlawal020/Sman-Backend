@@ -13,6 +13,8 @@ const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendDangoteDeliveryOrderSMS } = require("../../services/sms.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
+const dangoteOrderStatus = require("../../services/dangoteOrderStatus.service");
+const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
 
 // ── Dangote Products ──────────────────────────────────────────────────────
 
@@ -80,7 +82,11 @@ const updateDangoteProduct = asyncHandler(async (req, res) => {
 const getDangoteOrderRequests = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 50 } = req.query;
   const result = await dangoteOrderRequestRepo.findAll({ search, status, page, limit });
-  res.json({ success: true, data: result });
+  // Enrich every request with its computed expiresAt deadline
+  const enriched = await withRequestExpiresAt(
+    result.requests.map((r) => ({ ...r, _type: "dangote" }))
+  );
+  res.json({ success: true, data: { ...result, requests: enriched } });
 });
 
 const getDangoteOrderRequestById = asyncHandler(async (req, res) => {
@@ -88,7 +94,8 @@ const getDangoteOrderRequestById = asyncHandler(async (req, res) => {
   if (!request) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
-  res.json({ success: true, data: { request } });
+  const enriched = await withRequestExpiresAt({ ...request, _type: "dangote" });
+  res.json({ success: true, data: { request: enriched } });
 });
 
 const createDangoteOrderRequest = asyncHandler(async (req, res) => {
@@ -172,12 +179,12 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   }
 
   if (action === "reject") {
-    const updated = await dangoteOrderRequestRepo.update(id, {
-      status: "Rejected",
-      reviewedBy: req.user.id,
-      reviewedAt: new Date(),
+    await dangoteOrderStatus.transition(id, "Rejected", {
+      actor: { type: "staff", staffId: req.user.id },
+      set: { reviewedBy: req.user.id, reviewedAt: new Date() },
+      action: "dangote_order.rejected",
     });
-    const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
+    const fullRequest = await dangoteOrderRequestRepo.findByIdFull(id);
     return res.json({
       success: true,
       message: "Order request rejected",
@@ -206,14 +213,18 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
 
   const totalAmount = (Number(pricePerUnit) * existing.quantity) + Number(deliveryPrice || 0);
 
-  const updated = await dangoteOrderRequestRepo.update(id, {
-    status: "Approved",
-    pricePerUnit: String(pricePerUnit),
-    deliveryPrice: String(deliveryPrice || 0),
-    totalAmount: String(totalAmount),
-    expectedArrivalDate: expectedArrivalDate || "",
-    reviewedBy: req.user.id,
-    reviewedAt: new Date(),
+  const { order: updated } = await dangoteOrderStatus.transition(id, "Approved", {
+    actor: { type: "staff", staffId: req.user.id },
+    set: {
+      pricePerUnit: String(pricePerUnit),
+      deliveryPrice: String(deliveryPrice || 0),
+      totalAmount: String(totalAmount),
+      expectedArrivalDate: expectedArrivalDate || "",
+      reviewedBy: req.user.id,
+      reviewedAt: new Date(),
+    },
+    action: "dangote_order.approved",
+    metadata: { totalAmount: String(totalAmount) },
   });
 
   // Fetch full customer record for DVA check
@@ -374,12 +385,24 @@ const getPayableDangoteOrders = asyncHandler(async (req, res) => {
 const payDangoteOrder = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
 
+  // Pre-payment guard: if the request has lapsed, expire it and refuse.
+  const wasExpired = await expireIfStale({ requestId: id, type: "dangote" });
+  if (wasExpired) {
+    return res.status(409).json({
+      success: false,
+      message: "This order has expired because payment wasn't received in time.",
+    });
+  }
+
   const existing = await dangoteOrderRequestRepo.findById(id);
   if (!existing) {
     return res.status(404).json({ success: false, message: "Order request not found" });
   }
   if (existing.paymentStatus === "Paid") {
     return res.status(409).json({ success: false, message: "Order is already paid" });
+  }
+  if (existing.status === "Expired") {
+    return res.status(409).json({ success: false, message: "This order has expired." });
   }
   if (existing.status !== "Approved") {
     return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });

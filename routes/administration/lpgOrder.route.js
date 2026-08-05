@@ -38,7 +38,7 @@ router.post(
 router.put(
   "/lpg-order-requests/:id/review",
   authenticateStaff,
-  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  requireRole("orders_manager", "orders_operator", "lpg_manager", "lpg_operator", "super_admin", { message: "Order review access required" }),
   validate({ params: lpgOrderSchemas.idParam, body: lpgOrderSchemas.reviewLpgOrderRequest }),
   reviewLpgOrderRequest
 );
@@ -64,7 +64,7 @@ router.put(
 router.put(
   "/lpg-order-requests/:id/cancel",
   authenticateStaff,
-  requireRole("orders", "super_admin", { message: "Order review access required" }),
+  requireRole("orders_manager", "orders_operator", "lpg_manager", "lpg_operator", "super_admin", { message: "Order review access required" }),
   validate({ params: lpgOrderSchemas.idParam }),
   cancelLpgOrderRequest
 );

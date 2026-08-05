@@ -1,5 +1,6 @@
 const { registerWorker, scheduleCron } = require("../config/queue");
 const { expireStaleOrders } = require("../services/order.service");
+const { expireStaleRequests } = require("../services/requestExpiry.service");
 
 // An ad-hoc pg-boss queue created on demand, mirroring the WhatsApp maintenance
 // cron — not part of the WhatsApp queue set.
@@ -17,7 +18,8 @@ const EXPIRY_QUEUE = "order-expiry-sweep";
 const start = async () => {
   await registerWorker(EXPIRY_QUEUE, async () => {
     const expired = await expireStaleOrders();
-    return { expired };
+    const requests = await expireStaleRequests();
+    return { expired, requests };
   });
 
   // Hourly by default; override with a standard cron expression.

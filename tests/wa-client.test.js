@@ -48,6 +48,29 @@ describe("whatsapp/client — engine replies onto the Cloud API, faithfully", ()
     assert.equal(body.text.body, "Hello 👋");
   });
 
+  test("a transient 5xx is retried in-turn and then succeeds", async () => {
+    nock(GRAPH).post(PATH).reply(503, "upstream unavailable");
+    nock(GRAPH).post(PATH).reply(200, { messages: [{ id: "wamid.RETRY" }] });
+
+    const res = await sendReply(TO, { kind: "text", body: "hi" });
+    assert.equal(res.wamid, "wamid.RETRY", "recovered on the retry, not a whole job cycle");
+    assert.equal(nock.pendingMocks().length, 0, "both attempts were made");
+  });
+
+  test("an auth error (190) is not retried — it throws straight away", async () => {
+    // Only one interceptor: a retry would have no mock. isTransient(401) is
+    // false, so there is exactly one attempt.
+    nock(GRAPH)
+      .post(PATH)
+      .reply(401, { error: { code: 190, message: "Authentication Error" } });
+
+    await assert.rejects(
+      () => sendReply(TO, { kind: "text", body: "hi" }),
+      /Cloud API 190: Authentication Error/,
+    );
+    assert.equal(nock.pendingMocks().length, 0, "exactly one attempt — no wasted retry");
+  });
+
   test("buttons reply → interactive button message", async () => {
     let body;
     nock(GRAPH)

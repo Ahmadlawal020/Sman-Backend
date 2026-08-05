@@ -34,6 +34,19 @@ const {
 } = require("./constants");
 const copy = require("./copy");
 
+// The states where a cart is actively being built. A stray or redelivered
+// greeting ("hi"/"hello"/"start") in one of these must NOT discard the
+// half-built order — only the explicit "menu" and "cancel" commands do that.
+const ORDER_BUILDING_STATES = new Set([
+  STATES.DEPOT,
+  STATES.PRODUCT,
+  STATES.QUANTITY,
+  STATES.COMPANY,
+  STATES.COLLECT,
+  STATES.LOGISTICS,
+  STATES.CONFIRM,
+]);
+
 // ---------------------------------------------------------------- reply kit
 
 const clamp = (str, max) => {
@@ -343,16 +356,18 @@ const promptFor = (state, session, context) => {
 };
 
 /**
- * The Pay now / Cancel buttons for an unpaid order. Pay now appears only when
- * the wallet balance covers the total — otherwise the tap would just fail and
- * a transfer is the real path. Cancel is always offered; the dev "paid" button
- * only in test mode. Always ≤ 3 buttons (WhatsApp's limit).
+ * The Pay now / Cancel buttons for an unpaid order. Pay now is always offered
+ * so the customer has a single obvious way to confirm: after their transfer
+ * lands, the DVA webhook credits the wallet and the tap settles the order. A
+ * tap before the money reflects can't overspend — PAY_ORDER re-checks and, if
+ * the balance still falls short, replies with the "transfer first" copy.
+ * Cancel is always offered; the dev "paid" button only in test mode. Always
+ * ≤ 3 buttons (WhatsApp's limit).
  */
 const awaitPaymentButtonDefs = (cart, context) => {
   const total = Number(cart.awaiting?.totalAmount) || 0;
-  const balance = Number(context.customer?.balance) || 0;
   const defs = {};
-  if (total > 0 && balance >= total) defs.paynow = copy.payNowButton();
+  if (total > 0) defs.paynow = copy.payNowButton();
   defs.cancelorder = copy.awaitPaymentCancelButton();
   if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
   return defs;
@@ -635,19 +650,16 @@ const reduceInner = (session, inbound, ctx, expired) => {
           document(order.invoiceUrl, `invoice-${order.orderNumber}.pdf`, copy.invoiceCaption(order.orderNumber))
         );
       }
-      replies.push(text(paidFromWallet ? copy.orderPaidWallet(order) : copy.orderCreated(order)));
+      if (paidFromWallet) {
+        replies.push(text(copy.orderPaidWallet(order)));
+      } else {
+        // One message, not two: the order + dedicated-account details ARE the
+        // body of the Pay now / Cancel buttons, so the "how to pay" copy and
+        // the buttons that action it can't drift apart or repeat each other.
+        replies.push(buttons(copy.orderCreated(order), awaitPaymentButtonDefs(next.cart, ctx)));
+      }
       if (order.deliveryType === "pickup" && ctx.portalUrl) {
         replies.push(text(copy.portalManageHint(ctx.portalUrl)));
-      }
-      if (!paidFromWallet) {
-        // Orders are created Unpaid: offer Pay now (from wallet, when it
-        // covers the total) and Cancel right away, so the customer never has
-        // to hunt for how to pay.
-        const total = Number(order.totalAmount) || 0;
-        const canPay = total > 0 && (Number(ctx.customer?.balance) || 0) >= total;
-        replies.push(
-          buttons(copy.orderCreatedActions(canPay), awaitPaymentButtonDefs(next.cart, ctx)),
-        );
       }
       return done(next, replies);
     }
@@ -732,9 +744,20 @@ const reduceInner = (session, inbound, ctx, expired) => {
   // here on the next tap (observed in UAT as "it keeps re-introducing
   // itself"). Greetings during IDENTIFY just get the name question, warmly.
   const nameless = session.state === STATES.IDENTIFY && !ctx.customer;
-  if (COMMANDS.MENU.includes(value)) {
+  // "menu" is the deliberate reset and always wins. The greeting words
+  // ("hi"/"hello"/"start") normally open the menu too, but NOT when a cart is
+  // being built — a stray or post-outage-redelivered greeting must not blow away
+  // a half-finished order. There, we absorb it and re-show the current step.
+  const explicitMenu = value === "menu";
+  const greeting = COMMANDS.MENU.includes(value) && !explicitMenu;
+  const buildingOrder =
+    ORDER_BUILDING_STATES.has(session.state) && Object.keys(session.cart).length > 0;
+  if (explicitMenu || (greeting && !buildingOrder)) {
     if (nameless) return done(session, [text(copy.identifyGreeting())]);
     return goTo(session, STATES.MENU, ctx);
+  }
+  if (greeting && buildingOrder) {
+    return done(session, promptFor(session.state, session, ctx));
   }
   if (COMMANDS.CANCEL.includes(value)) {
     if (nameless) return done(session, [text(copy.identifyGreeting())]);

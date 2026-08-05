@@ -100,7 +100,7 @@ const trackStatusLabel = (status) =>
 const trackNextStep = (order) => {
   switch (order.status) {
     case "Pending":
-      return `We are awaiting your bank transfer of ${naira(order.totalAmount)} to ${order.virtualAccountBank} ${order.virtualAccountNumber}. Your order will be confirmed automatically once payment is received.`;
+      return `We are awaiting payment of ${naira(order.totalAmount)}. Transfer to ${order.virtualAccountBank} ${order.virtualAccountNumber}, then choose *Finish payment* from the menu to confirm this order.`;
     case "Paid":
       return "Your payment has been received and your loading ticket is being prepared. We will notify you here when your order is released.";
     case "Released":
@@ -306,18 +306,16 @@ const orderCreated = (order) =>
   `Bank: ${order.virtualAccountBank}\n` +
   `Account Number: *${order.virtualAccountNumber}*\n` +
   `Account Name: ${order.virtualAccountName}\n\n` +
-  "A transfer is confirmed automatically. Or use the buttons below.";
+  "Once your transfer reflects, tap *Pay now* below to confirm your order.";
 
-/** Short body for the Pay now / Cancel buttons sent right after creation. */
-const orderCreatedActions = (canPayFromWallet) =>
-  canPayFromWallet
-    ? "Pay now from your Soroman wallet, or transfer using the details above."
-    : "We'll confirm your transfer automatically. You can also cancel below.";
-
-/** The wallet payment failed (rare — the balance dropped after the button was shown). */
+/**
+ * The wallet payment couldn't go through — either the transfer hasn't landed
+ * yet (a Pay now tapped early) or the balance fell short. Either way the order
+ * still stands; point back at the transfer and the same Pay now button.
+ */
 const payFailed = (message) =>
   message && /balance/i.test(message)
-    ? "That didn't go through — your wallet no longer covers this order. Please transfer to the account above instead."
+    ? "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the dedicated account above, then tap *Pay now* again."
     : "We couldn't take the payment. Please try again, or transfer to the account above.";
 
 const orderPaidWallet = (order) =>
@@ -459,7 +457,6 @@ module.exports = {
   editRows,
   orderPending,
   orderCreated,
-  orderCreatedActions,
   payFailed,
   portalManageHint,
   invoiceCaption,

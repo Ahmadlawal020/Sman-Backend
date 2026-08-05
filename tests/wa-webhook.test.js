@@ -23,7 +23,9 @@ const RUN = Date.now();
 const sign = (body) =>
   `sha256=${crypto.createHmac("sha256", process.env.WHATSAPP_APP_SECRET).update(body).digest("hex")}`;
 
-const inboundPayload = (wamid, from = "2348030000001", text = "hi") =>
+// timestamp defaults to "now" (unix seconds) so the stale-inbound guard treats
+// it as fresh; pass an old value to exercise the guard.
+const inboundPayload = (wamid, from = "2348030000001", text = "hi", timestamp = Math.floor(Date.now() / 1000)) =>
   JSON.stringify({
     object: "whatsapp_business_account",
     entry: [
@@ -35,7 +37,7 @@ const inboundPayload = (wamid, from = "2348030000001", text = "hi") =>
             value: {
               messaging_product: "whatsapp",
               metadata: { phone_number_id: "111" },
-              messages: [{ id: wamid, from, timestamp: "1690000000", type: "text", text: { body: text } }],
+              messages: [{ id: wamid, from, timestamp: String(timestamp), type: "text", text: { body: text } }],
             },
           },
         ],
@@ -106,6 +108,29 @@ describe("WhatsApp webhook — handshake, HMAC, exactly-once inbox", () => {
 
     const rows = await db.select().from(waMessages).where(eq(waMessages.wamid, wamid));
     assert.equal(rows.length, 1, "exactly one row despite the retry");
+  });
+
+  test("a message Meta held past the stale window is recorded but skipped, not queued", async () => {
+    // Simulate a post-outage redelivery: Meta's timestamp is an hour old.
+    const wamid = `wamid.TEST-${RUN}-STALE`;
+    const anHourAgo = Math.floor(Date.now() / 1000) - 3600;
+    const res = await post(inboundPayload(wamid, "2348030000001", "hi", anHourAgo));
+    assert.equal(res.status, 200, "still acknowledged so Meta stops retrying");
+
+    const rows = await db.select().from(waMessages).where(eq(waMessages.wamid, wamid));
+    assert.equal(rows.length, 1, "recorded for the audit trail");
+    assert.equal(rows[0].status, "skipped", "marked skipped, not received");
+    assert.match(rows[0].error, /stale/i, "the reason is captured");
+  });
+
+  test("a fresh message is recorded 'received' and enqueued (the guard lets it through)", async () => {
+    const wamid = `wamid.TEST-${RUN}-FRESH`;
+    const res = await post(inboundPayload(wamid)); // default timestamp = now
+    assert.equal(res.status, 200);
+
+    const rows = await db.select().from(waMessages).where(eq(waMessages.wamid, wamid));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, "received", "fresh message is acted on, not skipped");
   });
 
   test("a bad signature is rejected and nothing is recorded", async () => {
