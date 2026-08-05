@@ -356,16 +356,18 @@ const promptFor = (state, session, context) => {
 };
 
 /**
- * The Pay now / Cancel buttons for an unpaid order. Pay now appears only when
- * the wallet balance covers the total — otherwise the tap would just fail and
- * a transfer is the real path. Cancel is always offered; the dev "paid" button
- * only in test mode. Always ≤ 3 buttons (WhatsApp's limit).
+ * The Pay now / Cancel buttons for an unpaid order. Pay now is always offered
+ * so the customer has a single obvious way to confirm: after their transfer
+ * lands, the DVA webhook credits the wallet and the tap settles the order. A
+ * tap before the money reflects can't overspend — PAY_ORDER re-checks and, if
+ * the balance still falls short, replies with the "transfer first" copy.
+ * Cancel is always offered; the dev "paid" button only in test mode. Always
+ * ≤ 3 buttons (WhatsApp's limit).
  */
 const awaitPaymentButtonDefs = (cart, context) => {
   const total = Number(cart.awaiting?.totalAmount) || 0;
-  const balance = Number(context.customer?.balance) || 0;
   const defs = {};
-  if (total > 0 && balance >= total) defs.paynow = copy.payNowButton();
+  if (total > 0) defs.paynow = copy.payNowButton();
   defs.cancelorder = copy.awaitPaymentCancelButton();
   if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
   return defs;
@@ -648,19 +650,16 @@ const reduceInner = (session, inbound, ctx, expired) => {
           document(order.invoiceUrl, `invoice-${order.orderNumber}.pdf`, copy.invoiceCaption(order.orderNumber))
         );
       }
-      replies.push(text(paidFromWallet ? copy.orderPaidWallet(order) : copy.orderCreated(order)));
+      if (paidFromWallet) {
+        replies.push(text(copy.orderPaidWallet(order)));
+      } else {
+        // One message, not two: the order + dedicated-account details ARE the
+        // body of the Pay now / Cancel buttons, so the "how to pay" copy and
+        // the buttons that action it can't drift apart or repeat each other.
+        replies.push(buttons(copy.orderCreated(order), awaitPaymentButtonDefs(next.cart, ctx)));
+      }
       if (order.deliveryType === "pickup" && ctx.portalUrl) {
         replies.push(text(copy.portalManageHint(ctx.portalUrl)));
-      }
-      if (!paidFromWallet) {
-        // Orders are created Unpaid: offer Pay now (from wallet, when it
-        // covers the total) and Cancel right away, so the customer never has
-        // to hunt for how to pay.
-        const total = Number(order.totalAmount) || 0;
-        const canPay = total > 0 && (Number(ctx.customer?.balance) || 0) >= total;
-        replies.push(
-          buttons(copy.orderCreatedActions(canPay), awaitPaymentButtonDefs(next.cart, ctx)),
-        );
       }
       return done(next, replies);
     }
