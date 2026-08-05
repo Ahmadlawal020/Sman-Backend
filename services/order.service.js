@@ -896,6 +896,7 @@ module.exports = {
   payOrder,
   runPostPaymentEffects,
   expireOrder,
+  expireIfStale,
   expireStaleOrders,
   isOrderExpired,
   computeExpiresAt,
