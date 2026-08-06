@@ -3,10 +3,10 @@ const test = require("node:test");
 const { generateOrderReference } = require("../utils/helpers");
 
 test("generateOrderReference", async (t) => {
-  await t.test("should generate reference with multiple-word company names", () => {
+  await t.test("should generate reference with multiple-word company names (capped at 2 letters max)", () => {
     assert.strictEqual(generateOrderReference("Honeywell Adada", 10831), "HA/10831");
-    assert.strictEqual(generateOrderReference("Shell Petroleum Nigeria", 5432), "SPN/5432");
-    assert.strictEqual(generateOrderReference("BP Energy Limited", 999), "BEL/999");
+    assert.strictEqual(generateOrderReference("Shell Petroleum Nigeria", 5432), "SP/5432");
+    assert.strictEqual(generateOrderReference("BP Energy Limited", 999), "BE/999");
   });
 
   await t.test("should generate reference with single-word company names", () => {
@@ -41,7 +41,7 @@ test("generateOrderReference", async (t) => {
     assert.strictEqual(generateOrderReference("SOROMAN", 5432), "SO/5432");
   });
 
-  await t.test("should handle three-word company names", () => {
-    assert.strictEqual(generateOrderReference("Nigerian National Petroleum", 7890), "NNP/7890");
+  await t.test("should handle three-word company names (max 2 letters)", () => {
+    assert.strictEqual(generateOrderReference("Nigerian National Petroleum", 7890), "NN/7890");
   });
 });

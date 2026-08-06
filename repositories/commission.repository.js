@@ -149,6 +149,7 @@ const findAll = async ({
         id: commissions.id,
         orderId: commissions.orderId,
         orderNumber: orders.orderNumber,
+        orderCompanyName: orders.companyName,
         orderCreatedAt: orders.createdAt,
         customerId: commissions.customerId,
         customerName: customers.name,
@@ -197,8 +198,12 @@ const findAll = async ({
         .from(orderTrucks)
         .where(eq(orderTrucks.orderId, row.orderId));
 
+      const comp = row.orderCompanyName || row.customerCompanyName || "";
+      const ref = row.orderId ? generateOrderReference(comp, row.orderId) : row.orderNumber;
       return {
         ...row,
+        orderNumber: ref,
+        reference: ref,
         quantity: Number(row.quantity),
         commissionRate: parseFloat(row.commissionRate),
         commissionAmount: parseFloat(row.commissionAmount),

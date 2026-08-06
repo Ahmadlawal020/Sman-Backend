@@ -1,10 +1,22 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orders, customers, depots, products, pfis, orderTrucks } = require("../db/schema");
+const { generateOrderReference } = require("../utils/helpers");
+
+const formatOrderRow = (row) => {
+  if (!row) return null;
+  const company = row.companyName || row.customerCompanyName || "";
+  const ref = generateOrderReference(company, row.id);
+  return {
+    ...row,
+    orderNumber: ref,
+    reference: ref,
+  };
+};
 
 const findById = async (id, tx = db) => {
   const [row] = await tx.select().from(orders).where(eq(orders.id, id)).limit(1);
-  return row || null;
+  return formatOrderRow(row);
 };
 
 /**
@@ -16,7 +28,7 @@ const findById = async (id, tx = db) => {
  */
 const lockById = async (id, tx = db) => {
   const [row] = await tx.select().from(orders).where(eq(orders.id, id)).for("update").limit(1);
-  return row || null;
+  return formatOrderRow(row);
 };
 
 /**
@@ -30,16 +42,24 @@ const findByIdempotencyKey = async (idempotencyKey, tx = db) => {
     .from(orders)
     .where(eq(orders.idempotencyKey, idempotencyKey))
     .limit(1);
-  return row || null;
+  return formatOrderRow(row);
 };
 
 const findByNumber = async (orderNumber) => {
-  const [row] = await db
-    .select()
-    .from(orders)
-    .where(eq(orders.orderNumber, orderNumber))
-    .limit(1);
-  return row || null;
+  const normalized = String(orderNumber || "").trim().toUpperCase();
+  if (!normalized) return null;
+
+  const parts = normalized.split("/");
+  const possibleId = parseInt(parts[parts.length - 1], 10);
+
+  let row = null;
+  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    [row] = await db.select().from(orders).where(eq(orders.id, possibleId)).limit(1);
+  }
+  if (!row) {
+    [row] = await db.select().from(orders).where(eq(orders.orderNumber, normalized)).limit(1);
+  }
+  return formatOrderRow(row);
 };
 
 // The joined columns a full order detail carries. Includes the per-stage
@@ -106,7 +126,7 @@ const fullOrderQuery = (tx = db) =>
 
 const findByIdFull = async (id, tx = db) => {
   const [row] = await fullOrderQuery(tx).where(eq(orders.id, id)).limit(1);
-  return row || null;
+  return formatOrderRow(row);
 };
 
 /**
@@ -119,10 +139,20 @@ const findByIdFull = async (id, tx = db) => {
 const findByNumberFull = async (orderNumber, tx = db) => {
   const normalized = String(orderNumber || "").trim().toUpperCase();
   if (!normalized) return null;
-  const [row] = await fullOrderQuery(tx)
-    .where(eq(orders.orderNumber, normalized))
-    .limit(1);
-  return row || null;
+
+  const parts = normalized.split("/");
+  const possibleId = parseInt(parts[parts.length - 1], 10);
+
+  let row = null;
+  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    [row] = await fullOrderQuery(tx).where(eq(orders.id, possibleId)).limit(1);
+  }
+  if (!row) {
+    [row] = await fullOrderQuery(tx)
+      .where(eq(orders.orderNumber, normalized))
+      .limit(1);
+  }
+  return formatOrderRow(row);
 };
 
 /**
@@ -166,7 +196,13 @@ const findAll = async ({
   const conditions = [];
 
   if (search) {
-    conditions.push(ilike(orders.orderNumber, `%${search}%`));
+    const parts = search.trim().split("/");
+    const possibleId = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+      conditions.push(or(ilike(orders.orderNumber, `%${search}%`), eq(orders.id, possibleId)));
+    } else {
+      conditions.push(ilike(orders.orderNumber, `%${search}%`));
+    }
   }
 
   if (status) {
@@ -243,7 +279,7 @@ const findAll = async ({
   ]);
 
   return {
-    orders: rows,
+    orders: rows.map(formatOrderRow),
     pagination: {
       total,
       page: pageNum,
@@ -255,7 +291,7 @@ const findAll = async ({
 
 const create = async (data, tx = db) => {
   const [row] = await tx.insert(orders).values(data).returning();
-  return row;
+  return formatOrderRow(row);
 };
 
 const update = async (id, data, tx = db) => {
@@ -264,13 +300,13 @@ const update = async (id, data, tx = db) => {
     .set({ ...data, updatedAt: new Date() })
     .where(eq(orders.id, id))
     .returning();
-  return row || null;
+  return formatOrderRow(row);
 };
 
 const findUnpaidByCustomer = async (customerId) => {
   // Pending only: a cancelled order must never be auto-paid, and a completed
   // one can't legally be unpaid.
-  return db
+  const rows = await db
     .select()
     .from(orders)
     .where(
@@ -281,6 +317,7 @@ const findUnpaidByCustomer = async (customerId) => {
       )
     )
     .orderBy(asc(orders.createdAt));
+  return rows.map(formatOrderRow);
 };
 
 // Everything before Completed/Cancelled — what a customer can still track.
@@ -292,10 +329,12 @@ const OPEN_STATUSES = ["Pending", "Paid", "Released", "Loading"];
  * home of unbounded history.
  */
 const findOpenByCustomer = async (customerId, limit = 9) => {
-  return db
+  const rows = await db
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
+      companyName: orders.companyName,
+      customerCompanyName: customers.companyName,
       status: orders.status,
       quantity: orders.quantity,
       totalAmount: orders.totalAmount,
@@ -306,11 +345,13 @@ const findOpenByCustomer = async (customerId, limit = 9) => {
       depotName: depots.name,
     })
     .from(orders)
+    .leftJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
     .where(and(eq(orders.customerId, customerId), inArray(orders.status, OPEN_STATUSES)))
     .orderBy(desc(orders.createdAt))
     .limit(limit);
+  return rows.map(formatOrderRow);
 };
 
 const countByPfi = async (pfiId) => {
@@ -322,13 +363,14 @@ const countByPfi = async (pfiId) => {
 };
 
 const findPayableOrders = async () => {
-  return db
+  const rows = await db
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
       customerId: orders.customerId,
       customerName: customers.name,
       companyName: orders.companyName,
+      customerCompanyName: customers.companyName,
       customerBalance: customers.balance,
       status: orders.status,
       paymentStatus: orders.paymentStatus,
@@ -351,6 +393,7 @@ const findPayableOrders = async () => {
       )
     )
     .orderBy(asc(orders.createdAt));
+  return rows.map(formatOrderRow);
 };
 
 /**

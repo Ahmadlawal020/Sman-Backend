@@ -15,7 +15,7 @@ const generateTicketForTruck = async (order, load, tx = db) => {
   const existing = await ticketRepo.findByOrderTruck(load.id, tx);
   if (existing) return existing;
 
-  const suffix = order.orderNumber.replace("ORD-", "");
+  const suffix = order.id;
   const ticketNumber = `TCK-${suffix}-${load.truckIndex}`;
 
   const created = await ticketRepo.create(
@@ -56,7 +56,7 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
       return { success: true, ticket: existingTicket, message: "Ticket already generated" };
     }
 
-    const suffix = order.orderNumber.replace("ORD-", "");
+    const suffix = order.id;
     const ticketNumber = `TCK-${suffix}`;
 
     const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";

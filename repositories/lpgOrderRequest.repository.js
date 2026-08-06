@@ -7,10 +7,22 @@ const {
   lpgStations,
   lpgStationCylinders,
 } = require("../db/schema");
+const { generateOrderReference } = require("../utils/helpers");
+
+const formatLpgOrderRow = (row) => {
+  if (!row) return null;
+  const company = row.companyName || row.customerCompanyName || row.customerName || "";
+  const ref = generateOrderReference(company, row.id);
+  return {
+    ...row,
+    requestNumber: ref,
+    reference: ref,
+  };
+};
 
 const findById = async (id) => {
   const [row] = await db.select().from(lpgOrderRequests).where(eq(lpgOrderRequests.id, id)).limit(1);
-  return row || null;
+  return formatLpgOrderRow(row);
 };
 
 const findByIdFull = async (id) => {
@@ -58,7 +70,7 @@ const findByIdFull = async (id) => {
     .leftJoin(staff, eq(lpgOrderRequests.reviewedBy, staff.id))
     .where(eq(lpgOrderRequests.id, id))
     .limit(1);
-  return row || null;
+  return formatLpgOrderRow(row);
 };
 
 const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}) => {
@@ -79,13 +91,26 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
 
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(
-      or(
-        ilike(lpgOrderRequests.requestNumber, pattern),
-        ilike(customers.name, pattern),
-        ilike(lpgStations.name, pattern)
-      )
-    );
+    const parts = search.trim().split("/");
+    const possibleId = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+      conditions.push(
+        or(
+          ilike(lpgOrderRequests.requestNumber, pattern),
+          ilike(customers.name, pattern),
+          ilike(lpgStations.name, pattern),
+          eq(lpgOrderRequests.id, possibleId)
+        )
+      );
+    } else {
+      conditions.push(
+        or(
+          ilike(lpgOrderRequests.requestNumber, pattern),
+          ilike(customers.name, pattern),
+          ilike(lpgStations.name, pattern)
+        )
+      );
+    }
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -98,6 +123,8 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
         customerId: lpgOrderRequests.customerId,
         customerName: customers.name,
         customerEmail: customers.email,
+        companyName: customers.companyName,
+        customerCompanyName: customers.companyName,
         lpgStationId: lpgOrderRequests.lpgStationId,
         stationName: lpgStations.name,
         stationState: lpgStations.state,
@@ -132,7 +159,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
   ]);
 
   return {
-    requests: rows,
+    requests: rows.map(formatLpgOrderRow),
     pagination: {
       total,
       page: pageNum,
@@ -144,7 +171,13 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
 
 const create = async (data) => {
   const [row] = await db.insert(lpgOrderRequests).values(data).returning();
-  return row;
+  const company = data.companyName || "";
+  const ref = generateOrderReference(company, row.id);
+  if (row.requestNumber !== ref) {
+    await db.update(lpgOrderRequests).set({ requestNumber: ref }).where(eq(lpgOrderRequests.id, row.id));
+    row.requestNumber = ref;
+  }
+  return formatLpgOrderRow(row);
 };
 
 const update = async (id, data) => {
@@ -154,7 +187,7 @@ const update = async (id, data) => {
     .set(updateData)
     .where(eq(lpgOrderRequests.id, id))
     .returning();
-  return row || null;
+  return formatLpgOrderRow(row);
 };
 
 const generateRequestNumber = async () => {
@@ -165,13 +198,14 @@ const generateRequestNumber = async () => {
 };
 
 const findPayableLpgOrders = async () => {
-  return db
+  const rows = await db
     .select({
       id: lpgOrderRequests.id,
       requestNumber: lpgOrderRequests.requestNumber,
       customerId: lpgOrderRequests.customerId,
       customerName: customers.name,
       companyName: customers.companyName,
+      customerCompanyName: customers.companyName,
       customerBalance: customers.balance,
       stationName: lpgStations.name,
       cylinderSizeKg: lpgOrderRequests.cylinderSizeKg,
@@ -196,6 +230,7 @@ const findPayableLpgOrders = async () => {
       )
     )
     .orderBy(lpgOrderRequests.createdAt);
+  return rows.map(formatLpgOrderRow);
 };
 
 /**

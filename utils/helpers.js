@@ -40,11 +40,11 @@ function getCustomerInitials(name) {
 function generateOrderReference(companyName, orderId) {
   let initials = "SO";
 
-  if (companyName && companyName.trim()) {
+  if (companyName && typeof companyName === "string" && companyName.trim()) {
     const words = companyName.trim().split(/\s+/).filter(Boolean);
 
     if (words.length > 1) {
-      initials = words.map((w) => w.charAt(0).toUpperCase()).join("");
+      initials = words.map((w) => w.charAt(0).toUpperCase()).slice(0, 2).join("");
     } else if (words.length === 1) {
       initials = words[0].substring(0, 2).toUpperCase();
     }

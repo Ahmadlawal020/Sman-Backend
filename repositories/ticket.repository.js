@@ -1,11 +1,13 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { tickets, orders, customers, depots, products, staff, pfis } = require("../db/schema");
+const { generateOrderReference } = require("../utils/helpers");
 
 const formatTicket = (row) => {
   if (!row) return null;
   const {
     orderNumber,
+    orderCompanyName,
     orderStatus,
     orderQuantity,
     orderPrice,
@@ -35,14 +37,17 @@ const formatTicket = (row) => {
 
   const priceNum = orderPrice ? parseFloat(orderPrice) : 0;
   const totalAmountNum = orderTotalAmount ? parseFloat(orderTotalAmount) : 0;
+  const company = orderCompanyName || customerCompanyName || "";
+  const ref = ticket.orderId ? generateOrderReference(company, ticket.orderId) : orderNumber;
 
   return {
     ...ticket,
-    order: orderNumber
+    order: ticket.orderId || orderNumber
       ? {
           _id: ticket.orderId,
           id: ticket.orderId,
-          orderNumber,
+          orderNumber: ref,
+          reference: ref,
           status: orderStatus,
           quantity: orderQuantity ? parseInt(orderQuantity, 10) : 0,
           price: priceNum,
@@ -138,6 +143,7 @@ const findByIdFull = async (id) => {
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
       orderNumber: orders.orderNumber,
+      orderCompanyName: orders.companyName,
       orderStatus: orders.status,
       orderQuantity: orders.quantity,
       orderPrice: orders.price,

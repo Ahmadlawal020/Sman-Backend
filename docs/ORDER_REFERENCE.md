@@ -12,9 +12,9 @@ All applications (Soroman App, SoomanFE, Soroman Frontend) must use a standardiz
 
 Extracted from the customer's company name:
 
-- **Multiple words:** First letter of each word
+- **Multiple words:** First letter of each word (2 letters max)
   - Example: "Honeywell Adada" → `HA`
-  - Example: "Shell Petroleum Nigeria" → `SPN`
+  - Example: "Shell Petroleum Nigeria" → `SP`
   
 - **Single word:** First 2 letters
   - Example: "Soroman" → `SO`
@@ -31,7 +31,7 @@ The order ID from `OrderPaymentInfo` or `Order` table.
 | Company Name | Order ID | Reference |
 |---|---|---|
 | Honeywell Adada | 10831 | `HA/10831` |
-| Shell Petroleum Nigeria | 5432 | `SPN/5432` |
+| Shell Petroleum Nigeria | 5432 | `SP/5432` |
 | Soroman | 1000 | `SO/1000` |
 | Dangote | 500 | `DA/500` |
 | (null/empty) | 999 | `SO/999` |

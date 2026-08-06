@@ -1,10 +1,22 @@
 const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { dangoteOrderRequests, customers, staff, customerLicenses } = require("../db/schema");
+const { generateOrderReference } = require("../utils/helpers");
+
+const formatDangoteOrderRow = (row) => {
+  if (!row) return null;
+  const company = row.companyName || row.licenseCompanyName || row.customerCompanyName || row.customerName || "";
+  const ref = generateOrderReference(company, row.id);
+  return {
+    ...row,
+    requestNumber: ref,
+    reference: ref,
+  };
+};
 
 const findById = async (id) => {
   const [row] = await db.select().from(dangoteOrderRequests).where(eq(dangoteOrderRequests.id, id)).limit(1);
-  return row || null;
+  return formatDangoteOrderRow(row);
 };
 
 const findByIdFull = async (id) => {
@@ -52,7 +64,7 @@ const findByIdFull = async (id) => {
     .leftJoin(customerLicenses, eq(dangoteOrderRequests.licenseId, customerLicenses.id))
     .where(eq(dangoteOrderRequests.id, id))
     .limit(1);
-  return row || null;
+  return formatDangoteOrderRow(row);
 };
 
 const findAll = async ({
@@ -84,13 +96,26 @@ const findAll = async ({
 
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(
-      or(
-        ilike(dangoteOrderRequests.requestNumber, pattern),
-        ilike(dangoteOrderRequests.product, pattern),
-        ilike(customers.name, pattern)
-      )
-    );
+    const parts = search.trim().split("/");
+    const possibleId = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+      conditions.push(
+        or(
+          ilike(dangoteOrderRequests.requestNumber, pattern),
+          ilike(dangoteOrderRequests.product, pattern),
+          ilike(customers.name, pattern),
+          eq(dangoteOrderRequests.id, possibleId)
+        )
+      );
+    } else {
+      conditions.push(
+        or(
+          ilike(dangoteOrderRequests.requestNumber, pattern),
+          ilike(dangoteOrderRequests.product, pattern),
+          ilike(customers.name, pattern)
+        )
+      );
+    }
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -103,6 +128,8 @@ const findAll = async ({
         customerId: dangoteOrderRequests.customerId,
         customerName: customers.name,
         customerEmail: customers.email,
+        companyName: dangoteOrderRequests.companyName,
+        customerCompanyName: customers.companyName,
         product: dangoteOrderRequests.product,
         quantity: dangoteOrderRequests.quantity,
         quantityUnit: dangoteOrderRequests.quantityUnit,
@@ -132,7 +159,7 @@ const findAll = async ({
   ]);
 
   return {
-    requests: rows,
+    requests: rows.map(formatDangoteOrderRow),
     pagination: {
       total,
       page: pageNum,
@@ -144,7 +171,13 @@ const findAll = async ({
 
 const create = async (data) => {
   const [row] = await db.insert(dangoteOrderRequests).values(data).returning();
-  return row;
+  const company = data.companyName || "";
+  const ref = generateOrderReference(company, row.id);
+  if (row.requestNumber !== ref) {
+    await db.update(dangoteOrderRequests).set({ requestNumber: ref }).where(eq(dangoteOrderRequests.id, row.id));
+    row.requestNumber = ref;
+  }
+  return formatDangoteOrderRow(row);
 };
 
 const update = async (id, data) => {
@@ -154,7 +187,7 @@ const update = async (id, data) => {
     .set(updateData)
     .where(eq(dangoteOrderRequests.id, id))
     .returning();
-  return row || null;
+  return formatDangoteOrderRow(row);
 };
 
 // Atomically move a request to Cancelled ONLY while it is still withdrawable:
@@ -206,13 +239,14 @@ const generateRequestNumber = async () => {
 };
 
 const findPayableDangoteOrders = async () => {
-  return db
+  const rows = await db
     .select({
       id: dangoteOrderRequests.id,
       requestNumber: dangoteOrderRequests.requestNumber,
       customerId: dangoteOrderRequests.customerId,
       customerName: customers.name,
-      companyName: customers.companyName,
+      companyName: dangoteOrderRequests.companyName,
+      customerCompanyName: customers.companyName,
       customerBalance: customers.balance,
       product: dangoteOrderRequests.product,
       quantity: dangoteOrderRequests.quantity,
@@ -236,6 +270,7 @@ const findPayableDangoteOrders = async () => {
       )
     )
     .orderBy(dangoteOrderRequests.createdAt);
+  return rows.map(formatDangoteOrderRow);
 };
 
 /**

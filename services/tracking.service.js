@@ -83,14 +83,29 @@ const buildReached = (row) => {
 /** One-line situation report for the current stage. Needs `depotName` + `trucks`. */
 const stageNote = (stage, row) => (NOTE[stage] ? NOTE[stage](row) : null);
 
+const { customers } = require("../db/schema/customer");
+const { generateOrderReference } = require("../utils/helpers");
+
 const trackByRef = async (ref) => {
   const normalized = String(ref || "").trim().toUpperCase();
   if (!normalized) return null;
+
+  const parts = normalized.split("/");
+  const possibleId = parseInt(parts[parts.length - 1], 10);
+
+  let whereCond;
+  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    whereCond = or(eq(orders.id, possibleId), eq(orders.orderNumber, normalized));
+  } else {
+    whereCond = eq(orders.orderNumber, normalized);
+  }
 
   const [row] = await db
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
+      companyName: orders.companyName,
+      customerCompanyName: customers.companyName,
       status: orders.status,
       quantity: orders.quantity,
       deliveryType: orders.deliveryType,
@@ -109,15 +124,19 @@ const trackByRef = async (ref) => {
       productUnit: products.unit,
     })
     .from(orders)
+    .leftJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
-    .where(eq(orders.orderNumber, normalized))
+    .where(whereCond)
     .limit(1);
 
   if (!row) return null;
+
+  const displayRef = generateOrderReference(row.companyName || row.customerCompanyName, row.id);
+
   if (row.status === "Cancelled") {
     return {
-      ref: row.orderNumber,
+      ref: displayRef,
       placedAt: row.createdAt,
       depotName: row.depotName,
       depotState: row.depotState,
@@ -159,7 +178,7 @@ const trackByRef = async (ref) => {
   const reached = buildReached(row);
 
   return {
-    ref: row.orderNumber,
+    ref: displayRef,
     placedAt: row.createdAt,
     depotName: row.depotName,
     depotState: row.depotState,
