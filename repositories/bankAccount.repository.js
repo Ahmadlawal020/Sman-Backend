@@ -48,10 +48,14 @@ async function ensureTableExists() {
         status VARCHAR(20) DEFAULT 'Active' NOT NULL,
         is_default BOOLEAN DEFAULT false NOT NULL,
         depot_ids JSONB DEFAULT '[]'::jsonb NOT NULL,
+        lpg_station_ids JSONB DEFAULT '[]'::jsonb NOT NULL,
         notes TEXT DEFAULT '',
         created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
+    `;
+    await client`
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS lpg_station_ids JSONB DEFAULT '[]'::jsonb NOT NULL;
     `;
     tableInitialized = true;
   } catch (err) {
@@ -67,17 +71,17 @@ async function attachDepotsToAccount(account) {
     ? JSON.parse(account.depot_ids)
     : account.depot_ids || [];
 
-  const numericIds = depotIds
+  const numericDepotIds = depotIds
     .map((id) => Number(id))
     .filter((id) => !isNaN(id) && id > 0);
 
   let depots = [];
-  if (numericIds.length > 0) {
+  if (numericDepotIds.length > 0) {
     try {
       const rows = await client`
         SELECT id, name, code, city, state, country, status
         FROM depots
-        WHERE id = ANY(${numericIds})
+        WHERE id = ANY(${numericDepotIds})
       `;
       depots = rows.map((r) => ({
         id: r.id,
@@ -93,6 +97,38 @@ async function attachDepotsToAccount(account) {
     }
   }
 
+  const lpgStationIds = Array.isArray(account.lpgStationIds)
+    ? account.lpgStationIds
+    : typeof account.lpg_station_ids === "string"
+    ? JSON.parse(account.lpg_station_ids)
+    : account.lpg_station_ids || [];
+
+  const numericStationIds = lpgStationIds
+    .map((id) => Number(id))
+    .filter((id) => !isNaN(id) && id > 0);
+
+  let lpgStations = [];
+  if (numericStationIds.length > 0) {
+    try {
+      const rows = await client`
+        SELECT id, name, code, city, state, country, status
+        FROM lpg_stations
+        WHERE id = ANY(${numericStationIds})
+      `;
+      lpgStations = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        code: r.code,
+        city: r.city,
+        state: r.state,
+        country: r.country,
+        status: r.status,
+      }));
+    } catch (e) {
+      console.error("Failed to fetch lpg stations for bank account:", e.message);
+    }
+  }
+
   return {
     id: account.id,
     bankName: account.bank_name || account.bankName,
@@ -103,8 +139,10 @@ async function attachDepotsToAccount(account) {
     currency: account.currency || "NGN",
     status: account.status || "Active",
     isDefault: Boolean(account.is_default ?? account.isDefault),
-    depotIds: numericIds,
+    depotIds: numericDepotIds,
     depots,
+    lpgStationIds: numericStationIds,
+    lpgStations,
     notes: account.notes || "",
     createdAt: account.created_at || account.createdAt,
     updatedAt: account.updated_at || account.updatedAt,
@@ -112,7 +150,7 @@ async function attachDepotsToAccount(account) {
 }
 
 const bankAccountRepo = {
-  async findAll({ search, status, depotId } = {}) {
+  async findAll({ search, status, depotId, lpgStationId } = {}) {
     await ensureTableExists();
 
     let rows = await client`
@@ -131,7 +169,10 @@ const bankAccountRepo = {
         const inDepot = acc.depots?.some((d) =>
           d.name?.toLowerCase().includes(query) || d.code?.toLowerCase().includes(query)
         );
-        return inBank || inName || inNumber || inDepot;
+        const inStation = acc.lpgStations?.some((s) =>
+          s.name?.toLowerCase().includes(query) || s.code?.toLowerCase().includes(query)
+        );
+        return inBank || inName || inNumber || inDepot || inStation;
       });
     }
 
@@ -142,6 +183,11 @@ const bankAccountRepo = {
     if (depotId) {
       const targetId = Number(depotId);
       results = results.filter((acc) => acc.depotIds.includes(targetId));
+    }
+
+    if (lpgStationId) {
+      const targetId = Number(lpgStationId);
+      results = results.filter((acc) => acc.lpgStationIds.includes(targetId));
     }
 
     return results;
@@ -175,6 +221,7 @@ const bankAccountRepo = {
       status = "Active",
       isDefault = false,
       depotIds = [],
+      lpgStationIds = [],
       notes = "",
     } = data;
 
@@ -182,6 +229,11 @@ const bankAccountRepo = {
       ? depotIds.map((i) => Number(i)).filter((i) => !isNaN(i))
       : [];
     const jsonDepotIds = JSON.stringify(numericDepotIds);
+
+    const numericStationIds = Array.isArray(lpgStationIds)
+      ? lpgStationIds.map((i) => Number(i)).filter((i) => !isNaN(i))
+      : [];
+    const jsonStationIds = JSON.stringify(numericStationIds);
 
     const finalBankCode = resolveBankCode(bankName, bankCode);
 
@@ -200,6 +252,7 @@ const bankAccountRepo = {
         status,
         is_default,
         depot_ids,
+        lpg_station_ids,
         notes,
         created_at,
         updated_at
@@ -213,6 +266,7 @@ const bankAccountRepo = {
         ${status},
         ${isDefault},
         ${jsonDepotIds}::jsonb,
+        ${jsonStationIds}::jsonb,
         ${notes},
         NOW(),
         NOW()
@@ -222,12 +276,19 @@ const bankAccountRepo = {
 
     const result = await attachDepotsToAccount(rows[0]);
 
-    // Sync subaccounts for newly linked depots
+    // Sync subaccounts for newly linked depots and stations
+    const { syncSubaccountForDepot, syncSubaccountForStation } = require("../services/subaccount.service");
     if (numericDepotIds.length > 0) {
-      const { syncSubaccountForDepot } = require("../services/subaccount.service");
       for (const depotId of numericDepotIds) {
         syncSubaccountForDepot(depotId).catch((err) =>
           console.error(`[bankAccount.create] subaccount sync failed for depot ${depotId}:`, err.message)
+        );
+      }
+    }
+    if (numericStationIds.length > 0) {
+      for (const stationId of numericStationIds) {
+        syncSubaccountForStation(stationId).catch((err) =>
+          console.error(`[bankAccount.create] subaccount sync failed for station ${stationId}:`, err.message)
         );
       }
     }
@@ -253,6 +314,7 @@ const bankAccountRepo = {
     const status = data.status !== undefined ? data.status : existing.status;
     const isDefault = data.isDefault !== undefined ? Boolean(data.isDefault) : existing.isDefault;
     const depotIds = data.depotIds !== undefined ? data.depotIds : existing.depotIds;
+    const lpgStationIds = data.lpgStationIds !== undefined ? data.lpgStationIds : existing.lpgStationIds;
     const notes = data.notes !== undefined ? data.notes : existing.notes;
 
     const numericDepotIds = Array.isArray(depotIds)
@@ -260,10 +322,13 @@ const bankAccountRepo = {
       : [];
     const jsonDepotIds = JSON.stringify(numericDepotIds);
 
-    // Compute which depots were added or removed
+    const numericStationIds = Array.isArray(lpgStationIds)
+      ? lpgStationIds.map((i) => Number(i)).filter((i) => !isNaN(i))
+      : [];
+    const jsonStationIds = JSON.stringify(numericStationIds);
+
     const oldDepotIds = (existing.depotIds || []).map(Number);
-    const addedDepots = numericDepotIds.filter((dId) => !oldDepotIds.includes(dId));
-    const removedDepots = oldDepotIds.filter((dId) => !numericDepotIds.includes(dId));
+    const oldStationIds = (existing.lpgStationIds || []).map(Number);
 
     if (isDefault && !existing.isDefault) {
       await client`UPDATE bank_accounts SET is_default = false WHERE id != ${numericId}`;
@@ -281,6 +346,7 @@ const bankAccountRepo = {
         status = ${status},
         is_default = ${isDefault},
         depot_ids = ${jsonDepotIds}::jsonb,
+        lpg_station_ids = ${jsonStationIds}::jsonb,
         notes = ${notes},
         updated_at = NOW()
       WHERE id = ${numericId}
@@ -290,13 +356,22 @@ const bankAccountRepo = {
     if (rows.length === 0) return null;
     const result = await attachDepotsToAccount(rows[0]);
 
-    // Sync subaccounts for affected depots (both current and previously linked)
+    // Sync subaccounts for affected depots and stations
+    const { syncSubaccountForDepot, syncSubaccountForStation } = require("../services/subaccount.service");
     const affectedDepots = [...new Set([...numericDepotIds, ...oldDepotIds])];
     if (affectedDepots.length > 0) {
-      const { syncSubaccountForDepot } = require("../services/subaccount.service");
       for (const depotId of affectedDepots) {
         syncSubaccountForDepot(depotId).catch((err) =>
           console.error(`[bankAccount.update] subaccount sync failed for depot ${depotId}:`, err.message)
+        );
+      }
+    }
+
+    const affectedStations = [...new Set([...numericStationIds, ...oldStationIds])];
+    if (affectedStations.length > 0) {
+      for (const stationId of affectedStations) {
+        syncSubaccountForStation(stationId).catch((err) =>
+          console.error(`[bankAccount.update] subaccount sync failed for station ${stationId}:`, err.message)
         );
       }
     }
@@ -309,7 +384,7 @@ const bankAccountRepo = {
     const numericId = Number(id);
     if (isNaN(numericId)) return false;
 
-    // Fetch the account first so we know which depots to sync after deletion
+    // Fetch the account first so we know which locations to sync after deletion
     const existing = await this.findById(numericId);
 
     const rows = await client`
@@ -319,12 +394,20 @@ const bankAccountRepo = {
     `;
 
     if (rows.length > 0 && existing) {
+      const { syncSubaccountForDepot, syncSubaccountForStation } = require("../services/subaccount.service");
       const affectedDepotIds = (existing.depotIds || []).map(Number).filter((d) => !isNaN(d));
       if (affectedDepotIds.length > 0) {
-        const { syncSubaccountForDepot } = require("../services/subaccount.service");
         for (const depotId of affectedDepotIds) {
           syncSubaccountForDepot(depotId).catch((err) =>
             console.error(`[bankAccount.delete] subaccount sync failed for depot ${depotId}:`, err.message)
+          );
+        }
+      }
+      const affectedStationIds = (existing.lpgStationIds || []).map(Number).filter((s) => !isNaN(s));
+      if (affectedStationIds.length > 0) {
+        for (const stationId of affectedStationIds) {
+          syncSubaccountForStation(stationId).catch((err) =>
+            console.error(`[bankAccount.delete] subaccount sync failed for station ${stationId}:`, err.message)
           );
         }
       }

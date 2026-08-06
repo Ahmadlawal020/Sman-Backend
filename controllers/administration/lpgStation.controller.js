@@ -8,12 +8,11 @@ const getLpgStations = asyncHandler(async (req, res) => {
 
   const enrichedStations = await Promise.all(
     result.stations.map(async (station) => {
-      const [staff, pfis, cylinders] = await Promise.all([
+      const [staff, cylinders] = await Promise.all([
         lpgStationRepo.getStaff(station.id),
-        lpgStationRepo.getPfis(station.id),
         lpgStationRepo.getCylinders(station.id),
       ]);
-      return { ...station, staff, staffIds: staff, pfis, cylinders };
+      return { ...station, staff, staffIds: staff, pfis: [], cylinders };
     })
   );
 
@@ -30,16 +29,15 @@ const getLpgStationById = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "LPG station not found" });
   }
 
-  const [staff, pfis, cylinders, priceHistory] = await Promise.all([
+  const [staff, cylinders, priceHistory] = await Promise.all([
     lpgStationRepo.getStaff(station.id),
-    lpgStationRepo.getPfis(station.id),
     lpgStationRepo.getCylinders(station.id),
     lpgStationRepo.getPriceHistory(station.id),
   ]);
 
   res.json({
     success: true,
-    data: { station: { ...station, staff, staffIds: staff, pfis, cylinders, priceHistory } },
+    data: { station: { ...station, staff, staffIds: staff, pfis: [], cylinders, priceHistory } },
   });
 });
 
@@ -170,19 +168,6 @@ const deleteLpgStation = asyncHandler(async (req, res) => {
 
   if (!station) {
     return res.status(404).json({ success: false, message: "LPG station not found" });
-  }
-
-  const { db } = require("../../config/db");
-  const { pfis } = require("../../db/schema");
-  const { eq, count } = require("drizzle-orm");
-
-  const [{ pfiCount }] = await db.select({ pfiCount: count() }).from(pfis).where(eq(pfis.lpgStationId, station.id));
-
-  if (pfiCount > 0) {
-    return res.status(400).json({
-      success: false,
-      message: `Cannot delete LPG station: it is referenced by ${pfiCount} PFI(s)`,
-    });
   }
 
   await lpgStationRepo.deleteById(station.id);

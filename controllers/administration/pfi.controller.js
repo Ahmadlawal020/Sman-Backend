@@ -114,17 +114,10 @@ const createPfi = asyncHandler(async (req, res) => {
 
   let location_name = "";
   let location_id_val = null;
-  let lpg_station_id_val = null;
 
-  const lpg_station_id = req.body.lpg_station_id || req.body.lpgStationId;
-
-  if (lpg_station_id) {
-    lpg_station_id_val = parseInt(lpg_station_id, 10) || lpg_station_id;
-    const station = await lpgStationRepo.findById(lpg_station_id_val);
-    if (station) location_name = station.name;
-  } else if (location_id) {
+  if (location_id) {
     location_id_val = parseInt(location_id, 10) || location_id;
-    const depot = await depotRepo.findById(location_id);
+    const depot = await depotRepo.findById(location_id_val);
     if (depot) location_name = depot.name;
   }
 
@@ -158,7 +151,7 @@ const createPfi = asyncHandler(async (req, res) => {
     description: description || "",
     pfiDate: parseDate(pfi_date),
     locationId: location_id_val,
-    lpgStationId: lpg_station_id_val,
+    lpgStationId: null,
     locationName: location_name,
     productId: product_id ? (parseInt(product_id, 10) || product_id) : null,
     productName: product_name,
@@ -243,19 +236,6 @@ const updatePfi = asyncHandler(async (req, res) => {
     } else {
       updateData.locationId = null;
       updateData.locationName = "";
-    }
-  }
-
-  if (req.body.lpg_station_id !== undefined || req.body.lpgStationId !== undefined) {
-    const lpgId = req.body.lpg_station_id !== undefined ? req.body.lpg_station_id : req.body.lpgStationId;
-    if (lpgId && lpgId !== "none") {
-      const parsedLpg = parseInt(lpgId, 10) || lpgId;
-      updateData.lpgStationId = parsedLpg;
-      updateData.locationId = null;
-      const station = await lpgStationRepo.findById(parsedLpg);
-      updateData.locationName = station ? station.name : "";
-    } else {
-      updateData.lpgStationId = null;
     }
   }
 

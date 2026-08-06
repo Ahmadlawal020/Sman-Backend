@@ -9,6 +9,7 @@ const {
   depositRepo,
   orderRepo,
   depotRepo,
+  lpgStationRepo,
   bankAccountRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
@@ -495,6 +496,91 @@ const transferToDepotSubaccount = async (order) => {
 };
 
 /**
+ * Transfer the LPG station's share of an order payment to its bank account.
+ */
+const transferToStationSubaccount = async (lpgOrder) => {
+  try {
+    const stationId = lpgOrder.lpgStationId || lpgOrder.stationId;
+    const station = await lpgStationRepo.findById(stationId);
+    if (!station) return { success: false, message: "LPG Station not found" };
+
+    const subaccountCode = station.paystackSubaccountCode || station.paystack_subaccount_code;
+    const isActive = station.subaccountActive ?? station.subaccount_active;
+
+    if (!isActive) {
+      return { success: false, message: "LPG station subaccount not active" };
+    }
+
+    const splitPct = station.subaccountSplitPercentage ?? station.subaccount_split_percentage ?? 100;
+    const orderAmount = Number(lpgOrder.totalAmount || 0);
+    const transferAmount = Math.round(orderAmount * (splitPct / 100) * 100); // kobo
+
+    if (transferAmount <= 0) {
+      return { success: false, message: "Transfer amount is zero" };
+    }
+
+    const linkedAccounts = await bankAccountRepo.findAll({ lpgStationId: station.id, status: "Active" });
+    if (!linkedAccounts || linkedAccounts.length === 0) {
+      return { success: false, message: `No active bank account linked to station ${station.name}` };
+    }
+
+    const bankAccount = linkedAccounts[0];
+    if (!bankAccount.bankCode || !bankAccount.accountNumber) {
+      return { success: false, message: `Bank account ${bankAccount.id} missing bankCode or accountNumber` };
+    }
+
+    const recipientResponse = await axios.post(
+      `${PAYSTACK_BASE_URL}/transferrecipient`,
+      {
+        type: "nuban",
+        name: bankAccount.accountName || `Station ${station.code || station.name}`,
+        account_number: bankAccount.accountNumber,
+        bank_code: bankAccount.bankCode,
+        currency: bankAccount.currency || "NGN",
+        description: `Station ${station.code || station.name}`,
+      },
+      { headers: getPaystackHeaders() }
+    );
+
+    if (!recipientResponse.data.status) {
+      return { success: false, message: "Failed to create transfer recipient" };
+    }
+
+    const recipientCode = recipientResponse.data.data.recipient_code;
+    const reference = `station-${station.id}-lpgorder-${lpgOrder.id}-${Date.now()}`;
+    const transferResponse = await axios.post(
+      `${PAYSTACK_BASE_URL}/transfer`,
+      {
+        source: "balance",
+        amount: transferAmount,
+        recipient: recipientCode,
+        reason: `LPG Order ${lpgOrder.requestNumber || lpgOrder.id} - station share (${splitPct}%)`,
+        reference,
+      },
+      { headers: getPaystackHeaders() }
+    );
+
+    if (transferResponse.data.status) {
+      console.log(
+        `[subaccount] Transfer ${reference}: ${transferAmount / 100} NGN → station ${station.id} (${bankAccount.bankName} - ${bankAccount.accountNumber})`
+      );
+      return {
+        success: true,
+        reference,
+        amount: transferAmount / 100,
+        transferCode: transferResponse.data.data.transfer_code,
+      };
+    }
+
+    return { success: false, message: "Transfer initiation failed" };
+  } catch (error) {
+    const errMsg = error.response?.data?.message || error.message || "Transfer error";
+    console.error(`[subaccount] transfer failed for LPG order ${lpgOrder.id}:`, errMsg);
+    return { success: false, message: errMsg };
+  }
+};
+
+/**
  * Switch / bind a customer's Dedicated Virtual Account (DVA) to a depot's Paystack Subaccount.
  * Uses Paystack API: POST /dedicated_account/split
  */
@@ -531,6 +617,7 @@ module.exports = {
   processUnpaidOrdersForCustomer,
   processAllUnpaidOrders,
   transferToDepotSubaccount,
+  transferToStationSubaccount,
   switchCustomerDvaToSubaccount,
 };
 

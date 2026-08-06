@@ -1,5 +1,5 @@
 const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
-const { db } = require("../config/db");
+const { db, client } = require("../db");
 const {
   lpgStations,
   lpgStationStaff,
@@ -9,12 +9,33 @@ const {
   pfis,
 } = require("../db/schema");
 
+let columnsInitialized = false;
+async function ensureColumnsExist() {
+  if (columnsInitialized) return;
+  try {
+    await client`
+      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS paystack_subaccount_code VARCHAR(100) DEFAULT '';
+    `;
+    await client`
+      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS subaccount_active BOOLEAN DEFAULT false NOT NULL;
+    `;
+    await client`
+      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS subaccount_split_percentage INTEGER DEFAULT 100 NOT NULL;
+    `;
+    columnsInitialized = true;
+  } catch (err) {
+    console.error("Failed to ensure lpg_stations subaccount columns exist:", err.message);
+  }
+}
+
 const findById = async (id) => {
+  await ensureColumnsExist();
   const [row] = await db.select().from(lpgStations).where(eq(lpgStations.id, id)).limit(1);
   return row || null;
 };
 
 const findByCode = async (code) => {
+  await ensureColumnsExist();
   const [row] = await db
     .select()
     .from(lpgStations)
@@ -24,6 +45,7 @@ const findByCode = async (code) => {
 };
 
 const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
+  await ensureColumnsExist();
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -125,14 +147,8 @@ const setStaff = async (stationId, adminIds) => {
 
 // ─── PFIs ────────────────────────────────────────────────────────────────────
 
-const getPfis = async (stationId) => {
-  const numericStationId = parseInt(stationId, 10) || stationId;
-  const rows = await db
-    .select()
-    .from(pfis)
-    .where(eq(pfis.lpgStationId, numericStationId))
-    .orderBy(desc(pfis.createdAt));
-  return rows;
+const getPfis = async () => {
+  return [];
 };
 
 // ─── Cylinders ───────────────────────────────────────────────────────────────
@@ -251,6 +267,18 @@ const getPriceHistory = async (stationId) => {
   return rows;
 };
 
+const updateSubaccountFields = async (id, data) => {
+  const [row] = await db
+    .update(lpgStations)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(lpgStations.id, id))
+    .returning();
+  return row || null;
+};
+
 module.exports = {
   findById,
   findByCode,
@@ -268,4 +296,5 @@ module.exports = {
   incrementCylinderQuantity,
   logPriceChange,
   getPriceHistory,
+  updateSubaccountFields,
 };

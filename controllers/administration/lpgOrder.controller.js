@@ -8,7 +8,7 @@ const {
   sendLpgRequestReceivedEmail,
   sendLpgOrderConfirmedEmail,
 } = require("../../services/email.service");
-const { createDedicatedAccount } = require("../../services/payment.service");
+const { createDedicatedAccount, switchCustomerDvaToSubaccount, transferToStationSubaccount } = require("../../services/payment.service");
 const { sendLpgOrderSMS } = require("../../services/sms.service");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
@@ -216,6 +216,21 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
     await customerRepo.update(customer.id, { virtualAccountName });
   }
 
+  // Automatically switch customer DVA to LPG station Paystack Subaccount
+  const station = await lpgStationRepo.findById(existing.lpgStationId);
+  const stationSubaccountCode = station?.paystackSubaccountCode || station?.paystack_subaccount_code;
+  if (virtualAccountNumber && stationSubaccountCode && customer) {
+    try {
+      await switchCustomerDvaToSubaccount({
+        accountNumber: virtualAccountNumber,
+        subaccountCode: stationSubaccountCode,
+      });
+      await customerRepo.update(customer.id, { dvaSubaccountCode: stationSubaccountCode });
+    } catch (dvaErr) {
+      console.error(`[reviewLpgOrderRequest] Failed to switch DVA to subaccount for station ${station?.id}:`, dvaErr.message);
+    }
+  }
+
   await lpgOrderRequestRepo.update(id, {
     virtualAccountNumber,
     virtualAccountBank,
@@ -388,6 +403,15 @@ const payLpgOrder = asyncHandler(async (req, res) => {
   });
 
   const fullRequest = await lpgOrderRequestRepo.findByIdFull(updated.id);
+
+  // Best-effort transfer to station bank account / subaccount
+  try {
+    if (fullRequest) {
+      await transferToStationSubaccount(fullRequest);
+    }
+  } catch (subErr) {
+    console.error(`[payLpgOrder] station subaccount transfer failed for order ${existing.requestNumber}:`, subErr.message);
+  }
 
   res.json({
     success: true,

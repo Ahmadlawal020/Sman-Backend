@@ -183,9 +183,14 @@ const bankAccountBase = {
   bankName: requiredString("Bank name", 255),
   accountName: requiredString("Account name", 255),
   accountNumber: requiredString("Account number", 50),
+  bankCode: optionalString("Bank code", 50),
+  branchName: optionalString("Branch name", 255),
   accountType: optionalString("Account type", 50),
+  currency: optionalString("Currency", 10),
   status: enumOf("Status", ["Active", "Inactive", "Suspended"]).optional(),
+  isDefault: z.boolean({ error: "isDefault must be true or false" }).optional(),
   depotIds: z.array(z.union([id("Depot id"), z.string(), z.number()])).optional(),
+  lpgStationIds: z.array(z.union([id("Station id"), z.string(), z.number()])).optional(),
   notes: optionalString("Notes", 1000),
 };
 const createBankAccount = z.object(bankAccountBase);
