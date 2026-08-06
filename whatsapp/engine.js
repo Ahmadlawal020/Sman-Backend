@@ -748,6 +748,8 @@ const reduceInner = (session, inbound, ctx, expired) => {
   // ("hi"/"hello"/"start") normally open the menu too, but NOT when a cart is
   // being built — a stray or post-outage-redelivered greeting must not blow away
   // a half-finished order. There, we absorb it and re-show the current step.
+  // Once the cart has timed out, though, fall through to the resume offer:
+  // "hi" after 30+ minutes idle is how people re-engage, not a stray tap.
   const explicitMenu = value === "menu";
   const greeting = COMMANDS.MENU.includes(value) && !explicitMenu;
   const buildingOrder =
@@ -756,7 +758,7 @@ const reduceInner = (session, inbound, ctx, expired) => {
     if (nameless) return done(session, [text(copy.identifyGreeting())]);
     return goTo(session, STATES.MENU, ctx);
   }
-  if (greeting && buildingOrder) {
+  if (greeting && buildingOrder && !expired) {
     return done(session, promptFor(session.state, session, ctx));
   }
   if (COMMANDS.CANCEL.includes(value)) {

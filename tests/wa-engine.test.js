@@ -1151,6 +1151,16 @@ describe("expired sessions", () => {
     assert.equal(r.session.cart.resumeState, STATES.COLLECT);
   });
 
+  it("an expired cart is offered resume even when the user says 'hi'", () => {
+    // Greetings normally re-prompt mid-order; after idle expiry they must
+    // not skip the Continue / Start over choice.
+    const s = mkSession(STATES.COMPANY, cart, { expired: true });
+    const r = reduce(s, txt("hi"), baseCtx());
+    assert.deepEqual(buttonIds(r.replies[0]), ["resume", "startover"]);
+    assert.equal(r.session.cart.resumeState, STATES.COMPANY);
+    assert.match(r.replies[0].body, /expired/i);
+  });
+
   it("'resume' picks up at the first unanswered step", () => {
     const s = mkSession(STATES.MENU, { ...cart, resumeState: STATES.COLLECT });
     const r = reduce(s, btn("resume"), baseCtx());
