@@ -61,7 +61,7 @@ const sendOrderSummarySMS = async (phone, orderData) => {
 
   const customerInitials = getCustomerInitials(customerName);
   const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
-  const sms = `Hi ${customerName}, your order ${orderNumber} for ${quantity?.toLocaleString()}${unit ? ` ${unit}` : ""} of ${product} (${formattedAmount}) has been received. Pay to: ${bankName} - ${accountNumber} (Account Name: ${formattedAccountName}). Thank you for choosing Soroman!`;
+  const sms = `Dear ${customerName}, your order ${orderNumber} for ${quantity?.toLocaleString()}${unit ? ` ${unit}` : ""} of ${product} (${formattedAmount}) has been received. Pay to: ${bankName} - ${accountNumber} (Account Name: ${formattedAccountName}). Thank you for choosing Soroman!`;
 
   // Try generic (transactional) channel first, fall back to dnd
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
@@ -90,8 +90,8 @@ const sendTicketSummarySMS = async (phone, ticketData) => {
   // branches on deliveryType.
   const sms =
     deliveryType === "delivery"
-      ? `Hi ${customerName}, your order ${orderNumber || ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} from ${depotName || "the depot"} is confirmed and being prepared for delivery. We'll keep you updated. Thank you for choosing Soroman!`
-      : `Hi ${customerName}, your pickup ticket ${ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} at ${depotName || "depot"} has been generated. Present QR code in your email to redeem. Thank you for choosing Soroman!`;
+      ? `Dear ${customerName}, your order ${orderNumber || ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} from ${depotName || "the depot"} is confirmed and being prepared for delivery. We'll keep you updated. Thank you for choosing Soroman!`
+      : `Dear ${customerName}, your pickup ticket ${ticketNumber} for ${quantity?.toLocaleString()} ${unit} of ${productName} at ${depotName || "depot"} has been generated. Thank you for choosing Soroman!`;
 
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
     try {
@@ -116,9 +116,9 @@ const sendDangoteDeliveryOrderSMS = async (phone, orderData) => {
   }).format(totalAmount);
 
   const customerInitials = getCustomerInitials(customerName);
-  const formattedAccountName = accountName || `SOROMANNIGERI/ ${customerInitials}`;
+  const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
 
-  const sms = `Hi ${customerName}, your Dangote delivery order ${requestNumber} for ${quantity?.toLocaleString()} ${quantityUnit} of ${product} (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
+  const sms = `Dear ${customerName}, your Dangote delivery order ${requestNumber} for ${quantity?.toLocaleString()} ${quantityUnit} of ${product} (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
 
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
     try {
@@ -146,9 +146,9 @@ const sendLpgOrderSMS = async (phone, orderData) => {
   }).format(totalAmount);
 
   const customerInitials = getCustomerInitials(customerName);
-  const formattedAccountName = accountName || `SOROMANNIGERI/ ${customerInitials}`;
+  const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
 
-  const sms = `Hi ${customerName}, your LPG order ${requestNumber} for ${cylinderQuantity}x ${cylinderSizeKg}Kg cylinders (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
+  const sms = `Dear ${customerName}, your LPG order ${requestNumber} for ${cylinderQuantity}x ${cylinderSizeKg}Kg cylinders (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
 
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
     try {
@@ -167,7 +167,7 @@ const sendLpgOrderSMS = async (phone, orderData) => {
 };
 
 const sendOrderExpiredSMS = async (phone, { orderNumber, customerName }) => {
-  const name = customerName ? `Hi ${customerName}, ` : "";
+  const name = customerName ? `Dear ${customerName}, ` : "";
   const sms = `${name}your Soroman order ${orderNumber} has expired because payment wasn't received in time. The price is no longer held — place a new order at today's prices whenever you're ready.`;
 
   for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
