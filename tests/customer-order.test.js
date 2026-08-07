@@ -278,7 +278,7 @@ describe("customer portal — a customer places their own order", () => {
     const { id, orderNumber } = placed.body.data.order;
 
     const byRef = await request(app)
-      .get(`${ORDERS}/by-ref/${orderNumber}`)
+      .get(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber)}`)
       .set("Authorization", `Bearer ${accessToken}`);
     assert.equal(byRef.status, 200, JSON.stringify(byRef.body));
     assert.equal(byRef.body.data.order.id, id);
@@ -288,7 +288,7 @@ describe("customer portal — a customer places their own order", () => {
 
     // Case-insensitive / trimmed — the same normalisation tracking uses.
     const mixed = await request(app)
-      .get(`${ORDERS}/by-ref/${orderNumber.toLowerCase()}`)
+      .get(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber.toLowerCase())}`)
       .set("Authorization", `Bearer ${accessToken}`);
     assert.equal(mixed.status, 200);
     assert.equal(mixed.body.data.order.id, id);
@@ -311,7 +311,7 @@ describe("customer portal — a customer places their own order", () => {
     const { orderNumber } = placed.body.data.order;
 
     const peek = await request(app)
-      .get(`${ORDERS}/by-ref/${orderNumber}`)
+      .get(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber)}`)
       .set("Authorization", `Bearer ${b.accessToken}`);
     assert.equal(peek.status, 404);
   });
@@ -536,7 +536,7 @@ describe("customer portal — a customer places their own order", () => {
     const ref = placed.body.data.order.orderNumber;
 
     const paid = await request(app)
-      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .post(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/pay`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({});
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
@@ -555,7 +555,7 @@ describe("customer portal — a customer places their own order", () => {
     const ref = placed.body.data.order.orderNumber;
 
     const res = await request(app)
-      .post(`${ORDERS}/by-ref/${ref}/pay`)
+      .post(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/pay`)
       .set("Authorization", `Bearer ${intruder.accessToken}`)
       .send({});
     assert.equal(res.status, 404, JSON.stringify(res.body));
@@ -573,7 +573,7 @@ describe("customer portal — a customer places their own order", () => {
     const { id, orderNumber } = placed.body.data.order;
 
     const res = await request(app)
-      .post(`${ORDERS}/by-ref/${orderNumber}/cancel`)
+      .post(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber)}/cancel`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({});
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -592,7 +592,7 @@ describe("customer portal — a customer places their own order", () => {
     await orderService.payOrder({ orderId: id, actor: { type: "system" } });
 
     const res = await request(app)
-      .post(`${ORDERS}/by-ref/${orderNumber}/cancel`)
+      .post(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber)}/cancel`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({});
     assert.equal(res.status, 409, JSON.stringify(res.body));
@@ -609,7 +609,7 @@ describe("customer portal — a customer places their own order", () => {
     const { id, orderNumber } = placed.body.data.order;
 
     const res = await request(app)
-      .post(`${ORDERS}/by-ref/${orderNumber}/cancel`)
+      .post(`${ORDERS}/by-ref/${encodeURIComponent(orderNumber)}/cancel`)
       .set("Authorization", `Bearer ${intruder.accessToken}`)
       .send({});
     assert.equal(res.status, 404, JSON.stringify(res.body));

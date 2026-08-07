@@ -264,7 +264,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(before[0].truckNumber, null, "plate was left blank at order");
 
     const res = await request(app)
-      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .patch(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/trucks`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
         trucks: [{ truckNumber: "PK-LATER", quantity: 30000, driverName: "Musa" }],
@@ -292,7 +292,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
 
     const ref = placed.body.data.order.orderNumber;
     const res = await request(app)
-      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .patch(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/trucks`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ trucks: [{ truckNumber: "PK-NEW", quantity: 30000 }] });
 
@@ -326,7 +326,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(gate.status, 200, JSON.stringify(gate.body));
 
     const res = await request(app)
-      .patch(`${ORDERS}/by-ref/${ref}/trucks`)
+      .patch(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/trucks`)
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ trucks: [{ truckNumber: "PK-TOO-LATE", quantity: 30000 }] });
     assert.equal(res.status, 409, JSON.stringify(res.body));
