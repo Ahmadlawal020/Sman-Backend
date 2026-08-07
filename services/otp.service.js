@@ -163,7 +163,17 @@ async function issueAndSend(customer, { action, requestIp }) {
     // The row is already written, so the code stays valid and the customer can
     // retry. Logged, never surfaced — the response must not reveal whether a
     // send was attempted.
-    console.error(`[otp] SMS send failed for customer ${customer.id}: ${err.message}`);
+    //
+    // Termii signals the real reason in the response body, not the HTTP status:
+    // a 402 with `{ message: "Insufficient balance" }` reads as the generic
+    // "Request failed with status code 402" unless we pull `response.data` out.
+    // Surface it so a billing/config failure diagnoses itself from the log.
+    const providerDetail = err.response?.data
+      ? ` — ${JSON.stringify(err.response.data)}`
+      : "";
+    console.error(
+      `[otp] SMS send failed for customer ${customer.id}: ${err.message}${providerDetail}`
+    );
     return { sent: false, reason: "send_failed" };
   }
 
