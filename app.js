@@ -119,6 +119,8 @@ app.use("/api/customer/uploads", require("./routes/portal/upload.route"));
 // Customer-facing wallet ledger — paginated credit/debit history behind the
 // dashboard balance.
 app.use("/api/customer/wallet", require("./routes/portal/wallet.route"));
+// Customer-facing commission history — earned/pending/paid commissions.
+app.use("/api/customer/commissions", require("./routes/portal/commission.route"));
 // Public: sanitised order tracking by reference — movement only, no price or
 // buyer identity. The order number is the shared secret.
 app.use("/api/tracking", require("./routes/portal/tracking.route"));
