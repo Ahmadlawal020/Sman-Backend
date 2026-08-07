@@ -93,7 +93,7 @@ describe("public order tracking", () => {
     const { accessToken } = await activeCustomer("1");
     const order = await place(accessToken);
 
-    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const t = res.body.data.tracked;
 
@@ -125,7 +125,7 @@ describe("public order tracking", () => {
       .set({ status: "Paid", paymentStatus: "Paid", paymentConfirmedAt: new Date() })
       .where(eq(orders.id, order.id));
 
-    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     const t = res.body.data.tracked;
     assert.equal(t.stage, "processing", "paid-but-not-released reads as processing");
     assert.ok(t.reached.payment_confirmed, "payment_confirmed is timestamped");
@@ -135,7 +135,9 @@ describe("public order tracking", () => {
   test("the lookup is case-insensitive and tolerates surrounding space", async () => {
     const { accessToken } = await activeCustomer("3");
     const order = await place(accessToken);
-    const res = await request(app).get(`${TRACK}/  ${order.orderNumber.toLowerCase()}  `);
+    const res = await request(app).get(
+      `${TRACK}/${encodeURIComponent(`  ${order.orderNumber.toLowerCase()}  `)}`
+    );
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.data.tracked.ref, order.orderNumber);
   });
@@ -158,7 +160,7 @@ describe("public order tracking", () => {
       { orderId: order.id, truckIndex: 2, truckNumber: "LAG-T2", quantity: "15000", status: "gated_in", driverName: "Uche Private", driverPhone: "+2348010000002" },
     ]);
 
-    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     const t = res.body.data.tracked;
     assert.equal(t.stage, "loading");
     assert.equal(t.trucks.length, 2, "both trucks are shown");
@@ -180,7 +182,7 @@ describe("public order tracking", () => {
   test("before release there are no trucks", async () => {
     const { accessToken } = await activeCustomer("6");
     const order = await place(accessToken);
-    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     assert.deepEqual(res.body.data.tracked.trucks, [], "empty until assigned at release");
   });
 
@@ -189,7 +191,7 @@ describe("public order tracking", () => {
     const order = await place(accessToken);
     await db.update(orders).set({ status: "Cancelled", cancelledAt: new Date() }).where(eq(orders.id, order.id));
 
-    const res = await request(app).get(`${TRACK}/${order.orderNumber}`);
+    const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const tracked = res.body.data.tracked;
     assert.equal(tracked.stage, "cancelled");
