@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
 const { staffRepo, sessionRepo } = require("../../repositories");
-const { sendPasswordResetEmail } = require("../../services/email.service");
+const { notify, notifyAndWait } = require("../../notifications");
 const sessionService = require("../../services/session.service");
 const cookieService = require("../../services/cookie.service");
 
@@ -209,6 +209,15 @@ const handleSetPassword = asyncHandler(async (req, res) => {
   // reset the password to lock an intruder out leaves that intruder logged in.
   await sessionService.revokeAll(REALM, admin.id, "password_change");
 
+  // Mandatory in the catalog, so no preference can mute it: an unexpected
+  // "your password was changed" is how an account takeover gets noticed. It
+  // lands in the inbox and pushes to any registered device — neither of which
+  // needs the sessions that were just revoked.
+  notify("security.credential_changed", {
+    to: { staffId: admin.id },
+    data: { credential: "password", at: new Date() },
+  });
+
   res.json({
     success: true,
     message: "Password set successfully. You can now log in.",
@@ -249,14 +258,16 @@ const handleForgotPassword = asyncHandler(async (req, res) => {
     passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
   });
 
-  try {
-    await sendPasswordResetEmail(
-      foundAdmin.email,
-      rawToken,
-      foundAdmin.firstName
-    );
-  } catch (emailErr) {
-    console.error("Failed to send password reset email:", emailErr);
+  const sent = await notifyAndWait("account.password_reset", {
+    to: { staffId: foundAdmin.id },
+    data: {
+      firstName: foundAdmin.firstName,
+      resetUrl: `${process.env.CLIENT_URL}/set-password?token=${rawToken}`,
+    },
+  });
+
+  if (sent.results?.[0]?.channels?.email !== "sent") {
+    console.error("Failed to send password reset email to", foundAdmin.email);
     return res.status(500).json({
       success: false,
       message: "Failed to send email. Please try again later.",

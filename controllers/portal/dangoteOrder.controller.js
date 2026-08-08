@@ -6,6 +6,7 @@ const {
   customerLicenseRepo,
 } = require("../../repositories");
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
+const { notify } = require("../../notifications");
 const walletService = require("../../services/wallet.service");
 const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
 
@@ -89,6 +90,32 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
       console.error("Failed to send Dangote request email:", emailErr.message);
     }
   }
+
+  // Acknowledgement in the app, plus the desk's heads-up. The email above is
+  // unchanged — the catalog entry is APP_ONLY so nothing is sent twice.
+  notify("dangote.request_received", {
+    to: { customerId: req.customer.id },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      customerName: customer?.name,
+      product,
+      quantity: Number(quantity),
+      quantityUnit: quantityUnit || "Tons",
+    },
+  });
+  notify("staff.request_submitted", {
+    to: { roles: ["admin", "super_admin", "sales_manager"] },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      kind: "Dangote",
+      customerName: customer?.name,
+      entityType: "dangote_request",
+      screen: "DangoteOrderDetail",
+      adminPath: `/dangote-orders/${request.id}`,
+    },
+  });
 
   const full = await dangoteOrderRequestRepo.findByIdFull(request.id);
   res.status(201).json({

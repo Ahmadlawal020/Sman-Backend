@@ -1,7 +1,9 @@
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
-const { auditLogRepo } = require("../repositories");
+const { orders, customers } = require("../db/schema");
+const { auditLogRepo, customerRepo } = require("../repositories");
+const { notify } = require("../notifications");
+const { generateOrderReference } = require("../utils/helpers");
 
 /**
  * The order state machine — the ONE place order.status changes.
@@ -30,6 +32,111 @@ const TRANSITIONS = Object.freeze({
 });
 
 const isLegal = (from, to) => (TRANSITIONS[from] || []).includes(to);
+
+/**
+ * Stamp the customer-facing reference onto a raw order row.
+ *
+ * Mirrors `formatOrderRow` in repositories/order.repository.js — the reference
+ * is computed, never stored, so a row that reached the caller through
+ * `.returning()` rather than a repository read still carries the internal
+ * ORD-… value in `orderNumber` and must be corrected before anyone shows it.
+ *
+ * The customer lookup is not optional. `orders.company_name` is empty on 330 of
+ * 778 rows today, and the repository falls back to the CUSTOMER's company in
+ * that case — so computing from the order row alone yields "SO1" where every
+ * screen shows "GL1". Reading it back through the caller's own transaction
+ * keeps this identical to the repository, and costs one indexed lookup only
+ * when the order carries no company of its own.
+ */
+const decorateWithin = async (row, tx) => {
+  if (!row) return row;
+
+  let company = row.companyName || "";
+  if (!company && row.customerId) {
+    const [c] = await tx
+      .select({ companyName: customers.companyName })
+      .from(customers)
+      .where(eq(customers.id, row.customerId))
+      .limit(1);
+    company = c?.companyName || "";
+  }
+
+  const ref = generateOrderReference(company, row.id);
+  return { ...row, orderNumber: ref, reference: ref };
+};
+
+/**
+ * Which notification each arrival announces.
+ *
+ * Hooked here, in the state machine, rather than at the eight call sites that
+ * drive it: this is already documented as the ONE place order.status changes,
+ * so hanging the notification off it means a release triggered from the gate
+ * flow, from the settlement sweep or from a future admin screen all notify
+ * identically — and nobody has to remember to add the call.
+ *
+ * `Expired` is absent deliberately. order.service.js already owns that one,
+ * because it sends the lapse SMS alongside it; announcing it here too would
+ * split ownership of a single message across two files.
+ */
+const ARRIVAL_NOTIFICATIONS = Object.freeze({
+  Paid: "order.paid",
+  Released: "order.released",
+  Loading: "order.loading",
+  Completed: "order.completed",
+  Cancelled: "order.cancelled",
+});
+
+/**
+ * Announce a status arrival. Runs AFTER the transaction has committed, and
+ * swallows everything: the transition is the business fact, and a notification
+ * failure must never roll it back or surface as a 500 to the caller.
+ */
+async function announce(order, toStatus, opts) {
+  const type = ARRIVAL_NOTIFICATIONS[toStatus];
+  if (!type || !order?.customerId) return;
+
+  try {
+    const customer = await customerRepo.findById(order.customerId);
+    if (!customer) return;
+
+    const reference = generateOrderReference(
+      order.companyName || customer.companyName,
+      order.id
+    );
+
+    notify(type, {
+      to: { customer },
+      data: {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        reference,
+        customerName: customer.name,
+        quantity: order.quantity,
+        totalAmount: order.totalAmount,
+        amountPaid: opts.metadata?.amountPaid ?? order.totalAmount,
+        truckNumber: opts.metadata?.truckNumber,
+        reason: opts.metadata?.reason,
+      },
+    });
+
+    // Payment is the one arrival the desk also needs to see: it is the signal
+    // that an order is ready to release.
+    if (toStatus === "Paid") {
+      notify("staff.payment_received", {
+        to: { roles: ["admin", "super_admin", "finance_manager", "sales_manager"] },
+        data: {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          reference,
+          customerName: customer.name,
+          amountPaid: opts.metadata?.amountPaid ?? order.totalAmount,
+        },
+      });
+    }
+  } catch (err) {
+    console.error(`[notify] order.${toStatus.toLowerCase()} announcement failed:`, err.message);
+  }
+}
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -90,12 +197,29 @@ async function transition(orderId, toStatus, opts = {}) {
       tx
     );
 
-    return updated;
+    // Inside run(), so `tx` is live whether the caller supplied a transaction
+    // or we opened one. Decorating after db.transaction() resolves would be
+    // too late — the transaction is closed and the lookup could not join it.
+    return decorateWithin(updated, tx);
   };
 
   // Join a caller's transaction (the truck flow does several things at once),
   // or open a fresh one.
-  return opts.tx ? run(opts.tx) : db.transaction(run);
+  const updated = opts.tx ? await run(opts.tx) : await db.transaction(run);
+
+  // The row is already decorated by run(). Doing it there rather than at each
+  // call site is the point: transition() is the single funnel every status
+  // change flows through, so every present and future caller gets the same
+  // reference the app, portal, dashboard and WhatsApp show — without having to
+  // remember. Before this, an expiry SMS quoted an ORD-… nobody could look up.
+
+  // Fire-and-forget, and deliberately NOT awaited. When the caller supplied a
+  // transaction it may still be open, so awaiting a notification here would
+  // hold a database transaction open across an HTTP call to Termii — the
+  // classic way a queue of slow sends becomes a pile of lock waits.
+  announce(updated, toStatus, opts);
+
+  return updated;
 }
 
 module.exports = { TRANSITIONS, isLegal, transition, httpError };

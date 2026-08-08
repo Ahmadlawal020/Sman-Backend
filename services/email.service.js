@@ -13,147 +13,13 @@ function escapeHtml(str) {
   }[c]));
 }
 
-const sendPasswordSetupEmail = async (email, token, firstName) => {
-  const setPasswordUrl = `${process.env.CLIENT_URL}/set-password?token=${token}`;
-
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM || "Soroman Dashboard <onboarding@resend.dev>",
-    to: email,
-    subject: "Set Your Password - Soroman Dashboard",
-    html: `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="margin:0;padding:0;background-color:#f4f7fa;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fa;padding:40px 20px;">
-            <tr>
-              <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.07);">
-                  <!-- Header -->
-                  <tr>
-                    <td style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:32px 40px;">
-                      <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">Soroman Dashboard</h1>
-                      <p style="margin:8px 0 0;color:#ccfbf1;font-size:14px;">Account Setup</p>
-                    </td>
-                  </tr>
-                  <!-- Body -->
-                  <tr>
-                    <td style="padding:40px;">
-                      <h2 style="margin:0 0 16px;color:#1e293b;font-size:20px;font-weight:600;">Welcome, ${escapeHtml(firstName)}!</h2>
-                      <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-                        An account has been created for you on the Soroman Dashboard. To get started, please set your password by clicking the button below.
-                      </p>
-                      <table cellpadding="0" cellspacing="0" style="margin:0 0 32px;">
-                        <tr>
-                          <td style="background-color:#0d9488;border-radius:8px;">
-                            <a href="${setPasswordUrl}" target="_blank" style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">
-                              Set Your Password
-                            </a>
-                          </td>
-                        </tr>
-                      </table>
-                      <p style="margin:0 0 16px;color:#475569;font-size:14px;line-height:1.6;">
-                        Or copy and paste this link into your browser:
-                      </p>
-                      <p style="margin:0 0 24px;padding:12px 16px;background-color:#f1f5f9;border-radius:6px;word-break:break-all;">
-                        <a href="${setPasswordUrl}" style="color:#0d9488;font-size:13px;text-decoration:none;">${setPasswordUrl}</a>
-                      </p>
-                      <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.5;">
-                        This link will expire in 24 hours. If you did not expect this email, please ignore it.
-                      </p>
-                    </td>
-                  </tr>
-                  <!-- Footer -->
-                  <tr>
-                    <td style="background-color:#f8fafc;padding:24px 40px;border-top:1px solid #e2e8f0;">
-                      <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">
-                        &copy; ${new Date().getFullYear()} Soroman. All rights reserved.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </body>
-      </html>
-    `,
-  });
-};
-
-const sendPasswordResetEmail = async (email, token, firstName) => {
-  const resetUrl = `${process.env.CLIENT_URL}/set-password?token=${token}`;
-
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM || "Soroman Dashboard <onboarding@resend.dev>",
-    to: email,
-    subject: "Reset Your Password - Soroman Dashboard",
-    html: `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="margin:0;padding:0;background-color:#f4f7fa;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fa;padding:40px 20px;">
-            <tr>
-              <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.07);">
-                  <!-- Header -->
-                  <tr>
-                    <td style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:32px 40px;">
-                      <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">Soroman Dashboard</h1>
-                      <p style="margin:8px 0 0;color:#ccfbf1;font-size:14px;">Password Reset</p>
-                    </td>
-                  </tr>
-                  <!-- Body -->
-                  <tr>
-                    <td style="padding:40px;">
-                      <h2 style="margin:0 0 16px;color:#1e293b;font-size:20px;font-weight:600;">Hello, ${escapeHtml(firstName)}!</h2>
-                      <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-                        We received a request to reset your password. Click the button below to set a new password for your account.
-                      </p>
-                      <table cellpadding="0" cellspacing="0" style="margin:0 0 32px;">
-                        <tr>
-                          <td style="background-color:#0d9488;border-radius:8px;">
-                            <a href="${resetUrl}" target="_blank" style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">
-                              Reset Your Password
-                            </a>
-                          </td>
-                        </tr>
-                      </table>
-                      <p style="margin:0 0 16px;color:#475569;font-size:14px;line-height:1.6;">
-                        Or copy and paste this link into your browser:
-                      </p>
-                      <p style="margin:0 0 24px;padding:12px 16px;background-color:#f1f5f9;border-radius:6px;word-break:break-all;">
-                        <a href="${resetUrl}" style="color:#0d9488;font-size:13px;text-decoration:none;">${resetUrl}</a>
-                      </p>
-                      <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.5;">
-                        This link will expire in 1 hour. If you did not request a password reset, please ignore this email — your password will remain unchanged.
-                      </p>
-                    </td>
-                  </tr>
-                  <!-- Footer -->
-                  <tr>
-                    <td style="background-color:#f8fafc;padding:24px 40px;border-top:1px solid #e2e8f0;">
-                      <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">
-                        &copy; ${new Date().getFullYear()} Soroman. All rights reserved.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </body>
-      </html>
-    `,
-  });
-};
+// NOTE: sendPasswordSetupEmail and sendPasswordResetEmail used to live here.
+// Both are now catalog entries ("account.password_setup", "account.password_reset")
+// in notifications/catalog.js, so the staff invite and reset mails are rendered
+// from the shared shell and recorded in notification_deliveries like every
+// other send. The templates below stay hand-written on purpose: they are
+// transactional documents — an invoice, a QR ticket — whose exact layout is the
+// point, and the notification engine deliberately does not re-send them.
 
 const sendOrderInvoiceEmail = async (email, orderData) => {
   const {
@@ -1220,8 +1086,6 @@ const sendLpgOrderConfirmedEmail = async (email, requestData) => {
 };
 
 module.exports = {
-  sendPasswordSetupEmail,
-  sendPasswordResetEmail,
   sendOrderInvoiceEmail,
   sendTicketEmail,
   sendDangoteRequestReceivedEmail,

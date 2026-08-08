@@ -1,7 +1,7 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orders, customers, depots, products, pfis, orderTrucks } = require("../db/schema");
-const { generateOrderReference } = require("../utils/helpers");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 const formatOrderRow = (row) => {
   if (!row) return null;
@@ -49,11 +49,11 @@ const findByNumber = async (orderNumber) => {
   const normalized = String(orderNumber || "").trim().toUpperCase();
   if (!normalized) return null;
 
-  const parts = normalized.split("/");
-  const possibleId = parseInt(parts[parts.length - 1], 10);
+  // Resolves "SO600" and the legacy "SO/600" alike — see parseOrderReference.
+  const possibleId = parseOrderReference(normalized);
 
   let row = null;
-  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+  if (possibleId) {
     [row] = await db.select().from(orders).where(eq(orders.id, possibleId)).limit(1);
   }
   if (!row) {
@@ -140,11 +140,10 @@ const findByNumberFull = async (orderNumber, tx = db) => {
   const normalized = String(orderNumber || "").trim().toUpperCase();
   if (!normalized) return null;
 
-  const parts = normalized.split("/");
-  const possibleId = parseInt(parts[parts.length - 1], 10);
+  const possibleId = parseOrderReference(normalized);
 
   let row = null;
-  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+  if (possibleId) {
     [row] = await fullOrderQuery(tx).where(eq(orders.id, possibleId)).limit(1);
   }
   if (!row) {
@@ -196,9 +195,10 @@ const findAll = async ({
   const conditions = [];
 
   if (search) {
-    const parts = search.trim().split("/");
-    const possibleId = parseInt(parts[parts.length - 1], 10);
-    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    // A reference-shaped search ("SO600", or the legacy "SO/600") also matches
+    // on id, since the reference is computed and not a column to search.
+    const possibleId = parseOrderReference(search);
+    if (possibleId) {
       conditions.push(or(ilike(orders.orderNumber, `%${search}%`), eq(orders.id, possibleId)));
     } else {
       conditions.push(ilike(orders.orderNumber, `%${search}%`));

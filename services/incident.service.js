@@ -24,6 +24,9 @@ const submitIncident = async (data, { actor }) => {
     entityId: record.id,
     incidentType: record.incidentType,
     title: record.title,
+    // For the notification consumer: who to name, and where it happened.
+    location: record.location || "",
+    submittedBy: record.submittedBy || null,
   });
 
   return { success: true, record };
@@ -57,6 +60,8 @@ const transitionIncident = async (id, { status, statusNote = "" }, { actor }) =>
     entityId: id,
     incidentType: record.incidentType,
     statusNote,
+    // The person who filed it — the one who should hear the verdict.
+    submittedBy: record.submittedBy || null,
   });
 
   return { success: true, record: updated };

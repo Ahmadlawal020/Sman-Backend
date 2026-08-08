@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
 const { staffRepo } = require("../../repositories");
 const { mapRolesToBackend } = require("../../config/roleMapping");
-const { sendPasswordSetupEmail } = require("../../services/email.service");
+const { notifyAndWait } = require("../../notifications");
 
 const generateResetToken = () => {
   const rawToken = crypto.randomBytes(32).toString("hex");
@@ -52,11 +52,17 @@ const createAdmin = asyncHandler(async (req, res) => {
     passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
-  try {
-    await sendPasswordSetupEmail(normalizedEmail, rawToken, admin.firstName);
-  } catch (emailErr) {
-    console.error("Failed to send password setup email:", emailErr);
-  }
+  // Through the engine rather than the bare sender, so the send lands in
+  // notification_deliveries — "did the invite email actually go out?" is the
+  // single most common support question about a new account, and it used to
+  // be answerable only from a console line nobody kept.
+  await notifyAndWait("account.password_setup", {
+    to: { staffId: admin.id },
+    data: {
+      firstName: admin.firstName,
+      setPasswordUrl: `${process.env.CLIENT_URL}/set-password?token=${rawToken}`,
+    },
+  });
 
   res.status(201).json({
     success: true,
@@ -208,10 +214,19 @@ const resendInvite = asyncHandler(async (req, res) => {
     passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
-  try {
-    await sendPasswordSetupEmail(admin.email, rawToken, admin.firstName);
-  } catch (emailErr) {
-    console.error("Failed to resend password setup email:", emailErr);
+  // notifyAndWait, not notify: this endpoint's contract is that it reports a
+  // send failure to the operator who pressed "resend", so the outcome has to
+  // be known before the response is written.
+  const invite = await notifyAndWait("account.password_setup", {
+    to: { staffId: admin.id },
+    data: {
+      firstName: admin.firstName,
+      setPasswordUrl: `${process.env.CLIENT_URL}/set-password?token=${rawToken}`,
+    },
+  });
+
+  if (invite.results?.[0]?.channels?.email !== "sent") {
+    console.error("Failed to resend password setup email to", admin.email);
     return res.status(500).json({
       success: false,
       message: "Failed to send email",

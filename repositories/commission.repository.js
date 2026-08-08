@@ -1,5 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql, between } = require("drizzle-orm");
 const { db } = require("../config/db");
+const { generateOrderReference } = require("../utils/helpers");
 const {
   commissions,
   depotProductCommissions,
@@ -231,6 +232,9 @@ const findById = async (id) => {
       id: commissions.id,
       orderId: commissions.orderId,
       orderNumber: orders.orderNumber,
+      // Needed to derive the reference, exactly as findAll does — the order's
+      // own company name wins over the customer's.
+      orderCompanyName: orders.companyName,
       customerId: commissions.customerId,
       customerName: customers.name,
       customerPhone: customers.phone,
@@ -258,7 +262,15 @@ const findById = async (id) => {
     .where(eq(commissions.id, id))
     .limit(1);
 
-  return row || null;
+  if (!row) return null;
+
+  // Decorated the same way findAll decorates its rows. Without this the
+  // commission DETAIL view returned the raw `ORD-…` column while the LIST
+  // showed the reference, so one screen disagreed with the other about what
+  // the same order is called.
+  const company = row.orderCompanyName || row.customerCompanyName || "";
+  const ref = row.orderId ? generateOrderReference(company, row.orderId) : row.orderNumber;
+  return { ...row, orderNumber: ref, reference: ref };
 };
 
 const create = async (data, tx = db) => {

@@ -13,6 +13,7 @@ const {
   check,
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
+const { expenseStatusEnum } = require("./enums");
 const { pfis } = require("./pfi");
 const { orders } = require("./order");
 const { staff } = require("./staff");
@@ -68,6 +69,39 @@ const pfiExpenses = pgTable(
     description: text("description").default(""),
     amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
     bankPaidFrom: varchar("bank_paid_from", { length: 255 }).default(""),
+    receiptReference: varchar("receipt_reference", { length: 100 }).default(""),
+
+    // ── Where the money is going ──────────────────────────────────────────
+    // Captured on the request so an approver can see the destination account
+    // before authorising, rather than after.
+    payeeBankName: varchar("payee_bank_name", { length: 200 }).default(""),
+    payeeAccountNumber: varchar("payee_account_number", { length: 50 }).default(""),
+    payeeAccountName: varchar("payee_account_name", { length: 255 }).default(""),
+
+    // ── The approval chain ────────────────────────────────────────────────
+    status: expenseStatusEnum("status").default("pending").notNull(),
+
+    // One pair per stage, written once and never overwritten, so who signed
+    // what survives even after the request moves on. `reviewed*` is the
+    // opposite: "last touched by", rewritten on every transition.
+    verifiedBy: integer("verified_by").references(() => staff.id, { onDelete: "set null" }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    auditApprovedBy: integer("audit_approved_by").references(() => staff.id, { onDelete: "set null" }),
+    auditApprovedAt: timestamp("audit_approved_at", { withTimezone: true }),
+    adminApprovedBy: integer("admin_approved_by").references(() => staff.id, { onDelete: "set null" }),
+    adminApprovedAt: timestamp("admin_approved_at", { withTimezone: true }),
+    paidBy: integer("paid_by").references(() => staff.id, { onDelete: "set null" }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+
+    reviewedBy: integer("reviewed_by").references(() => staff.id, { onDelete: "set null" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    // Most recent reason only. Durable history lives in pfi_expense_audits —
+    // read reasons from there, or a rejection note vanishes once the corrected
+    // request is later approved.
+    reviewNote: text("review_note").default(""),
+
+    addedBy: integer("added_by").references(() => staff.id, { onDelete: "set null" }),
+    editedBy: integer("edited_by").references(() => staff.id, { onDelete: "set null" }),
     // Free-text display name, kept for historical rows.
     enteredBy: varchar("entered_by", { length: 255 }).default(""),
     // The actual audit trail.
@@ -80,6 +114,7 @@ const pfiExpenses = pgTable(
     index("pfi_expenses_pfi_idx").on(table.pfiId),
     index("pfi_expenses_category_idx").on(table.categoryId),
     index("pfi_expenses_date_idx").on(table.expenseDate),
+    index("pfi_expenses_status_idx").on(table.status),
     // Every total reads live rows only; this keeps that path off a seq scan.
     index("pfi_expenses_live_idx").on(table.pfiId).where(sql`${table.deletedAt} IS NULL`),
     check("pfi_expenses_amount_check", sql`${table.amount} >= 0`),
@@ -111,7 +146,33 @@ const pfiMovements = pgTable(
   ]
 );
 
-/** Every create, edit and delete of an expense line writes one of these. */
+/**
+ * A receipt or supporting document.
+ *
+ * No type, size or count validation anywhere — deliberately. A receipt is
+ * whatever the vendor handed over, and refusing a file at upload time just
+ * means it never gets attached at all.
+ */
+const pfiExpenseAttachments = pgTable(
+  "pfi_expense_attachments",
+  {
+    id: serial("id").primaryKey(),
+    expenseId: integer("expense_id")
+      .references(() => pfiExpenses.id, { onDelete: "cascade" })
+      .notNull(),
+    // Storage key, not a public URL. Files are streamed through an authorised
+    // route so receipts never sit on a public path.
+    storageKey: text("storage_key").notNull(),
+    fileName: varchar("file_name", { length: 255 }).default(""),
+    contentType: varchar("content_type", { length: 120 }).default(""),
+    sizeBytes: integer("size_bytes").default(0),
+    uploadedBy: integer("uploaded_by").references(() => staff.id, { onDelete: "set null" }),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("pfi_expense_attachments_expense_idx").on(table.expenseId)]
+);
+
+/** Every create, edit, delete and transition writes one of these. */
 const pfiExpenseAudits = pgTable(
   "pfi_expense_audits",
   {
@@ -126,4 +187,10 @@ const pfiExpenseAudits = pgTable(
   (table) => [index("pfi_expense_audits_expense_idx").on(table.expenseId)]
 );
 
-module.exports = { expenseCategories, pfiExpenses, pfiMovements, pfiExpenseAudits };
+module.exports = {
+  expenseCategories,
+  pfiExpenses,
+  pfiExpenseAttachments,
+  pfiMovements,
+  pfiExpenseAudits,
+};

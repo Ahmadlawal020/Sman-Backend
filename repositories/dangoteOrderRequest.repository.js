@@ -1,7 +1,7 @@
 const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { dangoteOrderRequests, customers, staff, customerLicenses } = require("../db/schema");
-const { generateOrderReference } = require("../utils/helpers");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 const formatDangoteOrderRow = (row) => {
   if (!row) return null;
@@ -96,9 +96,9 @@ const findAll = async ({
 
   if (search) {
     const pattern = `%${search}%`;
-    const parts = search.trim().split("/");
-    const possibleId = parseInt(parts[parts.length - 1], 10);
-    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    // Reference-shaped input ("SO600", or the legacy "SO/600") also matches id.
+    const possibleId = parseOrderReference(search);
+    if (possibleId) {
       conditions.push(
         or(
           ilike(dangoteOrderRequests.requestNumber, pattern),

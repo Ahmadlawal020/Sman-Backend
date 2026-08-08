@@ -7,7 +7,7 @@ const {
   lpgStations,
   lpgStationCylinders,
 } = require("../db/schema");
-const { generateOrderReference } = require("../utils/helpers");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 const formatLpgOrderRow = (row) => {
   if (!row) return null;
@@ -91,9 +91,9 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
 
   if (search) {
     const pattern = `%${search}%`;
-    const parts = search.trim().split("/");
-    const possibleId = parseInt(parts[parts.length - 1], 10);
-    if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+    // Reference-shaped input ("SO600", or the legacy "SO/600") also matches id.
+    const possibleId = parseOrderReference(search);
+    if (possibleId) {
       conditions.push(
         or(
           ilike(lpgOrderRequests.requestNumber, pattern),

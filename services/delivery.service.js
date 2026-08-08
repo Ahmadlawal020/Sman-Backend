@@ -14,6 +14,24 @@ const TRANSITIONS = {
 
 const canTransition = (from, to) => (TRANSITIONS[from] || []).includes(to);
 
+/**
+ * The allocation's buyer sits in `delivery_customers`, which is a separate
+ * register from the portal `customers` table — a delivery customer has no
+ * account, no app and no inbox. A phone number is therefore the ONLY way to
+ * reach them, which is why every delivery event carries one rather than a
+ * customer id. Failing to find them must never block the transition itself.
+ */
+const customerPhoneFor = async (allocation) => {
+  if (!allocation?.customerId) return "";
+  try {
+    const customer = await deliveryCustomerRepo.findById(allocation.customerId);
+    return customer?.phoneNumber || "";
+  } catch (err) {
+    console.error("[delivery] customer lookup for notification failed:", err.message);
+    return "";
+  }
+};
+
 const confirmAllocation = async (allocationId, { actor }) => {
   const allocation = await deliveryInventoryRepo.findById(allocationId);
   if (!allocation) return { success: false, notFound: true, message: "Allocation not found" };
@@ -36,6 +54,8 @@ const confirmAllocation = async (allocationId, { actor }) => {
     entityType: "delivery_inventory",
     entityId: allocationId,
     allocationCode: updated.allocationCode || "",
+    allocation: updated,
+    customerPhone: await customerPhoneFor(updated),
   });
 
   return { success: true, allocation: updated };
@@ -63,16 +83,12 @@ const releaseAllocation = async (allocationId, { actor }) => {
     ticketGeneratedAt: allocation.ticketGeneratedAt || new Date(),
   });
 
-  const customer = allocation.customerId
-    ? await deliveryCustomerRepo.findById(allocation.customerId)
-    : null;
-
   emitEvent("delivery.released", {
     actor,
     entityType: "delivery_inventory",
     entityId: allocationId,
     allocation: updated,
-    customerPhone: customer?.phoneNumber || "",
+    customerPhone: await customerPhoneFor(allocation),
   });
 
   return { success: true, allocation: updated };
@@ -98,6 +114,8 @@ const rejectAllocation = async (allocationId, { actor, reason = "" }) => {
     entityType: "delivery_inventory",
     entityId: allocationId,
     reason,
+    allocation: updated,
+    customerPhone: await customerPhoneFor(allocation),
   });
 
   return { success: true, allocation: updated };

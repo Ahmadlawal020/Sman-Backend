@@ -84,17 +84,18 @@ const buildReached = (row) => {
 const stageNote = (stage, row) => (NOTE[stage] ? NOTE[stage](row) : null);
 
 const { customers } = require("../db/schema/customer");
-const { generateOrderReference } = require("../utils/helpers");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 const trackByRef = async (ref) => {
   const normalized = String(ref || "").trim().toUpperCase();
   if (!normalized) return null;
 
-  const parts = normalized.split("/");
-  const possibleId = parseInt(parts[parts.length - 1], 10);
+  // Accepts "SO600", the legacy "SO/600", and the raw ORD-… column value, so a
+  // reference printed on any invoice or SMS ever sent still tracks.
+  const possibleId = parseOrderReference(normalized);
 
   let whereCond;
-  if (!isNaN(possibleId) && String(possibleId) === parts[parts.length - 1]) {
+  if (possibleId) {
     whereCond = or(eq(orders.id, possibleId), eq(orders.orderNumber, normalized));
   } else {
     whereCond = eq(orders.orderNumber, normalized);

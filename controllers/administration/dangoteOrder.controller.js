@@ -11,6 +11,7 @@ const {
 } = require("../../services/email.service");
 const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendDangoteDeliveryOrderSMS } = require("../../services/sms.service");
+const { notify } = require("../../notifications");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const dangoteOrderStatus = require("../../services/dangoteOrderStatus.service");
@@ -153,6 +154,32 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     }
   }
 
+  // The "under review" email above is unchanged; these add the inbox row, the
+  // push, and the desk's heads-up that a request is waiting to be priced.
+  notify("dangote.request_received", {
+    to: { customer },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      customerName: customer.name,
+      product,
+      quantity: Number(quantity),
+      quantityUnit: quantityUnit || "Tons",
+    },
+  });
+  notify("staff.request_submitted", {
+    to: { roles: ["admin", "super_admin", "sales_manager"] },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      kind: "Dangote",
+      customerName: customer.name,
+      entityType: "dangote_request",
+      screen: "DangoteOrderDetail",
+      adminPath: `/dangote-orders/${request.id}`,
+    },
+  });
+
   const fullRequest = await dangoteOrderRequestRepo.findByIdFull(request.id);
 
   res.status(201).json({
@@ -185,6 +212,16 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       action: "dangote_order.rejected",
     });
     const fullRequest = await dangoteOrderRequestRepo.findByIdFull(id);
+    // A decline was previously silent — the customer had to notice the status
+    // change themselves. They now hear about it in the app and by SMS.
+    notify("dangote.rejected", {
+      to: { customerId: existing.customerId },
+      data: {
+        requestId: id,
+        requestNumber: fullRequest.requestNumber,
+        customerName: fullRequest.customerName,
+      },
+    });
     return res.json({
       success: true,
       message: "Order request rejected",
@@ -317,6 +354,21 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       console.error("Failed to send Dangote delivery SMS:", smsErr);
     }
   }
+
+  // Confirmation email and payment SMS above stay as they are; this adds the
+  // inbox row and push so the approval also lands in the app.
+  notify("dangote.confirmed", {
+    to: { customerId: updated.customerId },
+    data: {
+      requestId: updated.id,
+      requestNumber: fullRequest.requestNumber,
+      customerName: fullRequest.customerName,
+      product: fullRequest.product,
+      quantity: fullRequest.quantity,
+      quantityUnit: fullRequest.quantityUnit,
+      totalAmount,
+    },
+  });
 
   res.json({
     success: true,

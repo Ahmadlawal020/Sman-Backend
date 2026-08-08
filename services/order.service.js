@@ -16,6 +16,7 @@ const walletService = require("./wallet.service");
 const { createDedicatedAccount, transferToDepotSubaccount, switchCustomerDvaToSubaccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
 const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
+const { notify } = require("../notifications");
 const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
@@ -418,10 +419,20 @@ async function placeOrder({
 
   const fullOrder = await orderRepo.findByIdFull(order.id);
 
+  // The reference every surface shows — "SO600", not the raw ORD-… column.
+  //
+  // `orderNumber` in this scope is the opaque internal value minted at line
+  // ~305, before the row (and therefore its id) existed. It must never reach a
+  // customer: the app, portal, admin dashboard and WhatsApp all render the
+  // computed reference, so an invoice or SMS quoting ORD-BB464940706C names an
+  // order the customer cannot find on any screen. findByIdFull() applies the
+  // same decoration every other read path does.
+  const reference = fullOrder.orderNumber;
+
   if (customer.email) {
     try {
       await sendOrderInvoiceEmail(customer.email, {
-        orderNumber,
+        orderNumber: reference,
         orderDate: order.createdAt,
         customerName: customer.name,
         companyName: customer.companyName,
@@ -448,7 +459,7 @@ async function placeOrder({
   let smsSent = false;
   try {
     const smsResult = await sendOrderSummarySMS(customer.phone, {
-      orderNumber,
+      orderNumber: reference,
       customerName: customer.name,
       product: fullOrder.productName || "N/A",
       quantity: order.quantity,
@@ -463,6 +474,43 @@ async function placeOrder({
   } catch (smsErr) {
     console.error("Failed to send order SMS:", smsErr.message);
   }
+
+  // The invoice email and payment SMS above stay exactly as they are — they
+  // are transactional documents whose layout and wording are the point. This
+  // adds the inbox row and the push that were missing, so the order also shows
+  // up in the app. The catalog entry is APP_ONLY for precisely that reason: it
+  // must not re-send what the two calls above already sent.
+  notify("order.created", {
+    to: { customer },
+    data: {
+      orderId: order.id,
+      orderNumber: reference,
+      reference,
+      customerName: customer.name,
+      product: fullOrder.productName || "",
+      quantity: order.quantity,
+      unit: fullOrder.productUnit || "Liters",
+      totalAmount: order.totalAmount,
+      depotName: depot.name,
+      deliveryType: order.deliveryType,
+    },
+  });
+
+  // Sales and finance want to see the order land without watching the list.
+  notify("staff.order_placed", {
+    to: { roles: ["admin", "super_admin", "sales_manager", "finance_manager"] },
+    data: {
+      orderId: order.id,
+      orderNumber: reference,
+      reference,
+      customerName: customer.name,
+      product: fullOrder.productName || "",
+      quantity: order.quantity,
+      unit: fullOrder.productUnit || "Liters",
+      totalAmount: order.totalAmount,
+      depotName: depot.name,
+    },
+  });
 
   return {
     order: fullOrder,
@@ -597,6 +645,19 @@ async function notifyOrderExpired(order) {
       await sendOrderExpiredSMS(customer.phone, {
         orderNumber: order.orderNumber,
         customerName: customer.name,
+      });
+    }
+    // The SMS above is unchanged; this adds the inbox row so a customer who
+    // opens the app days later still finds out why the order vanished.
+    if (customer) {
+      notify("order.expired", {
+        to: { customer },
+        data: {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          reference: order.orderNumber,
+          customerName: customer.name,
+        },
       });
     }
   } catch (err) {

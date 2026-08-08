@@ -18,13 +18,20 @@ const CHANNELS = {
 
 const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
   if (process.env.SMS_ENABLED === "false") {
-    console.log("[SMS] SMS sending is disabled");
-    return { success: true };
+    // Reported as a distinct outcome, NOT as success. Returning { success: true }
+    // here made a disabled sender indistinguishable from a delivered message:
+    // the OTP path saw `sent`, told the customer a code was on its way, and
+    // nothing ever arrived. Callers that legitimately want a no-op in dev can
+    // branch on `disabled`; everything else now sees an honest failure.
+    console.warn("[SMS] SMS_ENABLED=false — no message sent");
+    return { success: false, disabled: true, message: "SMS sending is disabled (SMS_ENABLED=false)" };
   }
 
   const apiKey = process.env.TERMII_API_KEY;
   if (!apiKey) {
-    console.error("[SMS] TERMII_API_KEY is not configured");
+    console.error(
+      "[SMS] TERMII_API_KEY is not configured — set it on the deployment, not just in local .env"
+    );
     return { success: false, message: "SMS API key not configured" };
   }
 
@@ -48,6 +55,43 @@ const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
   }
 
   return { success: false, message: response.data.message || "SMS sending failed" };
+};
+
+/**
+ * Send one message, trying the transactional route first and falling back to
+ * the DND route.
+ *
+ * Nigeria's Do-Not-Disturb register is the reason this exists: `generic` is the
+ * cheaper transactional route, but a number registered on DND is reachable ONLY
+ * via `dnd`. Trying generic first keeps the cheap route as the default while
+ * still reaching a DND-registered customer instead of silently dropping their
+ * message.
+ *
+ * Every bespoke sender below already inlines this loop; this is the same
+ * behaviour extracted so callers that need plain text — the OTP path — get it
+ * too, rather than quietly sending on `generic` only.
+ *
+ * Never throws: returns { success, message } so a caller can branch on the
+ * outcome instead of relying on an exception that a soft failure won't raise.
+ */
+const sendSMSWithFallback = async (phone, sms) => {
+  const attempts = [];
+  for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
+    try {
+      const result = await sendSMSTermii(phone, sms, channel);
+      if (result.success) return { success: true, channel };
+      attempts.push(`${channel}: ${result.message || "failed"}`);
+    } catch (error) {
+      // Termii reports the real reason in the response body, not the status —
+      // a 402 is "Insufficient balance" only if you unwrap response.data.
+      const detail =
+        error.response?.data
+          ? JSON.stringify(error.response.data)
+          : error.message || "Termii error";
+      attempts.push(`${channel}: ${detail}`);
+    }
+  }
+  return { success: false, message: attempts.join(" | ") || "All Termii channels failed" };
 };
 
 const sendOrderSummarySMS = async (phone, orderData) => {
@@ -217,4 +261,4 @@ const sendLpgOrderExpiredSMS = async (phone, { requestNumber, customerName }) =>
   return { success: false, message: "All Termii channels failed" };
 };
 
-module.exports = { sendSMSTermii, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, sendLpgOrderSMS, sendOrderExpiredSMS, sendDangoteOrderExpiredSMS, sendLpgOrderExpiredSMS, CHANNELS };
+module.exports = { sendSMSTermii, sendSMSWithFallback, sendOrderSummarySMS, sendTicketSummarySMS, sendDangoteDeliveryOrderSMS, sendLpgOrderSMS, sendOrderExpiredSMS, sendDangoteOrderExpiredSMS, sendLpgOrderExpiredSMS, CHANNELS };

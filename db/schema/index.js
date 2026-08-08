@@ -50,6 +50,12 @@ const bankStatementSchema = require("./bankStatement");
 const depotProductCommissionSchema = require("./depotProductCommission");
 const commissionSchema = require("./commission");
 const customerLicenseSchema = require("./companyLicense");
+const notificationSchema = require("./notification");
+// After ./notification — notificationDelivery destructures `notifications` at
+// load time for its foreign key.
+const notificationDeliverySchema = require("./notificationDelivery");
+const notificationPreferenceSchema = require("./notificationPreference");
+const deviceTokenSchema = require("./deviceToken");
 
 module.exports = {
   ...enums,
@@ -101,4 +107,8 @@ module.exports = {
   ...depotProductCommissionSchema,
   ...commissionSchema,
   ...customerLicenseSchema,
+  ...notificationSchema,
+  ...notificationDeliverySchema,
+  ...notificationPreferenceSchema,
+  ...deviceTokenSchema,
 };

@@ -3,6 +3,7 @@ const { db } = require("../config/db");
 const { orderRepo, ticketRepo, customerRepo } = require("../repositories");
 const { sendTicketEmail } = require("./email.service");
 const { sendTicketSummarySMS } = require("./sms.service");
+const { notify } = require("../notifications");
 
 /**
  * Issue the ticket for a single truck load, idempotently, inside the caller's
@@ -124,6 +125,24 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
         console.error("Failed to send ticket SMS:", smsErr.message);
       }
     }
+
+    // The QR-code email and its SMS above are untouched. This adds the inbox
+    // row and push so the ticket is reachable in the app rather than only in
+    // whichever inbox the customer read it from — the catalog entry is
+    // APP_ONLY so nothing here is sent twice.
+    notify("ticket.issued", {
+      to: { customer },
+      data: {
+        ticketId: updatedTicket?.id,
+        ticketNumber: ticketData.ticketNumber,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        reference: order.orderNumber,
+        customerName: customer.name,
+        deliveryType: order.deliveryType,
+        depotName: order.depotName || "",
+      },
+    });
 
     return { success: true, ticket: updatedTicket };
   } catch (error) {

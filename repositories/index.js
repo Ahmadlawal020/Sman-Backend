@@ -35,4 +35,8 @@ module.exports = {
   bankAccountRepo: require("./bankAccount.repository"),
   commissionRepo: require("./commission.repository"),
   customerLicenseRepo: require("./customerLicense.repository"),
+  notificationRepo: require("./notification.repository"),
+  deviceTokenRepo: require("./deviceToken.repository"),
+  notificationPreferenceRepo: require("./notificationPreference.repository"),
+  notificationDeliveryRepo: require("./notificationDelivery.repository"),
 };

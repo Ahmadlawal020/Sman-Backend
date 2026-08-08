@@ -75,6 +75,26 @@ const orderTruckStatusEnum = pgEnum("order_truck_status", [
 
 const pfiStatusEnum = pgEnum("pfi_status", ["active", "finished"]);
 
+/**
+ * The expense approval chain.
+ *
+ * An expense is a payment request, not a record of spending. Only `paid`
+ * counts toward a cargo's cost — everything before it is committed money that
+ * has not left the bank yet, and is reported separately.
+ *
+ * `rejected` is terminal; `changes_requested` returns the request to whoever
+ * raised it and re-enters the chain at the start when they save.
+ */
+const expenseStatusEnum = pgEnum("expense_status", [
+  "pending",
+  "verified",
+  "audit_approved",
+  "admin_approved",
+  "paid",
+  "rejected",
+  "changes_requested",
+]);
+
 const ticketStatusEnum = pgEnum("ticket_status", ["Active", "Redeemed"]);
 
 const depositTypeEnum = pgEnum("deposit_type", ["credit", "debit"]);
@@ -249,6 +269,65 @@ const licenseVerificationStatusEnum = pgEnum("license_verification_status", [
   "rejected",
 ]);
 
+// ─── Notifications ──────────────────────────────────────────────────────────
+
+// The transports a notification can travel over. `whatsapp` is listed because
+// the conversation engine is a real outbound channel and delivery rows need to
+// name it; the notification engine does not drive it yet (whatsapp/worker.js
+// owns session-window and template rules that a generic fan-out cannot honour).
+const notificationChannelEnum = pgEnum("notification_channel", [
+  "in_app",
+  "push",
+  "email",
+  "sms",
+  "whatsapp",
+]);
+
+// Priority drives two decisions and nothing else: whether quiet hours may
+// suppress the send, and how the mobile client should present it. `urgent`
+// ignores quiet hours — money and security move at any hour.
+const notificationPriorityEnum = pgEnum("notification_priority", [
+  "low",
+  "normal",
+  "high",
+  "urgent",
+]);
+
+// Preferences are stored per CATEGORY, never per type: a customer who mutes
+// "marketing" should not have to re-mute it each time a campaign type is added.
+// Categories are therefore deliberately coarse and slow-changing.
+const notificationCategoryEnum = pgEnum("notification_category", [
+  "orders",
+  "payments",
+  "delivery",
+  "tickets",
+  "account",
+  "security",
+  "reports",
+  "operations",
+  "marketing",
+  "system",
+]);
+
+const deviceTokenPlatformEnum = pgEnum("device_token_platform", [
+  "android",
+  "ios",
+  "web",
+]);
+
+// Per-channel attempt outcome. `skipped` means the channel had nothing to send
+// to (no email on file, no live device token); `suppressed` means the
+// recipient's preferences or quiet hours refused it. Telling them apart is the
+// difference between a data problem and a working opt-out.
+const notificationDeliveryStatusEnum = pgEnum("notification_delivery_status", [
+  "pending",
+  "sent",
+  "delivered",
+  "failed",
+  "skipped",
+  "suppressed",
+]);
+
 module.exports = {
   customerStatusEnum,
   principalTypeEnum,
@@ -261,6 +340,7 @@ module.exports = {
   orderPaymentStatusEnum,
   orderStatusEnum,
   pfiStatusEnum,
+  expenseStatusEnum,
   ticketStatusEnum,
   depositTypeEnum,
   walletHoldStatusEnum,
@@ -285,4 +365,9 @@ module.exports = {
   waTemplateStatusEnum,
   commissionStatusEnum,
   licenseVerificationStatusEnum,
+  notificationChannelEnum,
+  notificationPriorityEnum,
+  notificationCategoryEnum,
+  deviceTokenPlatformEnum,
+  notificationDeliveryStatusEnum,
 };

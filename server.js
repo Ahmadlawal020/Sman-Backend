@@ -107,6 +107,17 @@ testConnection()
         .start()
         .catch((err) => console.error("[scheduler] failed to start:", err.message));
     }
+
+    // The durable notification worker. Only needed when NOTIFY_QUEUE_ENABLED
+    // is on — otherwise notify() dispatches in-process and there is no queue
+    // to consume. A failure here is loud but never fatal: notifications fall
+    // back to inline delivery (see notifications/index.js), so the dashboard
+    // and the sends both keep working.
+    if (process.env.NOTIFY_QUEUE_ENABLED === "true") {
+      require("./notifications/worker")
+        .start()
+        .catch((err) => console.error("[notify] worker failed to start:", err.message));
+    }
   })
   .catch(() => {
     console.error("Failed to connect to database. Exiting.");

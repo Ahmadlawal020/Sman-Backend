@@ -10,6 +10,7 @@ const {
 } = require("../../services/email.service");
 const { createDedicatedAccount, switchCustomerDvaToSubaccount, transferToStationSubaccount } = require("../../services/payment.service");
 const { sendLpgOrderSMS } = require("../../services/sms.service");
+const { notify } = require("../../notifications");
 const { getCustomerInitials } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const lpgOrderStatus = require("../../services/lpgOrderStatus.service");
@@ -86,6 +87,31 @@ const createLpgOrderRequest = asyncHandler(async (req, res) => {
       console.error("Failed to send LPG request email:", emailErr);
     }
   }
+
+  // The "under review" email above is unchanged; these add the inbox row, the
+  // push, and the desk's heads-up that a request is waiting to be priced.
+  notify("lpg.request_received", {
+    to: { customer },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      customerName: customer.name,
+      cylinderSizeKg: Number(cylinderSizeKg),
+      cylinderQuantity: Number(cylinderQuantity),
+    },
+  });
+  notify("staff.request_submitted", {
+    to: { roles: ["admin", "super_admin", "sales_manager"] },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      kind: "LPG",
+      customerName: customer.name,
+      entityType: "lpg_request",
+      screen: "LpgOrderDetail",
+      adminPath: `/lpg-orders/${request.id}`,
+    },
+  });
 
   const fullRequest = await lpgOrderRequestRepo.findByIdFull(request.id);
 
@@ -278,6 +304,20 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
       console.error("Failed to send LPG order SMS:", smsErr);
     }
   }
+
+  // Confirmation email and payment SMS above stay as they are; this adds the
+  // inbox row and push so the approval also lands in the app.
+  notify("lpg.confirmed", {
+    to: { customerId: updated.customerId },
+    data: {
+      requestId: updated.id,
+      requestNumber: fullRequest.requestNumber,
+      customerName: fullRequest.customerName,
+      cylinderSizeKg: fullRequest.cylinderSizeKg,
+      cylinderQuantity: fullRequest.cylinderQuantity,
+      totalAmount,
+    },
+  });
 
   res.json({
     success: true,

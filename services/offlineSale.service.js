@@ -140,6 +140,9 @@ const reviewSale = async (id, { approve, reason = "" }, { actor }) => {
     entityId: id,
     saleNumber: sale.saleNumber,
     reason,
+    // For the notification consumer: who keyed the sale in, and for how much.
+    createdBy: sale.createdBy || null,
+    totalAmount: sale.totalAmount,
   });
 
   return { success: true, sale: updated };

@@ -77,6 +77,9 @@ app.use("/api/reports", require("./routes/administration/reporting.route"));
 app.use("/api/commissions", require("./routes/administration/commission.route"));
 app.use("/api/customer-licenses", require("./routes/administration/customerLicense.route"));
 app.use("/api/uploads", require("./routes/administration/upload.route"));
+// Staff notifications: every signed-in staff member's own inbox, preferences
+// and push devices, plus the admin-only broadcast and delivery-log endpoints.
+app.use("/api/notifications", require("./routes/administration/notification.route"));
 
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));
@@ -84,11 +87,11 @@ app.use("/api", require("./routes/administration/dangoteOrder.route"));
 // LPG cooking gas orders
 app.use("/api", require("./routes/administration/lpgOrder.route"));
 
-// Event consumers: audit writes every business event; notifications react to
-// the ones customers and staff should hear about. Registered once, here,
-// so requiring app.js in tests wires the same pipeline as production.
+// Event consumers: audit writes every business event; the notification engine
+// reacts to the ones customers and staff should hear about. Registered once,
+// here, so requiring app.js in tests wires the same pipeline as production.
 require("./services/audit.service").registerAuditListener();
-require("./services/notification.service").registerNotificationListeners();
+require("./notifications/listeners").registerNotificationListeners();
 
 // Customer-facing portal. Note it sits one character from the staff-only
 // /api/customers above — a readability hazard, not a routing bug: Express
@@ -121,6 +124,10 @@ app.use("/api/customer/uploads", require("./routes/portal/upload.route"));
 app.use("/api/customer/wallet", require("./routes/portal/wallet.route"));
 // Customer-facing commission history — earned/pending/paid commissions.
 app.use("/api/customer/commissions", require("./routes/portal/commission.route"));
+// Customer-facing notifications — the mobile app's inbox and push device
+// registration, the web portal's bell menu, and the live SSE stream behind
+// both. Same handlers as the staff mount above, scoped to req.customer.
+app.use("/api/customer/notifications", require("./routes/portal/notification.route"));
 // Public: sanitised order tracking by reference — movement only, no price or
 // buyer identity. The order number is the shared secret.
 app.use("/api/tracking", require("./routes/portal/tracking.route"));

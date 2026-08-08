@@ -50,6 +50,9 @@ const submitReport = async (data, { actor }) => {
       entityId: report.id,
       location: report.location,
       reportDate: report.reportDate,
+      // For the notification consumer, so reviewers see who filed it.
+      submittedBy: report.submittedBy || null,
+      submittedByName: report.submittedByName || "",
     });
 
     return { success: true, report };
@@ -127,6 +130,9 @@ const reviewReport = async (id, { approve, comment = "" }, { actor }) => {
     report: updated,
     comment,
     submitterPhone: submitter?.phoneNumber || "",
+    // The staff id, so the submitter gets an inbox row and a push rather than
+    // only an SMS — a bare phone number can carry nothing else.
+    submitterStaffId: submitter?.id || report.submittedBy || null,
   });
 
   return { success: true, report: updated };

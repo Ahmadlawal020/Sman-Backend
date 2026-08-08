@@ -215,11 +215,29 @@ const matchBankLines = z.object({
 // --- expenses --------------------------------------------------------------
 
 const expenseBase = {
-  description: requiredString("Description", 500),
+  // A description is genuinely optional — the category, vendor and amount
+  // already identify the line, and forcing prose here just gets "expense".
+  description: optionalString("Description", 500),
   amount: money("Amount", { min: 0.01 }),
+  // The category decides which cargo the line lands on, so it is the one
+  // field the create path actually needs. Accepted as an id in either casing.
+  category: id("Category").optional().nullable(),
+  category_id: id("Category").optional().nullable(),
   categoryId: id("Category").optional().nullable(),
-  category: optionalString("Category", 100),
+  vendor: optionalString("Vendor", 255),
+  expense_date: optionalString("Expense date", 40),
   expenseDate: optionalString("Expense date", 40),
+  bank_paid_from: optionalString("Bank paid from", 255),
+  bankPaidFrom: optionalString("Bank paid from", 255),
+  receipt_reference: optionalString("Receipt reference", 100),
+  receiptReference: optionalString("Receipt reference", 100),
+  // Where the money is going — shown to approvers before they authorise.
+  payee_bank_name: optionalString("Payee bank", 200),
+  payeeBankName: optionalString("Payee bank", 200),
+  payee_account_number: optionalString("Payee account number", 50),
+  payeeAccountNumber: optionalString("Payee account number", 50),
+  payee_account_name: optionalString("Payee account name", 255),
+  payeeAccountName: optionalString("Payee account name", 255),
   reference: optionalString("Reference", 100),
   notes: optionalString("Notes", 1000),
 };

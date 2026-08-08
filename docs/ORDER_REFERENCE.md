@@ -4,7 +4,7 @@
 
 All applications (Soroman App, SoomanFE, Soroman Frontend) must use a standardized order reference format generated from the backend.
 
-**Format:** `INITIALS/ORDER_ID`
+**Format:** `INITIALS` + `ORDER_ID` — no separator, e.g. `HA10831`
 
 ## Components
 
@@ -30,11 +30,11 @@ The order ID from `OrderPaymentInfo` or `Order` table.
 
 | Company Name | Order ID | Reference |
 |---|---|---|
-| Honeywell Adada | 10831 | `HA/10831` |
-| Shell Petroleum Nigeria | 5432 | `SP/5432` |
-| Soroman | 1000 | `SO/1000` |
-| Dangote | 500 | `DA/500` |
-| (null/empty) | 999 | `SO/999` |
+| Honeywell Adada | 10831 | `HA10831` |
+| Shell Petroleum Nigeria | 5432 | `SP5432` |
+| Soroman | 1000 | `SO1000` |
+| Dangote | 500 | `DA500` |
+| (null/empty) | 999 | `SO999` |
 
 ## Implementation
 
@@ -45,7 +45,7 @@ const { generateOrderReference } = require("../utils/helpers");
 
 // Generate reference dynamically
 const reference = generateOrderReference(customer.companyName, order.id);
-// → "HA/10831"
+// → "HA10831"
 ```
 
 ### Frontend (React/Vue)
@@ -56,6 +56,31 @@ import { generateOrderReference } from "@/utils/orderHelper";
 
 const reference = generateOrderReference(customer.companyName, order.id);
 ```
+
+## Why there is no separator
+
+The reference used to be `HA/10831`. The slash was a defect, not a style choice:
+the public tracking endpoint is `GET /api/tracking/:ref`, and Express matches
+`:ref` against a **single path segment** — so a customer pasting `HA/10831` from
+their SMS produced `/api/tracking/HA/10831`, two segments, matching no route and
+returning 404. The reference is the one value shown on the app, the web portal
+and the admin dashboard, so it has to survive being put in a URL.
+
+## Reading a reference back
+
+`parseOrderReference(value)` recovers the order id and accepts **both** forms:
+
+| Input | Result |
+|---|---|
+| `HA10831` | `10831` |
+| `HA/10831` (legacy) | `10831` |
+| `10831` | `10831` |
+| `Dangote Cement 50` | `null` — free text, not a reference |
+
+Legacy support is not optional: references are printed into SMS, invoices,
+ticket emails and QR codes that customers keep, so every reference ever issued
+must keep resolving. Use this helper rather than splitting on `/` — six copies
+of that parsing existed and all of them broke on the new format.
 
 ## Important Notes
 

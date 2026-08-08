@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { lpgOrderRequestRepo, lpgStationRepo, customerRepo } = require("../../repositories");
 const { sendLpgRequestReceivedEmail } = require("../../services/email.service");
+const { notify } = require("../../notifications");
 const { withRequestExpiresAt } = require("../../services/requestExpiry.service");
 
 /**
@@ -74,6 +75,31 @@ const createMyLpgOrder = asyncHandler(async (req, res) => {
       console.error("Failed to send LPG request email:", emailErr.message);
     }
   }
+
+  // Acknowledgement in the app, plus the desk's heads-up. The email above is
+  // unchanged — the catalog entry is APP_ONLY so nothing is sent twice.
+  notify("lpg.request_received", {
+    to: { customerId: req.customer.id },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      customerName: customer?.name,
+      cylinderSizeKg: Number(cylinderSizeKg),
+      cylinderQuantity: Number(cylinderQuantity),
+    },
+  });
+  notify("staff.request_submitted", {
+    to: { roles: ["admin", "super_admin", "sales_manager"] },
+    data: {
+      requestId: request.id,
+      requestNumber,
+      kind: "LPG",
+      customerName: customer?.name,
+      entityType: "lpg_request",
+      screen: "LpgOrderDetail",
+      adminPath: `/lpg-orders/${request.id}`,
+    },
+  });
 
   const full = await lpgOrderRequestRepo.findByIdFull(request.id);
   res.status(201).json({

@@ -29,12 +29,21 @@ const QUEUES = Object.freeze({
   // Business events entering a conversation from the OUTSIDE — a payment
   // confirmed by the settlement sweep re-enters the customer's session here.
   WA_EVENTS: "wa-events",
+  // Notification fan-out: one job per notify() call, expanded by the worker
+  // into per-recipient, per-channel sends. Durable because the alternative is
+  // an in-process promise — and a deploy mid-flight would lose the payment
+  // confirmation the customer is waiting on. Idempotent on redelivery: the
+  // inbox row's dedupe key means a retried job re-sends nothing.
+  NOTIFY_DISPATCH: "notify-dispatch",
+  // Retention sweeps for notifications, delivery logs and dead device tokens.
+  NOTIFY_MAINTENANCE: "notify-maintenance",
 });
 
 const DEAD_LETTER = Object.freeze({
   [QUEUES.WA_INBOUND]: "wa-inbound-dead",
   [QUEUES.WA_SEND]: "wa-send-dead",
   [QUEUES.WA_EVENTS]: "wa-events-dead",
+  [QUEUES.NOTIFY_DISPATCH]: "notify-dispatch-dead",
 });
 
 // Per-queue policy, applied at createQueue time.
@@ -59,6 +68,22 @@ const QUEUE_OPTIONS = {
     retryBackoff: true,
     expireInSeconds: 60,
     deadLetter: DEAD_LETTER[QUEUES.WA_EVENTS],
+  },
+  [QUEUES.NOTIFY_DISPATCH]: {
+    retryLimit: 5,
+    retryDelay: 15, // a payment confirmation should not wait minutes
+    retryBackoff: true,
+    // Generous: one job may fan out to every admin across four channels, and
+    // an expiry mid-fan-out would re-run the whole job. The dedupe key makes
+    // that safe, but it is still wasted provider calls.
+    expireInSeconds: 300,
+    deadLetter: DEAD_LETTER[QUEUES.NOTIFY_DISPATCH],
+  },
+  [QUEUES.NOTIFY_MAINTENANCE]: {
+    // Housekeeping. If a sweep is missed the next one covers the same ground,
+    // so there is nothing to retry and nothing to dead-letter.
+    retryLimit: 1,
+    expireInSeconds: 600,
   },
 };
 

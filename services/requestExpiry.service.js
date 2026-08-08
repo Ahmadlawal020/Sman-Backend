@@ -8,6 +8,7 @@ const {
 const dangoteOrderStatus = require("./dangoteOrderStatus.service");
 const lpgOrderStatus = require("./lpgOrderStatus.service");
 const { sendDangoteOrderExpiredSMS, sendLpgOrderExpiredSMS } = require("./sms.service");
+const { notify } = require("../notifications");
 
 // How long an approved, unpaid request may sit before the sweep expires it.
 // Shares the same config as depot order expiry.
@@ -192,6 +193,18 @@ async function notifyDangoteRequestExpired(order) {
         customerName: customer.name,
       });
     }
+    // The SMS above is unchanged; this adds the inbox row so a customer who
+    // opens the app days later still finds out why the request lapsed.
+    if (customer) {
+      notify("dangote.expired", {
+        to: { customer },
+        data: {
+          requestId: order.id,
+          requestNumber: order.requestNumber,
+          customerName: customer.name,
+        },
+      });
+    }
   } catch (err) {
     console.error(`[expiry] failed to notify customer for Dangote ${order.requestNumber}:`, err.message);
   }
@@ -207,6 +220,16 @@ async function notifyLpgRequestExpired(order) {
       await sendLpgOrderExpiredSMS(customer.phone, {
         requestNumber: order.requestNumber,
         customerName: customer.name,
+      });
+    }
+    if (customer) {
+      notify("lpg.expired", {
+        to: { customer },
+        data: {
+          requestId: order.id,
+          requestNumber: order.requestNumber,
+          customerName: customer.name,
+        },
       });
     }
   } catch (err) {

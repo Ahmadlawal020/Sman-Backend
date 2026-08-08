@@ -26,16 +26,26 @@ function getCustomerInitials(name) {
 }
 
 /**
- * Generates standardized order reference: INITIALS/ORDER_ID
+ * Generates the standardized order reference: INITIALS + ORDER_ID.
  *
  * Initials extracted from company name:
  * - Multiple words: first letter of each word ("Honeywell Adada" → "HA")
  * - Single word: first 2 letters ("Soroman" → "SO")
  * - Default: "SO" if no company name
  *
+ * NO SEPARATOR. The reference used to be "HA/10831", and the slash was a
+ * genuine defect rather than a style choice: the public tracking route is
+ * `GET /api/tracking/:ref`, and Express matches `:ref` against ONE path
+ * segment — so a customer pasting "HA/10831" from their SMS produced
+ * /api/tracking/HA/10831, two segments, which matched no route and 404'd.
+ * Every consumer (mobile app, web portal, admin dashboard) shows this one
+ * value, so it has to survive being put in a URL.
+ *
+ * Old "HA/10831" references are still resolvable — see parseOrderReference.
+ *
  * @param {string|null} companyName - Customer's company name
  * @param {number|string} orderId - Order ID
- * @returns {string} Order reference (e.g., "HA/10831")
+ * @returns {string} Order reference (e.g., "HA10831")
  */
 function generateOrderReference(companyName, orderId) {
   let initials = "SO";
@@ -50,7 +60,42 @@ function generateOrderReference(companyName, orderId) {
     }
   }
 
-  return `${initials}/${orderId}`;
+  return `${initials}${orderId}`;
 }
 
-module.exports = { escapeRegex, getCustomerInitials, generateOrderReference };
+/**
+ * The inverse of generateOrderReference: pull the order id back out of a
+ * reference a human is holding.
+ *
+ * Accepts BOTH the current form and the old slashed one, because references
+ * are not stored — they are printed into SMS, invoices, ticket emails and QR
+ * codes that customers keep. "HA10831", "HA/10831" and a bare "10831" must all
+ * resolve to 10831, or every reference issued before this change stops working.
+ * Case and surrounding whitespace are ignored.
+ *
+ * Returns null for anything that isn't reference-shaped. The pattern requires
+ * the digits to be the whole trailing token after an optional short prefix, so
+ * free-text search ("Dangote Cement 50") is not mistaken for a reference and
+ * does not pull an unrelated order into the results.
+ *
+ * @param {string|number|null} value
+ * @returns {number|null} the order id, or null
+ */
+function parseOrderReference(value) {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+
+  // optional letters, optional separator, then digits — and nothing else.
+  const match = s.match(/^[A-Za-z]*[\/\-]?(\d+)$/);
+  if (!match) return null;
+
+  const id = parseInt(match[1], 10);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+module.exports = {
+  escapeRegex,
+  getCustomerInitials,
+  generateOrderReference,
+  parseOrderReference,
+};

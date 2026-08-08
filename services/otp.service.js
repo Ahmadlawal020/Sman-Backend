@@ -1,5 +1,5 @@
 const { customerOtpRepo } = require("../repositories");
-const { sendSMSTermii } = require("./sms.service");
+const { sendSMSWithFallback } = require("./sms.service");
 const { checkSmsEligibility } = require("../utils/phone");
 
 /**
@@ -154,25 +154,32 @@ async function issueAndSend(customer, { action, requestIp }) {
     return { sent: true, reason: "dev_mode" };
   }
 
-  try {
-    await sendSMSTermii(
-      customer.phone,
-      `Your Soroman verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`
-    );
-  } catch (err) {
+  // sendSMSWithFallback, not sendSMSTermii, for two reasons that both showed up
+  // as "the customer never got their code":
+  //
+  //  1. A bare sendSMSTermii() call takes the default `generic` channel. Much
+  //     of Nigeria is on the Do-Not-Disturb register, and those numbers are
+  //     reachable ONLY via `dnd` — so sign-in failed for exactly the customers
+  //     whose order confirmations (which already fall back) arrived fine.
+  //  2. sendSMSTermii resolves with { success: false } for a soft provider
+  //     rejection rather than throwing, so a try/catch alone saw a rejected
+  //     message as a delivered one. The return value has to be checked.
+  const result = await sendSMSWithFallback(
+    customer.phone,
+    `Your Soroman verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`
+  );
+
+  if (!result.success) {
     // The row is already written, so the code stays valid and the customer can
     // retry. Logged, never surfaced — the response must not reveal whether a
     // send was attempted.
     //
-    // Termii signals the real reason in the response body, not the HTTP status:
-    // a 402 with `{ message: "Insufficient balance" }` reads as the generic
-    // "Request failed with status code 402" unless we pull `response.data` out.
-    // Surface it so a billing/config failure diagnoses itself from the log.
-    const providerDetail = err.response?.data
-      ? ` — ${JSON.stringify(err.response.data)}`
-      : "";
+    // `message` carries each channel's own complaint (Termii reports the real
+    // reason in the response body, not the HTTP status: a 402 is "Insufficient
+    // balance" only once response.data is unwrapped), so a billing or sender-ID
+    // failure diagnoses itself from this one line.
     console.error(
-      `[otp] SMS send failed for customer ${customer.id}: ${err.message}${providerDetail}`
+      `[otp] SMS send failed for customer ${customer.id}: ${result.message}`
     );
     return { sent: false, reason: "send_failed" };
   }
