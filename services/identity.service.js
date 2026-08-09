@@ -158,12 +158,20 @@ const setPin = async (customer, { pin }) => {
  * PIN login — only ever valid together with a trusted device (a 6-digit PIN
  * alone is too weak to be a remote credential). Uniform failure message.
  */
-const verifyPin = async ({ phone, pin }) => {
-  const fail = { success: false, message: "Invalid phone or PIN" };
-  if (typeof phone !== "string" || typeof pin !== "string") return fail;
+const verifyPin = async ({ phone, email, pin }) => {
+  // One message for every failure mode — a distinct 'no such email' would turn
+  // this into an account-enumeration oracle.
+  const fail = { success: false, message: "Invalid credentials or PIN" };
+  if (typeof pin !== "string") return fail;
+  if (typeof phone !== "string" && typeof email !== "string") return fail;
 
-  const e164 = toE164(phone);
-  const customer = e164 ? await customerRepo.findByPhone(e164) : null;
+  let customer = null;
+  if (typeof phone === "string" && phone.trim()) {
+    const e164 = toE164(phone);
+    customer = e164 ? await customerRepo.findByPhone(e164) : null;
+  } else if (typeof email === "string" && email.trim()) {
+    customer = await customerRepo.findByEmail(email.trim().toLowerCase());
+  }
   if (!customer || customer.status === "Inactive") return fail;
 
   const identity = await customerIdentityRepo.findByCustomerAndProvider(customer.id, "pin");

@@ -60,6 +60,16 @@ const sessionIdParam = z.object({ id: id("Session id") });
 const register = z.object({
   phone: requiredString("Phone number", 30),
   name: requiredString("Name", 255),
+  // Optional at the schema so existing clients keep working; the mobile app
+  // requires it at the form. Stored on the customer so email + PIN sign-in has
+  // an identifier to resolve against.
+  email: z
+    .string({ error: "Email must be text" })
+    .trim()
+    .toLowerCase()
+    .email("Enter a valid email address")
+    .max(255, "Email must be 255 characters or fewer")
+    .optional(),
   companyName: z
     .string({ error: "Company name must be text" })
     .trim()

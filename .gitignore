@@ -1,7 +1,17 @@
 node_modules/
 .env
+.env.backup-*
 logs/
 *.log
+
+# Database dumps. These carry real customer data (names, phone numbers,
+# balances) and run to tens of megabytes — they belong on disk, not in git.
+*.dump
+*.sql
+!db/migrations/*.sql
+
+# Scratch output from `drizzle-kit introspect`. Regenerable, never imported.
+.drizzle-introspect/
 AUDIT.md
 PACKAGES.md
 CUSTOMER_PORTAL_PLAN.md

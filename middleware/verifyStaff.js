@@ -4,6 +4,7 @@ const sessionService = require("../services/session.service");
 // Role VALUES, not table names — these are data, consumed by config/roleMapping.js
 // and by the frontend. They are unrelated to the `staff` table rename.
 const ELEVATED_ROLES = ["admin", "super_admin"];
+const { checkApiAccess } = require("../config/apiPermissions");
 
 /**
  * Verifies the bearer token, confirms the session behind it is still live, and
@@ -80,18 +81,36 @@ function requireRole(...allowedRoles) {
 }
 
 /**
- * Default export — behaviour-identical to the previous verifyAdmin.
+ * Authorise against the API permission table.
  *
- * NOTE: ELEVATED_ROLES still admits only 2 of the 19 roles in
- * config/roleMapping.js, so this rejects most staff. Full RBAC is a separate
- * change; until it lands the name is aspirational. See CUSTOMER_PORTAL_PLAN §10.8.
+ * Resolves the mount path from `req.baseUrl` — a router mounted at
+ * /api/orders sees that regardless of the sub-path — and asks
+ * config/apiPermissions.js whether these roles may read or write it.
+ *
+ * This replaced a flat `["admin", "super_admin"]` check. The dashboard has
+ * shipped a 19-role guard for a while, but the server admitted two, so every
+ * other role got a full menu and a 403 behind each item.
  */
-const verifyStaff = [
-  authenticateStaff,
-  requireRole(...ELEVATED_ROLES, { message: "Admin access required" }),
-];
+function authoriseByRoute(req, res, next) {
+  // baseUrl + path: routers mounted at their own prefix and those mounted at
+  // bare /api both resolve correctly this way.
+  const fullPath = (req.baseUrl || '') + (req.path === '/' ? '' : req.path || '');
+  const { allowed, reason } = checkApiAccess(fullPath, req.method, req.user);
+  if (allowed) return next();
+
+  return res.status(403).json({
+    success: false,
+    message: reason || "You do not have permission to perform this action",
+  });
+}
+
+/**
+ * Default export: authenticate, then authorise against the route's own rule.
+ */
+const verifyStaff = [authenticateStaff, authoriseByRoute];
 
 module.exports = verifyStaff;
 module.exports.authenticateStaff = authenticateStaff;
 module.exports.requireRole = requireRole;
 module.exports.ELEVATED_ROLES = ELEVATED_ROLES;
+module.exports.authoriseByRoute = authoriseByRoute;

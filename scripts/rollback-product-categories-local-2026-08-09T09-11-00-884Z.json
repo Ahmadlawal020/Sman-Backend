@@ -1,0 +1,50 @@
+[
+  {
+    "table": "products",
+    "id": 1,
+    "name": "PMS",
+    "category": "Petrol"
+  },
+  {
+    "table": "products",
+    "id": 2,
+    "name": "Diesel",
+    "category": "AGO (Automotive Gas Oil)"
+  },
+  {
+    "table": "products",
+    "id": 16,
+    "name": "Dangote PMS",
+    "category": "PMS (Premium Motor Spirit)"
+  },
+  {
+    "table": "products",
+    "id": 17,
+    "name": "Dangote AGO",
+    "category": "AGO (Automotive Gas Oil)"
+  },
+  {
+    "table": "products",
+    "id": 18,
+    "name": "Dangote LPG",
+    "category": "LPG (Liquefied Petroleum Gas)"
+  },
+  {
+    "table": "dangote_products",
+    "id": 1,
+    "name": "Dangote PMS",
+    "category": "PMS (Premium Motor Spirit)"
+  },
+  {
+    "table": "dangote_products",
+    "id": 2,
+    "name": "Dangote AGO",
+    "category": "AGO (Automotive Gas Oil)"
+  },
+  {
+    "table": "dangote_products",
+    "id": 3,
+    "name": "Dangote LPG",
+    "category": "LPG (Liquefied Petroleum Gas)"
+  }
+]

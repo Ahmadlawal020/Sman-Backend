@@ -49,7 +49,7 @@ const TIMING_FLOOR_MS = 700;
  */
 const handleRegister = asyncHandler(async (req, res) => {
   const startedAt = Date.now();
-  const { phone, name, companyName, turnstileToken } = req.body || {};
+  const { phone, name, email, companyName, turnstileToken } = req.body || {};
 
   // Validated server-side. The client requiring a field is a UX affordance,
   // not a guarantee.
@@ -93,6 +93,7 @@ const handleRegister = asyncHandler(async (req, res) => {
       customer = await customerRepo.create({
         name: name.trim(),
         phone: e164,
+        email: typeof email === "string" ? email.trim().toLowerCase() : "",
         companyName: typeof companyName === "string" ? companyName.trim() : "",
         status: "Pending",
       });

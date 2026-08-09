@@ -25,11 +25,19 @@ const passwordStepUpVerifySchema = z.object({
 
 const setPinSchema = z.object({ pin: pinSchema });
 
-const pinLoginSchema = z.object({
-  phone: phoneSchema,
-  pin: z.string().min(1).max(6),
-  deviceToken: z.string().min(1, "This device is not trusted for PIN sign-in").max(200),
-});
+const pinLoginSchema = z
+  .object({
+    // Either identifier resolves the same account. Both optional at the field
+    // level so the refine below can emit one clear message instead of two.
+    phone: phoneSchema.optional(),
+    email: z.string().trim().toLowerCase().email("Enter a valid email address").max(255).optional(),
+    pin: z.string().min(1).max(6),
+    deviceToken: z.string().min(1, "This device is not trusted for PIN sign-in").max(200),
+  })
+  .refine((v) => Boolean(v.phone || v.email), {
+    message: "Enter your phone number or email address",
+    path: ["phone"],
+  });
 
 const providerParamSchema = z.object({
   provider: z.enum(["google", "apple"]),

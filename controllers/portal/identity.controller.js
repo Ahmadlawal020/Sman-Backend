@@ -189,19 +189,27 @@ const handleSetPin = asyncHandler(async (req, res) => {
 
 /** POST /login/pin — { phone, pin, deviceToken } — trusted device REQUIRED. */
 const handlePinLogin = asyncHandler(async (req, res) => {
-  const { phone, pin, deviceToken } = req.body || {};
-  const fail = () => res.status(401).json({ success: false, message: "Invalid phone or PIN" });
+  const { phone, email, pin, deviceToken } = req.body || {};
+  // One message for every failure — distinguishing 'unknown email' from 'wrong
+  // PIN' would make this an account-enumeration oracle.
+  const fail = () => res.status(401).json({ success: false, message: "Invalid credentials or PIN" });
 
   // A PIN is only ever a second factor for a device already proven by OTP —
-  // never accept it as a sole remote credential.
-  const e164Check = toE164(phone);
-  const candidate = e164Check ? await customerRepo.findByPhone(e164Check) : null;
+  // never accept it as a sole remote credential. Either identifier resolves the
+  // same account; the trusted-device check below is what actually gates it.
+  let candidate = null;
+  if (typeof phone === "string" && phone.trim()) {
+    const e164Check = toE164(phone);
+    candidate = e164Check ? await customerRepo.findByPhone(e164Check) : null;
+  } else if (typeof email === "string" && email.trim()) {
+    candidate = await customerRepo.findByEmail(email.trim().toLowerCase());
+  }
   if (!candidate) return fail();
 
   const trusted = await identityService.isTrustedDevice(candidate.id, deviceToken);
   if (!trusted) return fail();
 
-  const result = await identityService.verifyPin({ phone, pin });
+  const result = await identityService.verifyPin({ phone, email, pin });
   if (!result.success) return fail();
 
   await issueSessionResponse(req, res, result.customer);
