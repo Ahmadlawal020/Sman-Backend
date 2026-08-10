@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { getCustomerInitials } = require("../utils/helpers");
+const { virtualAccountName } = require("../utils/helpers");
 const { toSmsRecipient } = require("../utils/phone");
 
 // Termii v3 API. Config is read at call time inside sendSMSTermii — not frozen
@@ -103,8 +103,7 @@ const sendOrderSummarySMS = async (phone, orderData) => {
     minimumFractionDigits: 0,
   }).format(totalAmount);
 
-  const customerInitials = getCustomerInitials(customerName);
-  const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
+  const formattedAccountName = accountName || virtualAccountName(customerName);
   const sms = `Dear ${customerName}, your order ${orderNumber} for ${quantity?.toLocaleString()}${unit ? ` ${unit}` : ""} of ${product} (${formattedAmount}) has been received. Pay to: ${bankName} - ${accountNumber} (Account Name: ${formattedAccountName}). Thank you for choosing Soroman!`;
 
   // Try generic (transactional) channel first, fall back to dnd
@@ -159,8 +158,7 @@ const sendDangoteDeliveryOrderSMS = async (phone, orderData) => {
     minimumFractionDigits: 0,
   }).format(totalAmount);
 
-  const customerInitials = getCustomerInitials(customerName);
-  const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
+  const formattedAccountName = accountName || virtualAccountName(customerName);
 
   const sms = `Dear ${customerName}, your Dangote delivery order ${requestNumber} for ${quantity?.toLocaleString()} ${quantityUnit} of ${product} (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
 
@@ -189,8 +187,7 @@ const sendLpgOrderSMS = async (phone, orderData) => {
     minimumFractionDigits: 0,
   }).format(totalAmount);
 
-  const customerInitials = getCustomerInitials(customerName);
-  const formattedAccountName = accountName || `SOROMAN/${customerInitials}`;
+  const formattedAccountName = accountName || virtualAccountName(customerName);
 
   const sms = `Dear ${customerName}, your LPG order ${requestNumber} for ${cylinderQuantity}x ${cylinderSizeKg}Kg cylinders (${formattedAmount}) has been approved. Pay to: ${bankName} - ${accountNumber} (${formattedAccountName}). Thank you for choosing Soroman!`;
 

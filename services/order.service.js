@@ -20,7 +20,7 @@ const { notify } = require("../notifications");
 const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
-const { getCustomerInitials } = require("../utils/helpers");
+const { virtualAccountName } = require("../utils/helpers");
 const commissionService = require("./commission.service");
 const { QUEUES, enqueue } = require("../config/queue");
 
@@ -201,7 +201,7 @@ async function placeOrder({
       virtualAccountNumber = accountResult.data.accountNumber;
       virtualAccountBank = accountResult.data.bankName;
       virtualAccountName =
-        accountResult.data.accountName || `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+        accountResult.data.accountName || virtualAccountName(customer.name);
       const updateData = { virtualAccountNumber, virtualAccountBank, virtualAccountName };
       if (accountResult.data.paystackCustomerId) {
         updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
@@ -214,7 +214,7 @@ async function placeOrder({
       );
     }
   } else if (!virtualAccountName) {
-    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    virtualAccountName = virtualAccountName(customer.name);
     await customerRepo.update(customerId, { virtualAccountName });
   }
 

@@ -26,6 +26,38 @@ function getCustomerInitials(name) {
 }
 
 /**
+ * The name shown against a customer's virtual account when Paystack does not
+ * return one of its own — "SOROMAN-MA" for Misbahu Ahmed.
+ *
+ * This is the single definition. It previously lived inline at twelve call
+ * sites in two spellings — `SOROMANNIGERI/ ` in the emails and order services,
+ * `SOROMAN/` in the SMS ones — so the same customer was told one account name
+ * by email and a different one by text, for the same order. Both also rendered
+ * the initials space-separated ("SOROMANNIGERI/ M A"), because
+ * getCustomerInitials joins with a space for display purposes.
+ *
+ * Paystack normally supplies the real account name and this never appears. It
+ * showing up on a live order means the dedicated-account call failed.
+ *
+ * @param {string} name  the customer's full name
+ * @returns {string}
+ */
+function virtualAccountName(name) {
+  const { companyName } = require("../config/brand");
+  const prefix = companyName().toUpperCase();
+
+  const initials = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase())
+    .join("");
+
+  // A nameless customer would otherwise get a trailing dash.
+  return initials ? `${prefix}-${initials}` : prefix;
+}
+
+/**
  * Generates the standardized order reference: INITIALS + ORDER_ID.
  *
  * Initials extracted from company name:
@@ -96,6 +128,7 @@ function parseOrderReference(value) {
 module.exports = {
   escapeRegex,
   getCustomerInitials,
+  virtualAccountName,
   generateOrderReference,
   parseOrderReference,
 };

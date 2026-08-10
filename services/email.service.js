@@ -1,5 +1,5 @@
 const { Resend } = require("resend");
-const { getCustomerInitials } = require("../utils/helpers");
+const { virtualAccountName } = require("../utils/helpers");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -176,7 +176,7 @@ const sendOrderInvoiceEmail = async (email, orderData) => {
                         <tr>
                           <td style="padding:4px 0;">
                             <span style="color:#065f46;font-size:13px;">Account Name: </span>
-                            <span style="color:#065f46;font-size:13px;font-weight:700;">${accountName || `SOROMANNIGERI/ ${getCustomerInitials(escapeHtml(customerName))}`}</span>
+                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || virtualAccountName(customerName))}</span>
                           </td>
                         </tr>
                         <tr>
@@ -695,7 +695,7 @@ const sendDangoteOrderConfirmedEmail = async (email, requestData) => {
                         <tr>
                           <td style="padding:4px 0;">
                             <span style="color:#065f46;font-size:13px;">Account Name: </span>
-                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || `SOROMANNIGERI/ ${getCustomerInitials(customerName)}`)}</span>
+                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || virtualAccountName(customerName))}</span>
                           </td>
                         </tr>
                         <tr>
@@ -1041,7 +1041,7 @@ const sendLpgOrderConfirmedEmail = async (email, requestData) => {
                         <tr>
                           <td style="padding:4px 0;">
                             <span style="color:#065f46;font-size:13px;">Account Name: </span>
-                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || `SOROMANNIGERI/ ${getCustomerInitials(customerName)}`)}</span>
+                            <span style="color:#065f46;font-size:13px;font-weight:700;">${escapeHtml(accountName || virtualAccountName(customerName))}</span>
                           </td>
                         </tr>
                         <tr>

@@ -1,6 +1,6 @@
 const axios = require("axios");
 
-const { getCustomerInitials } = require("../utils/helpers");
+const { virtualAccountName } = require("../utils/helpers");
 const { db } = require("../config/db");
 
 const {
@@ -99,7 +99,7 @@ const createDedicatedAccount = async (customer) => {
 
     if (response.data.status) {
       const data = response.data.data;
-      const accountName = data.account_name || `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+      const accountName = data.account_name || virtualAccountName(customer.name);
       return {
         success: true,
         data: {

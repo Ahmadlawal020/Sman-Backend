@@ -12,7 +12,7 @@ const {
 const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendDangoteDeliveryOrderSMS } = require("../../services/sms.service");
 const { notify } = require("../../notifications");
-const { getCustomerInitials } = require("../../utils/helpers");
+const { virtualAccountName } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const dangoteOrderStatus = require("../../services/dangoteOrderStatus.service");
 const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
@@ -280,7 +280,7 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
         virtualAccountBank = accountResult.data.bankName;
         virtualAccountName =
           accountResult.data.accountName ||
-          `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+          virtualAccountName(customer.name);
         const updateData = {
           virtualAccountNumber,
           virtualAccountBank,
@@ -297,7 +297,7 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       console.error("DVA creation error:", dvaErr.message);
     }
   } else if (!virtualAccountName && customer) {
-    virtualAccountName = `SOROMANNIGERI/ ${getCustomerInitials(customer.name)}`;
+    virtualAccountName = virtualAccountName(customer.name);
     await customerRepo.update(customer.id, { virtualAccountName });
   }
 
