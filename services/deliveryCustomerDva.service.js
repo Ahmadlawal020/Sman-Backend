@@ -1,6 +1,6 @@
 const { createDedicatedAccount } = require("./payment.service");
 const { deliveryCustomerRepo } = require("../repositories");
-const { virtualAccountName } = require("../utils/helpers");
+const { virtualAccountName: formatVirtualAccountName } = require("../utils/helpers");
 
 async function generateDeliveryCustomerDva(deliveryCustomer) {
   const customerForPaystack = {
@@ -14,7 +14,7 @@ async function generateDeliveryCustomerDva(deliveryCustomer) {
   const result = await createDedicatedAccount(customerForPaystack);
 
   if (result.success && result.data) {
-    const virtualAccountName = result.data.accountName || virtualAccountName(deliveryCustomer.name);
+    const virtualAccountName = result.data.accountName || formatVirtualAccountName(deliveryCustomer.name);
     await deliveryCustomerRepo.update(deliveryCustomer.id, {
       virtualAccountNumber: result.data.accountNumber,
       virtualAccountBank: result.data.bankName,

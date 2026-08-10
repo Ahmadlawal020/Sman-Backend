@@ -1,5 +1,8 @@
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
+process.env.NODE_ENV = "test";
+process.env.ALLOW_TESTS_ON_DEV_DB = "true";
+process.env.SMS_ENABLED = "false";
 
 const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");

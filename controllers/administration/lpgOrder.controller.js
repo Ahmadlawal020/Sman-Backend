@@ -11,7 +11,7 @@ const {
 const { createDedicatedAccount, switchCustomerDvaToSubaccount, transferToStationSubaccount } = require("../../services/payment.service");
 const { sendLpgOrderSMS } = require("../../services/sms.service");
 const { notify } = require("../../notifications");
-const { virtualAccountName } = require("../../utils/helpers");
+const { virtualAccountName: formatVirtualAccountName } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const lpgOrderStatus = require("../../services/lpgOrderStatus.service");
 const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
@@ -221,7 +221,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
         virtualAccountBank = accountResult.data.bankName;
         virtualAccountName =
           accountResult.data.accountName ||
-          virtualAccountName(customer.name);
+          formatVirtualAccountName(customer.name);
         const updateData = {
           virtualAccountNumber,
           virtualAccountBank,
@@ -238,7 +238,7 @@ const reviewLpgOrderRequest = asyncHandler(async (req, res) => {
       console.error("DVA creation error:", dvaErr.message);
     }
   } else if (!virtualAccountName && customer) {
-    virtualAccountName = virtualAccountName(customer.name);
+    virtualAccountName = formatVirtualAccountName(customer.name);
     await customerRepo.update(customer.id, { virtualAccountName });
   }
 
