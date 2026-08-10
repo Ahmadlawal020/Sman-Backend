@@ -44,7 +44,10 @@ describe("public catalog — what anyone may see before signing in", () => {
 
     const [product] = await db
       .insert(products)
-      .values({ name: "Catalog PMS", sku: `CAT-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
+      // `category` is a real classification, not the trade code — that is the
+      // shape production has had since categories were normalised, and the
+      // fixture has to match it or the badge assertion below proves nothing.
+      .values({ name: "Catalog PMS", sku: `CAT-PMS-${String(RUN).slice(-5)}`, category: "Fuel" })
       .returning();
     productId = product.id;
 
@@ -86,7 +89,16 @@ describe("public catalog — what anyone may see before signing in", () => {
     assert.equal(product.price, 150);
     assert.equal(product.unit, "Liters");
     assert.equal(product.name, "Catalog PMS");
-    assert.equal(product.category, "PMS", "the trade code the portal shows as a badge");
+
+    // The badge comes from the sku, punctuation stripped — never from the
+    // category. Sending the category here is exactly the regression that made
+    // the mobile app show a product called Petrol with a badge reading "Fuel".
+    const expectedCode = `CATPMS${String(RUN).slice(-5)}`;
+    assert.equal(product.code, expectedCode, "the trade code the portal shows as a badge");
+    assert.equal(product.sku, `CAT-PMS-${String(RUN).slice(-5)}`, "the raw sku is exposed too");
+    assert.notEqual(product.code, "Fuel", "the badge must never be the product's category");
+    // Legacy alias kept for shipped mobile builds that still read `category`.
+    assert.equal(product.category, expectedCode, "category mirrors the code for old clients");
   });
 
   test("stock litres never leave the process", async () => {

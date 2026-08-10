@@ -6,6 +6,7 @@ const {
   customerLicenseRepo,
 } = require("../../repositories");
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
+const { tradeCode } = require("../../services/catalog.service");
 const { notify } = require("../../notifications");
 const walletService = require("../../services/wallet.service");
 const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
@@ -24,7 +25,11 @@ const getDangoteCatalog = asyncHandler(async (req, res) => {
         id: p.id,
         name: p.name,
         sku: p.sku,
-        category: p.category,
+        // The trade badge, same rule as /api/catalog — the wizard printed the
+        // raw category here, so after categories were normalised it read
+        // "Fuel" next to every product name.
+        code: tradeCode(p),
+        category: tradeCode(p),
         unit: p.unit,
         description: p.description,
       })),

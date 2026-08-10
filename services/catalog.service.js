@@ -3,6 +3,34 @@ const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
 
 /**
+ * The short trade code a product is known by on the floor — PMS, AGO, LPG.
+ *
+ * This used to be read straight off `products.category`, because that column
+ * literally held "PMS (Premium Motor Spirit)". Normalising categories on
+ * 2026-08-09 replaced those with real classifications, so every catalog client
+ * started showing "Fuel" where it had shown "PMS": the mobile app rendered a
+ * product called Petrol with a badge reading Fuel, while order history — which
+ * reads name and sku separately — still said Petrol. Same product, two answers,
+ * depending on the screen.
+ *
+ * `sku` is where the trade code actually lives, so that is what this reads.
+ * The hyphen is stripped because clients key their product metadata on JETA1,
+ * not JET-A1, and `initials(name)` is the last resort for a product whose sku
+ * was never filled in — "Cooking Gas" is a better badge than an empty one.
+ */
+const tradeCode = (product) => {
+  const sku = String(product?.sku || "").trim();
+  if (sku) return sku.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
+  return String(product?.name || "")
+    .split(/\s+/)
+    .map((w) => w[0] || "")
+    .join("")
+    .toUpperCase()
+    .slice(0, 4);
+};
+
+/**
  * The single definition of "orderable" — shared by every sales channel.
  *
  * The WhatsApp engine and the portal must never disagree about what can be
@@ -23,6 +51,7 @@ const loadCatalog = async () => {
         price: depotProductPrices.currentPrice,
         name: products.name,
         unit: products.unit,
+        sku: products.sku,
         category: products.category,
       })
       .from(depotProductPrices)
@@ -53,9 +82,15 @@ const loadCatalog = async () => {
         .map((p) => ({
           id: p.productId,
           name: p.name,
-          // The short trade code (PMS, AGO, ...) the portal shows as the
-          // product's badge; the category enum doubles as it.
-          category: p.category,
+          sku: p.sku || "",
+          // The badge every sales channel shows beside the name: PMS, AGO, LPG.
+          code: tradeCode(p),
+          // Legacy alias. Clients read `category` for the badge today, from when
+          // the category column held the trade code, so it keeps carrying the
+          // code rather than "Fuel" — that way this fix needs no coordinated
+          // client release. New code should read `code`; this can go once the
+          // shipped mobile builds have aged out.
+          category: tradeCode(p),
           unit: p.unit || "Liters",
           price: Number(p.price),
           stock: stockByKey.get(`${p.depotId}:${p.productId}`) || 0,
@@ -80,4 +115,4 @@ const publicCatalog = async () => {
   }));
 };
 
-module.exports = { loadCatalog, publicCatalog };
+module.exports = { loadCatalog, publicCatalog, tradeCode };
