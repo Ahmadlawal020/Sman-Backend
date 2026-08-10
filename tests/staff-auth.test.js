@@ -281,15 +281,21 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
 
   test("a role revoked mid-session takes effect on the next request", async () => {
     // Roles are read from the row, not the token, precisely so this holds.
+    //
+    // Reads /api/tickets rather than /api/customers: under config/apiPermissions
+    // finance is a legitimate customers reader (it is in MONEY), so that route
+    // is no longer a privilege boundary and the downgrade would not show up.
+    // Tickets is OPS+SECURITY+audit — admin in, finance out — so the assertion
+    // still measures what it claims to.
     const { staff, accessToken } = await staffTokenWithRoles(["admin"]);
     assert.equal(
-      (await request(app).get("/api/customers").set("Authorization", `Bearer ${accessToken}`)).status,
+      (await request(app).get("/api/tickets").set("Authorization", `Bearer ${accessToken}`)).status,
       200
     );
 
     await staffRepo.update(staff.id, { roles: ["finance"] });
     const after = await request(app)
-      .get("/api/customers")
+      .get("/api/tickets")
       .set("Authorization", `Bearer ${accessToken}`);
     assert.equal(after.status, 403, "the stale token must not carry stale privileges");
   });

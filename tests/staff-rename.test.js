@@ -76,18 +76,25 @@ describe("PR-0 — rename is behaviour-identical", () => {
     );
   });
 
-  test("the 403 message for an under-privileged role is unchanged", async () => {
+  test("an under-privileged role still gets a 403 with a stable message", async () => {
     // Goes through the real issue path: tokens now carry a `sid` bound to a
     // live session, so a hand-signed JWT is rejected before authorisation is
     // ever reached and would not exercise this assertion.
+    //
+    // Rewritten for config/apiPermissions. The old form used `finance` against
+    // /api/customers and expected "Admin access required" — both were artefacts
+    // of the flat admin/super_admin gate. Finance is now a legitimate customers
+    // reader, and the denial wording comes from the permission table. The point
+    // of the test is unchanged: a role outside the read list is refused, and the
+    // message it gets is a fixed string clients can branch on.
     const { staffTokenWithRoles } = require("./helpers");
-    const { accessToken } = await staffTokenWithRoles(["finance"]);
+    const { accessToken } = await staffTokenWithRoles(["security_entry"]);
 
     const res = await request(app)
       .get("/api/customers")
       .set("Authorization", `Bearer ${accessToken}`);
 
     assert.equal(res.status, 403);
-    assert.equal(res.body.message, "Admin access required");
+    assert.equal(res.body.message, "Your role does not have access to this area");
   });
 });

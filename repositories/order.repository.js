@@ -185,6 +185,8 @@ const findAll = async ({
   depot,
   dateFrom,
   dateTo,
+  /** Same rule findPayableOrders uses — see the condition below. */
+  payable,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -219,6 +221,21 @@ const findAll = async ({
 
   if (dateFrom) {
     conditions.push(gte(orders.createdAt, new Date(dateFrom)));
+  }
+
+  // "Payable" is not a status — it is an unpaid pending order whose customer
+  // already holds enough wallet balance to cover it. Expressed here so the
+  // main list can show them alongside everything else rather than needing a
+  // separate page.
+  if (payable === true || payable === "true" || payable === "1") {
+    conditions.push(eq(orders.paymentStatus, "Unpaid"));
+    conditions.push(eq(orders.status, "Pending"));
+    // A correlated subquery rather than customers.balance directly: the
+    // count query alongside this one selects from orders with no join, so a
+    // bare column reference breaks it.
+    conditions.push(
+      sql`${orders.totalAmount} <= (SELECT c.balance FROM customers c WHERE c.id = ${orders.customerId})`
+    );
   }
 
   if (dateTo) {
