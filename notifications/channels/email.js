@@ -69,6 +69,12 @@ const send = async ({ contact, rendered }) => {
       html: email.html,
       ...(email.text ? { text: email.text } : {}),
       ...(email.replyTo ? { replyTo: email.replyTo } : {}),
+      // Attachments are opt-in per template and only the scheduled reports use
+      // them. Resend takes `{ filename, content }` with content as a Buffer or
+      // base64 string, which is what report.service hands over.
+      ...(Array.isArray(email.attachments) && email.attachments.length
+        ? { attachments: email.attachments }
+        : {}),
     });
 
     // Resend reports failures in the response body, not by throwing — a send

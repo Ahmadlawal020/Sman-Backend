@@ -8,6 +8,13 @@ const {
   callout,
   layout,
 } = require("./templates/email");
+const {
+  companyName,
+  companyLongName,
+  smsPrefix,
+  smsPrefixLoud,
+  supportSentence,
+} = require("../config/brand");
 
 /**
  * The notification catalog — every kind of notification the platform can send,
@@ -47,6 +54,8 @@ const APP_ONLY = [CHANNELS.IN_APP, CHANNELS.PUSH];
 const APP_AND_EMAIL = [CHANNELS.IN_APP, CHANNELS.PUSH, CHANNELS.EMAIL];
 const APP_AND_SMS = [CHANNELS.IN_APP, CHANNELS.PUSH, CHANNELS.SMS];
 const EMAIL_ONLY = [CHANNELS.EMAIL];
+const SMS_ONLY = [CHANNELS.SMS];
+const EMAIL_AND_SMS = [CHANNELS.IN_APP, CHANNELS.EMAIL, CHANNELS.SMS];
 
 // ─── Link helpers ───────────────────────────────────────────────────────────
 
@@ -72,8 +81,8 @@ const greet = (name, { formal = true } = {}) => {
 const ref = (d) => d.reference || d.orderNumber || d.requestNumber || d.ticketNumber || "";
 
 /** The generic branded email used when a type has no bespoke document. */
-const simpleEmail = ({ subtitle, heading, intro, rows = [], cta, note, tone }) => ({
-  subject: heading,
+const simpleEmail = ({ subtitle, heading, intro, rows = [], cta, note, tone, subject }) => ({
+  subject: subject || heading,
   html: layout({
     subtitle,
     heading,
@@ -83,9 +92,389 @@ const simpleEmail = ({ subtitle, heading, intro, rows = [], cta, note, tone }) =
       cta?.url ? callToAction(cta.url, cta.label) : "",
       note ? callout(escapeHtml(note), tone || "info") : "",
     ].join(""),
-    footNote: "If you have any questions, please contact our support team.",
+    footNote: supportSentence() || "If you have any questions, please contact our support team.",
   }),
 });
+
+/**
+ * Paragraph copy, ported verbatim from the Django templates.
+ *
+ * Those bodies were authored as plain text and wrapped at send time. Rather
+ * than re-flow them into detail tables — which would change wording customers
+ * already recognise — the sentences are kept and rendered as paragraphs inside
+ * the same branded shell every other notification uses.
+ *
+ * This is deliberately the ONLY renderer for ported copy. In Django three
+ * templates (Order Delivered, Payment Failed, Low Stock) were authored as raw
+ * HTML, so the sender detected `<html>` and passed them through unwrapped:
+ * they arrived as bare Arial with a green or red `<h2>`, visibly a different
+ * product from the rest of the mail. Porting them through here is what closes
+ * that gap.
+ */
+const proseEmail = ({ subject, subtitle, heading, paragraphs = [], rows = [], cta, note, tone }) => {
+  const text = (p) =>
+    `<p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">${escapeHtml(p)}</p>`;
+  return {
+    subject,
+    html: layout({
+      subtitle,
+      heading,
+      bodyHtml: [
+        paragraphs.filter(Boolean).map(text).join(""),
+        rows.length ? detailRows(rows) : "",
+        cta?.url ? callToAction(cta.url, cta.label) : "",
+        note ? callout(escapeHtml(note), tone || "info") : "",
+      ].join(""),
+      footNote: `${companyLongName()} • This is an automated notification.`,
+    }),
+  };
+};
+
+/** "1,000 Litres" with the unit Django used in its order copy. */
+const unitLabel = (d) => d.unit || d.unitLabel || "Litres";
+
+/**
+ * The middle paragraph of the payment-confirmation email.
+ *
+ * Django branched on `release_type` and produced one of three sentences. The
+ * third is not a fallback for a bug — an order can legitimately be confirmed
+ * before the customer has settled on collection or delivery — so it stays as a
+ * real branch rather than being collapsed into one of the others.
+ */
+const releaseSentence = (d) => {
+  const type = String(d.deliveryType || "").toLowerCase();
+  const where = [d.deliveryAddress || d.address, d.state].filter(Boolean).join(", ");
+
+  if (type === "delivery" && where) {
+    return (
+      `Your order has been approved and scheduled for delivery to ${where}. ` +
+      "Our logistics team will contact you with dispatch and estimated delivery details shortly."
+    );
+  }
+  if (type === "pickup" && d.depotName) {
+    return (
+      "Your order has been approved and released for processing. " +
+      `You may proceed to ${d.depotName} for product loading in line with your schedule.`
+    );
+  }
+  return (
+    "You may proceed to the selected Depot for product loading, or await delivery to " +
+    "the address provided during checkout, as applicable."
+  );
+};
+
+// ─── Scheduled reports ──────────────────────────────────────────────────────
+
+/**
+ * The report mails: Django's "Dear Sir," greeting and "Soroman System"
+ * sign-off, with the workbook attached.
+ *
+ * The attachment rides on the rendered email as `attachments`, which
+ * channels/email.js forwards to Resend. `attachmentBase64` rather than a
+ * Buffer because the payload crosses the pg-boss queue as JSON, and a Buffer
+ * does not survive that round trip intact.
+ */
+const reportEmail = ({ subject, heading, rows = [], emptyNote, d = {} }) => {
+  const mail = proseEmail({
+    subject,
+    subtitle: "Scheduled Report",
+    heading,
+    paragraphs: [
+      "Dear Sir,",
+      emptyNote ||
+        "Please find the report for today attached. A summary is shown below.",
+    ],
+    rows,
+    note: d.filename ? `Attached: ${d.filename}` : null,
+  });
+  return {
+    ...mail,
+    ...(d.attachmentBase64 && d.filename
+      ? { attachments: [{ filename: d.filename, content: d.attachmentBase64 }] }
+      : {}),
+  };
+};
+
+// ─── Expense approval chain ─────────────────────────────────────────────────
+
+/** "Expense #41" — the reference every stage quotes. */
+const expenseRef = (d) => `Expense #${d.expenseId ?? d.id ?? ""}`.trim();
+
+/** The payee line Django printed as "name · bank · number". */
+const payeeLine = (d) =>
+  [d.payeeAccountName, d.payeeBankName, d.payeeAccountNumber].filter(Boolean).join(" · ");
+
+/**
+ * The six approval stages, generated from one spec so the six emails cannot
+ * drift apart in footer, sign-off or payee formatting — which is exactly how
+ * the Django set ended up with three different layouts.
+ */
+function expenseStages() {
+  const base = {
+    audience: "staff",
+    category: "payments",
+    entity: (d) => ({ type: "pfi_expense", id: d.expenseId }),
+    data: (d) => ({ screen: "ExpenseDetail", expenseId: d.expenseId }),
+    actionUrl: (d) => adminLink(`/expenses?expense=${d.expenseId}`),
+  };
+
+  /** Every stage email is the same document with a different lead sentence. */
+  const mail = (d, { subject, heading, lead, rows, note, tone }) =>
+    proseEmail({
+      subject: `${subject} — ${expenseRef(d)}`,
+      subtitle: "Expenses",
+      heading,
+      paragraphs: [lead],
+      rows: [
+        { label: "Reference", value: expenseRef(d) },
+        { label: "Amount", value: formatMoney(d.amount), strong: true },
+        ...(rows || []),
+      ],
+      note,
+      tone,
+      cta: { url: adminLink(`/expenses?expense=${d.expenseId}`), label: "Open Expense" },
+    });
+
+  const payeeRows = (d) => [{ label: "Payee", value: payeeLine(d) }];
+  const who = (d) => d.actorName || "A colleague";
+  const what = (d) => d.description || d.category || "expense";
+
+  return {
+    "expense.pending": {
+      ...base,
+      priority: "normal",
+      channels: EMAIL_AND_SMS,
+      title: () => "New expense awaiting verification",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}`,
+      email: (d) =>
+        mail(d, {
+          subject: "New expense request awaiting verification",
+          heading: "An expense request needs your verification",
+          lead: "A new expense request needs your verification.",
+          rows: [
+            { label: "Category", value: d.category },
+            { label: "Vendor", value: d.vendor },
+            { label: "Submitted by", value: d.submitterName },
+          ],
+          note: "Please review it on the Expenses page.",
+        }),
+      sms: (d) => `${smsPrefix()}${expenseRef(d)} (${what(d)}) awaiting your verification.`,
+    },
+
+    "expense.verified": {
+      ...base,
+      priority: "normal",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense verified — your approval needed",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense verified — awaiting CFO approval",
+          heading: "An expense is awaiting your CFO approval",
+          lead: `${who(d)} has verified an expense request. It now needs CFO approval.`,
+          rows: payeeRows(d),
+        }),
+      sms: (d) => `${smsPrefix()}${expenseRef(d)} (${what(d)}) verified, awaiting your CFO approval.`,
+    },
+
+    "expense.audit_approved": {
+      ...base,
+      priority: "normal",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense approved — final sign-off needed",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense CFO-approved — awaiting final approval",
+          heading: "An expense is awaiting your final approval",
+          lead: `${who(d)} (CFO) approved an expense for payment. It now needs your final approval.`,
+          rows: payeeRows(d),
+        }),
+      sms: (d) =>
+        `${smsPrefix()}${expenseRef(d)} (${what(d)}) CFO-approved, awaiting your final approval.`,
+    },
+
+    "expense.admin_approved": {
+      ...base,
+      priority: "high",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense authorised — ready to pay",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense approved for payment",
+          heading: "This expense is approved for payment",
+          lead: `${who(d)} (Admin) gave final approval. You can now make the payment and mark it paid.`,
+          rows: [
+            { label: "Pay to", value: d.payeeAccountName },
+            { label: "Bank", value: d.payeeBankName },
+            { label: "Account", value: d.payeeAccountNumber },
+          ],
+        }),
+      sms: (d) =>
+        `${smsPrefix()}${expenseRef(d)} (${what(d)}) approved for payment. Please pay and mark it paid.`,
+    },
+
+    "expense.paid": {
+      ...base,
+      priority: "normal",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense paid",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense paid",
+          heading: "This expense has been paid",
+          lead: `${who(d)} marked this expense as paid. It now counts towards the PFI's cost.`,
+          rows: [
+            { label: "Paid to", value: [d.payeeAccountName, d.payeeBankName].filter(Boolean).join(" · ") },
+          ],
+        }),
+      sms: (d) => `${smsPrefix()}${expenseRef(d)} (${what(d)}) has been PAID.`,
+    },
+
+    "expense.rejected": {
+      ...base,
+      priority: "high",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense rejected",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}${d.note ? ` — "${d.note}"` : ""}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense rejected",
+          heading: "This expense request was rejected",
+          lead: `${who(d)} rejected this expense request.`,
+          rows: [{ label: "Reason", value: d.note }],
+          note: "You can edit and resubmit it from the Expenses page.",
+          tone: "danger",
+        }),
+      sms: (d) =>
+        `${smsPrefix()}${expenseRef(d)} (${what(d)}) rejected.${d.note ? ` Reason: ${d.note}` : ""}`,
+    },
+
+    "expense.changes_requested": {
+      ...base,
+      priority: "high",
+      channels: EMAIL_AND_SMS,
+      title: () => "Expense sent back for changes",
+      body: (d) => `${formatMoney(d.amount)} — ${what(d)}${d.note ? ` — "${d.note}"` : ""}`,
+      email: (d) =>
+        mail(d, {
+          subject: "Expense sent back for changes",
+          heading: "This expense request was sent back",
+          lead: `${who(d)} sent this expense request back for changes.`,
+          rows: [{ label: "Reason", value: d.note }],
+          note: "You can edit and resubmit it from the Expenses page.",
+          tone: "warning",
+        }),
+      sms: (d) =>
+        `${smsPrefix()}${expenseRef(d)} (${what(d)}) sent back for changes.` +
+        `${d.note ? ` Reason: ${d.note}` : ""}`,
+    },
+  };
+}
+
+// ─── Delivery / truck flow ──────────────────────────────────────────────────
+
+/**
+ * The nine driver/customer/payer texts, ported verbatim.
+ *
+ * SMS-only and addressed by phone: a driver is rarely a system user, so there
+ * is no inbox to write to and no preference row to consult.
+ */
+function deliverySms() {
+  const P = () => smsPrefixLoud();
+  const plate = (d) => `[${d.plateNumber || d.truckNumber || "—"}]`;
+  const entity = (d) => ({ type: "delivery_inventory", id: d.inventoryId });
+
+  const make = (title, sms, priority = "normal") => ({
+    audience: "customer",
+    category: "delivery",
+    priority,
+    channels: SMS_ONLY,
+    title: () => title,
+    body: (d) => sms(d),
+    entity,
+    sms,
+  });
+
+  return {
+    "delivery.truck_loaded": make(
+      "Truck assigned for loading",
+      (d) =>
+        `${P()}Your truck ${plate(d)} has been assigned for loading at [${d.depotName || "the depot"}] depot. ` +
+        `Please report for loading.${d.inventoryId ? ` Ref: INV-${d.inventoryId}` : ""}`
+    ),
+
+    "delivery.assigned_driver": make(
+      "Customer assigned to your truck",
+      (d) =>
+        `${P()}Your truck ${plate(d)} has been assigned to deliver to [${d.customerName || "a customer"}]. ` +
+        `${d.customerPhone ? `Customer contact: ${d.customerPhone}. ` : ""}Await further instructions.`
+    ),
+
+    "delivery.assigned_customer": make(
+      "A truck is assigned to your order",
+      (d) =>
+        `${P()}Truck ${plate(d)} has been assigned to deliver your order. ` +
+        `${d.driverName ? `Driver: ${d.driverName}, ` : ""}` +
+        `${d.driverPhone ? `Contact: ${d.driverPhone}. ` : ""}` +
+        "You will be notified when loading is confirmed."
+    ),
+
+    "delivery.paid_driver": make(
+      "Product sold — contact the customer",
+      (d) =>
+        `${P()}Product in your truck ${plate(d)} has been sold to ${d.payerName || "the payer"}` +
+        `${d.payerPhone ? ` (${d.payerPhone})` : ""}. ` +
+        `Contact ${d.customerName || "the customer"}` +
+        `${d.customerPhone ? ` (${d.customerPhone})` : ""} for delivery details.`,
+      "high"
+    ),
+
+    "delivery.paid_customer": make(
+      "Payment received for your delivery",
+      (d) =>
+        `${P()}Payment received for truck ${plate(d)}. ` +
+        `Contact driver ${d.driverName || ""}${d.driverPhone ? ` (${d.driverPhone})` : ""}`.trimEnd() +
+        " for delivery coordination.",
+      "high"
+    ),
+
+    // Only sent when the payer is not the customer — the caller decides that;
+    // sending it unconditionally would text the same person twice.
+    "delivery.paid_payer": make(
+      "Payment confirmed",
+      (d) =>
+        `${P()}Payment confirmed. Truck ${plate(d)} is on the way to deliver your product. ` +
+        `${d.driverName ? `Driver: ${d.driverName}, ` : ""}` +
+        `${d.driverPhone ? `Contact: ${d.driverPhone}.` : ""}`.trimEnd(),
+      "high"
+    ),
+
+    "delivery.release_confirmed": make(
+      "Release confirmed",
+      (d) => `${P()}Release confirmed for truck ${plate(d)}. Proceed to the exit gate.`,
+      "high"
+    ),
+
+    "delivery.ticket_driver": make(
+      "Ticket generated — cleared for departure",
+      (d) =>
+        `${P()}Ticket [${d.ticketNumber || "—"}] generated for truck ${plate(d)}. ` +
+        "You are cleared for departure.",
+      "high"
+    ),
+
+    "delivery.ticket_customer": make(
+      "Your delivery is on the way",
+      (d) =>
+        `${P()}Dear ${d.customerName || "Customer"}, your delivery is on the way! ` +
+        `Truck: ${plate(d)}, Ticket: [${d.ticketNumber || "—"}].`,
+      "high"
+    ),
+  };
+}
 
 // ─── The catalog ────────────────────────────────────────────────────────────
 
@@ -98,7 +487,11 @@ const CATALOG = {
     audience: "customer",
     category: "orders",
     priority: "high",
-    channels: APP_ONLY, // email + SMS are sent by order.service's bespoke invoice
+    // Still APP_ONLY: order.service sends the invoice email and the summary SMS
+    // for this event, and routing them here too would double-send. The Django
+    // copy is carried below so the wording lives in one place and the day that
+    // bespoke path is retired, flipping this to ALL is the whole change.
+    channels: APP_ONLY,
     title: (d) => `Order ${ref(d)} received`,
     body: (d) =>
       `Your order for ${formatQuantity(d.quantity, d.unit)} of ${d.product || "fuel"} is awaiting payment` +
@@ -107,6 +500,49 @@ const CATALOG = {
     data: (d) => ({ screen: "OrderDetail", orderId: d.orderId, orderNumber: ref(d) }),
     actionUrl: (d) => portalLink(`/orders/${d.orderId}`),
     dedupe: (d) => (d.orderId ? `order.created:${d.orderId}` : null),
+
+    // Django: "Payment Request & Order Confirmation | Ref: {order_reference}"
+    email: (d) =>
+      proseEmail({
+        subject: `Payment Request & Order Confirmation | Ref: ${ref(d)}`,
+        subtitle: "Order Confirmation",
+        heading: "Thank you for your order",
+        paragraphs: [
+          `Dear ${d.customerName || "Customer"},`,
+          "Thank you for your order. Please find the summary below:",
+        ],
+        rows: [
+          { label: "Order Reference", value: ref(d) },
+          { label: "Product", value: d.product },
+          { label: "Quantity", value: formatQuantity(d.quantity, unitLabel(d)) },
+          { label: "Total Amount Payable", value: formatMoney(d.totalAmount), strong: true },
+          { label: "Bank Name", value: d.bankName },
+          { label: "Account Name", value: d.accountName },
+          { label: "Account Number", value: d.accountNumber },
+        ],
+        note:
+          "Kindly proceed with payment using the details above to enable immediate processing. " +
+          "Once payment is confirmed, your order will be processed promptly.",
+        cta: { url: portalLink(`/orders/${d.orderId}`), label: "View Order" },
+      }),
+
+    // Django build_short_sms("order_created") — kept near 160 chars for credit cost.
+    // No fallback bank details: Django fell back to a hardcoded account, which on
+    // any other deployment silently told customers to pay the wrong company.
+    // Here the account is a per-order virtual account, so if it is missing the
+    // line is simply omitted and the customer is pointed at the portal.
+    sms: (d) => {
+      const head =
+        `Your order for ${formatQuantity(d.quantity, unitLabel(d))} of ${d.product || "fuel"} has been received.`;
+      const bank = [d.accountNumber, d.bankName, d.accountName].filter(Boolean);
+      if (!bank.length) {
+        return `${head} Open the ${companyName()} app to complete payment. Ref: ${ref(d)}`;
+      }
+      const ask = d.totalAmount
+        ? `Please pay ${formatMoney(d.totalAmount, { decimals: 0 })} to:`
+        : "Please make payment to:";
+      return `${head}\n${ask}\n${bank.join("\n")}\nKindly use ${ref(d)} as payment reference`;
+    },
   },
 
   /** data: orderId, orderNumber, reference, customerName, totalAmount, amountPaid */
@@ -123,20 +559,25 @@ const CATALOG = {
     data: (d) => ({ screen: "OrderDetail", orderId: d.orderId, orderNumber: ref(d) }),
     actionUrl: (d) => portalLink(`/orders/${d.orderId}`),
     dedupe: (d) => (d.orderId ? `order.paid:${d.orderId}` : null),
+    // Django build_short_sms("payment_received")
     sms: (d) =>
-      `${greet(d.customerName)}payment for order ${ref(d)}` +
-      `${d.amountPaid ? ` of ${formatMoney(d.amountPaid, { decimals: 0 })}` : ""} has been confirmed. ` +
-      `Your order is being prepared. Thank you for choosing Soroman!`,
+      `We just received your payment${d.amountPaid ? ` of ${formatMoney(d.amountPaid, { decimals: 0 })}` : ""}` +
+      ` for ${formatQuantity(d.quantity, unitLabel(d))} of ${d.product || "Petrol"}` +
+      `${d.depotName ? ` at ${d.depotName}` : ""}. ` +
+      `Order is confirmed! Thank you for choosing ${companyName()}.`,
+
+    // Django: "Payment Confirmation & Order Processing – {order_reference}"
     email: (d) =>
-      simpleEmail({
+      proseEmail({
+        subject: `Payment Confirmation & Order Processing – ${ref(d)}`,
         subtitle: "Payment Confirmed",
-        heading: `Payment received for order ${ref(d)}`,
-        intro: `${greet(d.customerName)}we've confirmed your payment. Your order is now being prepared.`,
-        rows: [
-          { label: "Order Reference", value: ref(d) },
-          { label: "Amount Received", value: formatMoney(d.amountPaid ?? d.totalAmount), strong: true },
-          { label: "Product", value: d.product },
-          { label: "Quantity", value: formatQuantity(d.quantity, d.unit) },
+        heading: "We have received your payment",
+        paragraphs: [
+          `Dear ${d.customerName || "Customer"},`,
+          `We confirm receipt of ${formatMoney(d.amountPaid ?? d.totalAmount)} for Order Ref: ${ref(d)}.`,
+          releaseSentence(d),
+          supportSentence(),
+          "Thank you for your continued patronage.",
         ],
         cta: { url: portalLink(`/orders/${d.orderId}`), label: "View Order" },
       }),
@@ -189,9 +630,31 @@ const CATALOG = {
     data: (d) => ({ screen: "OrderDetail", orderId: d.orderId, orderNumber: ref(d) }),
     actionUrl: (d) => portalLink(`/orders/${d.orderId}`),
     dedupe: (d) => (d.orderId ? `order.completed:${d.orderId}` : null),
+
+    // Django build_short_sms("released"). Note: that branch accepted a
+    // `company` argument and then ignored it, hardcoding the name — reading it
+    // from config/brand is the fix.
     sms: (d) =>
-      `${greet(d.customerName)}your order ${ref(d)} is complete. ` +
-      `Thank you for choosing Soroman!`,
+      `Your order ${ref(d)} has been successfully completed. ` +
+      `Thank you for choosing ${companyName()}. We look forward to serving you again.`,
+
+    // Django: "Order Successfully Completed – {order_reference}"
+    email: (d) =>
+      proseEmail({
+        subject: `Order Successfully Completed – ${ref(d)}`,
+        subtitle: "Order Complete",
+        heading: "Your order is complete",
+        paragraphs: [
+          `Dear ${d.customerName || "Customer"},`,
+          `Your order (Ref: ${ref(d)}) has been successfully completed.`,
+          "In accordance with your selected option, the product has either been loaded at the " +
+            `designated ${companyName()} depot or delivered to your specified address.`,
+          `Thank you for your prompt payment and continued trust in ${companyLongName()}.`,
+          supportSentence(),
+          "We look forward to serving you again.",
+        ],
+        cta: { url: portalLink(`/orders/${d.orderId}`), label: "View Order" },
+      }),
   },
 
   /** data: orderId, reference, customerName, reason */
@@ -462,9 +925,16 @@ const CATALOG = {
     data: (d) => ({ screen: "Commissions", commissionId: d.commissionId }),
     actionUrl: () => portalLink("/commissions"),
     dedupe: (d) => (d.commissionId ? `commission.paid:${d.commissionId}` : null),
-    sms: (d) =>
-      `${greet(d.customerName)}your Soroman commission of ${formatMoney(d.commissionAmount, { decimals: 0 })} ` +
-      `has been paid out${d.bankName ? ` to your ${d.bankName} account` : ""}.`,
+    // Django build_short_sms("commission_paid"). Falls back to the bare phrase
+    // "your commission" when no amount is supplied, as Django did.
+    sms: (d) => {
+      const amount = formatMoney(d.commissionAmount, { decimals: 0 });
+      return (
+        `${amount ? `Your commission of ${amount}` : "Your commission"}` +
+        `${ref(d) ? ` for order ${ref(d)}` : ""} has been paid. ` +
+        `Thank you for choosing ${companyName()}.`
+      );
+    },
   },
 
   // ═══ Delivery / ERP (customer) ════════════════════════════════════════════
@@ -658,7 +1128,7 @@ const CATALOG = {
     audience: "staff",
     category: "operations",
     priority: "normal",
-    channels: APP_ONLY,
+    channels: APP_AND_EMAIL, // Django mailed the finance team on every order
     title: (d) => `New order ${ref(d)}`,
     body: (d) =>
       `${d.customerName || "A customer"} ordered ${formatQuantity(d.quantity, d.unit)}` +
@@ -669,6 +1139,32 @@ const CATALOG = {
     data: (d) => ({ screen: "OrderDetail", orderId: d.orderId }),
     actionUrl: (d) => adminLink(`/orders/${d.orderId}`),
     dedupe: (d) => (d.orderId ? `staff.order_placed:${d.orderId}` : null),
+
+    // Django: "New Order Received – Payment Processing Required ({order_reference})"
+    email: (d) =>
+      proseEmail({
+        subject: `New Order Received – Payment Processing Required (${ref(d)})`,
+        subtitle: "Finance",
+        heading: "A new order requires payment verification",
+        paragraphs: [
+          "Dear Finance Team,",
+          "A new order has been received and requires payment verification before processing.",
+        ],
+        rows: [
+          { label: "Reference", value: ref(d) },
+          { label: "Customer", value: d.customerName },
+          { label: "Product", value: d.product },
+          { label: "Quantity", value: formatQuantity(d.quantity, unitLabel(d)) },
+          { label: "Total Amount", value: formatMoney(d.totalAmount), strong: true },
+          { label: "Bank", value: d.bankName },
+          { label: "Account Name", value: d.accountName },
+          { label: "Account Number", value: d.accountNumber },
+        ],
+        note:
+          "Kindly monitor the designated account and confirm receipt on the dashboard once " +
+          "payment reflects, to enable immediate processing.",
+        cta: { url: adminLink(`/orders/${d.orderId}`), label: "Open Order" },
+      }),
   },
 
   /** data: orderId, reference, customerName, amountPaid */
@@ -676,7 +1172,7 @@ const CATALOG = {
     audience: "staff",
     category: "payments",
     priority: "high",
-    channels: APP_ONLY,
+    channels: APP_AND_EMAIL, // Django mailed the release desk on confirmation
     title: (d) => `Payment received — ${ref(d)}`,
     body: (d) =>
       `${d.customerName || "A customer"} paid ${formatMoney(d.amountPaid, { decimals: 0 })}. ` +
@@ -685,6 +1181,32 @@ const CATALOG = {
     data: (d) => ({ screen: "OrderDetail", orderId: d.orderId }),
     actionUrl: (d) => adminLink(`/orders/${d.orderId}`),
     dedupe: (d) => (d.orderId ? `staff.payment_received:${d.orderId}` : null),
+
+    // Django: "Payment Confirmed – {order_reference}"
+    email: (d) =>
+      proseEmail({
+        subject: `Payment Confirmed – ${ref(d)}`,
+        subtitle: "Release Desk",
+        heading: `Payment has been confirmed for order ${ref(d)}`,
+        rows: [
+          { label: "Product", value: d.product },
+          { label: "Quantity", value: formatQuantity(d.quantity, unitLabel(d)) },
+          { label: "Amount", value: formatMoney(d.amountPaid ?? d.totalAmount), strong: true },
+          { label: "Customer", value: d.customerName },
+          // Django printed one line or the other depending on the route the
+          // order takes; detailRows drops whichever is empty.
+          { label: "Depot", value: d.depotName },
+          {
+            label: "Delivery",
+            value: [d.deliveryAddress || d.address, d.state].filter(Boolean).join(", "),
+          },
+        ],
+        paragraphs: [
+          "Order is approved and released.",
+          "Kindly proceed with loading/delivery arrangements accordingly.",
+        ],
+        cta: { url: adminLink(`/orders/${d.orderId}`), label: "Open Order" },
+      }),
   },
 
   /** data: requestId, requestNumber, kind ("Dangote"|"LPG"), customerName, quantity, quantityUnit */
@@ -905,6 +1427,177 @@ const CATALOG = {
     actionUrl: (d) => d.actionUrl || null,
     imageUrl: (d) => d.imageUrl || null,
   },
+
+  // ═══ Ported from Django's raw-HTML templates ══════════════════════════════
+  // These three were authored as HTML in Django, so the sender saw a leading
+  // <html> and passed them through unwrapped. They arrived as bare Arial with a
+  // #4CAF50 or #FF0000 <h2> — recognisably a different product from every other
+  // message. Rendering them through the shared shell is the whole point of
+  // porting them here rather than copying the markup across.
+
+  /** data: orderId, reference, customerName, deliveryAddress */
+  "order.delivered": {
+    audience: "customer",
+    category: "delivery",
+    priority: "high",
+    channels: APP_AND_EMAIL,
+    title: (d) => `Order ${ref(d)} delivered`,
+    body: () => "Your order has been delivered. Please inspect the product on arrival.",
+    entity: (d) => ({ type: "order", id: d.orderId }),
+    data: (d) => ({ screen: "OrderDetail", orderId: d.orderId }),
+    actionUrl: (d) => portalLink(`/orders/${d.orderId}`),
+    dedupe: (d) => (d.orderId ? `order.delivered:${d.orderId}` : null),
+    email: (d) =>
+      proseEmail({
+        subject: `Order ${ref(d)} Delivered Successfully`,
+        subtitle: "Delivery Complete",
+        heading: "Order delivered",
+        paragraphs: [
+          `Dear ${d.customerName || "Customer"},`,
+          `This is to confirm that your order ${ref(d)} has been delivered successfully` +
+            `${d.deliveryAddress ? ` to ${d.deliveryAddress}` : " to your address"}.`,
+          "Please inspect the product upon delivery. If there are any concerns, please let us " +
+            "know within 24 hours.",
+          "We appreciate your business and look forward to serving you again.",
+        ],
+        cta: { url: portalLink(`/orders/${d.orderId}`), label: "View Order" },
+      }),
+  },
+
+  /** data: orderId, reference, customerName, reason */
+  "payment.failed": {
+    audience: "customer",
+    category: "payments",
+    priority: "urgent",
+    channels: APP_AND_EMAIL,
+    title: (d) => `Payment not successful — ${ref(d)}`,
+    body: (d) =>
+      `We could not process your payment.${d.reason ? ` ${d.reason}` : ""} ` +
+      "Your order stays pending until payment is confirmed.",
+    entity: (d) => ({ type: "order", id: d.orderId }),
+    data: (d) => ({ screen: "OrderDetail", orderId: d.orderId }),
+    actionUrl: (d) => portalLink(`/orders/${d.orderId}`),
+    email: (d) =>
+      proseEmail({
+        subject: `Payment Not Successful – Order ${ref(d)}`,
+        subtitle: "Payment Failed",
+        heading: "Payment failed",
+        paragraphs: [
+          `Dear ${d.customerName || "Customer"},`,
+          `We attempted to process your payment for Order ${ref(d)}, but it was not successful.`,
+          "Please try again using another method, or contact our support team for help. " +
+            "Your order will remain pending until payment is confirmed.",
+          "Thank you for your understanding.",
+        ],
+        note: d.reason || null,
+        tone: "danger",
+        cta: { url: portalLink(`/orders/${d.orderId}`), label: "Retry Payment" },
+      }),
+  },
+
+  /** data: productName, location, stockQuantity, minimumRequired */
+  "stock.low": {
+    audience: "staff",
+    category: "operations",
+    priority: "high",
+    channels: APP_AND_EMAIL,
+    title: (d) => `Low stock — ${d.productName || "product"}`,
+    body: (d) =>
+      `${d.productName || "A product"} has dropped below its minimum level` +
+      `${d.location ? ` at ${d.location}` : ""}.`,
+    entity: (d) => ({ type: "product", id: d.productId }),
+    data: (d) => ({ screen: "Inventory", productId: d.productId }),
+    actionUrl: () => adminLink("/products"),
+    // One alert per product per location per day; without this a depot sitting
+    // just under the threshold re-alerts on every stock read.
+    dedupe: (d) =>
+      d.productId
+        ? `stock.low:${d.productId}:${d.location || ""}:${new Date().toISOString().slice(0, 10)}`
+        : null,
+    email: (d) =>
+      proseEmail({
+        subject: `Low Stock Alert – ${d.productName || "Product"}`,
+        subtitle: "Inventory",
+        heading: "Low stock alert",
+        paragraphs: [
+          "Dear Team,",
+          `Please be informed that ${d.productName || "a product"} has dropped below the ` +
+            `minimum stock level${d.location ? ` at ${d.location}` : ""}.`,
+        ],
+        rows: [
+          { label: "Current Level", value: formatQuantity(d.stockQuantity, d.unit) },
+          { label: "Minimum Required", value: formatQuantity(d.minimumRequired, d.unit) },
+        ],
+        note: "Kindly take the necessary steps to restock as soon as possible to avoid any disruption.",
+        tone: "warning",
+        cta: { url: adminLink("/products"), label: "Open Inventory" },
+      }),
+  },
+
+  // ═══ Expense approval chain (staff) ═══════════════════════════════════════
+  // Django paired every stage with a one-line SMS. The in-app rows already
+  // existed here; the email and SMS below are what was missing, and routing
+  // them through the catalog is what gets them logged in
+  // notification_deliveries and gated by each officer's preferences.
+  ...expenseStages(),
+
+  // ═══ Scheduled reports (email + xlsx attachment) ══════════════════════════
+  // Django sent these from Celery Beat. There is no scheduler here yet, so they
+  // are triggered by `npm run report:daily` (or an admin endpoint); the copy and
+  // the attachment contract live here either way, so wiring a scheduler later
+  // changes only the trigger.
+  //
+  // data: reportDate, filename, attachmentBase64, orderCount, pfiCount, rowCount
+
+  "reports.daily": {
+    audience: "staff",
+    category: "reports",
+    priority: "normal",
+    channels: EMAIL_ONLY,
+    title: (d) => `Daily Report - ${formatDate(d.reportDate)}`,
+    body: (d) =>
+      `${d.orderCount ?? 0} order(s) and ${d.pfiCount ?? 0} PFI movement(s) recorded.`,
+    entity: (d) => ({ type: "report", id: String(d.reportDate || "") }),
+    email: (d) =>
+      reportEmail({
+        subject: `Daily Report - ${formatDate(d.reportDate)}`,
+        heading: `Daily Report — ${formatDate(d.reportDate)}`,
+        rows: [
+          { label: "Orders", value: String(d.orderCount ?? 0) },
+          { label: "PFI movements", value: String(d.pfiCount ?? 0) },
+        ],
+        emptyNote:
+          !d.orderCount && !d.pfiCount
+            ? "No orders today. No PFI activity today."
+            : null,
+        d,
+      }),
+  },
+
+  "reports.daily_staff_sales": {
+    audience: "staff",
+    category: "reports",
+    priority: "normal",
+    channels: EMAIL_ONLY,
+    title: (d) => `Daily Staff Sales Report - ${formatDate(d.reportDate)}`,
+    body: (d) => `${d.rowCount ?? 0} staff sales report(s) submitted.`,
+    entity: (d) => ({ type: "report", id: String(d.reportDate || "") }),
+    email: (d) =>
+      reportEmail({
+        subject: `Daily Staff Sales Report - ${formatDate(d.reportDate)}`,
+        heading: `Daily Staff Sales Report — ${formatDate(d.reportDate)}`,
+        rows: [{ label: "Reports submitted", value: String(d.rowCount ?? 0) }],
+        emptyNote: !d.rowCount ? "No staff sales reports today." : null,
+        d,
+      }),
+  },
+
+  // ═══ Delivery / truck flow (SMS) ══════════════════════════════════════════
+  // Recipients are drivers, customers and payers who often have no account, so
+  // these are addressed by phone and are SMS-only. Every message opens with the
+  // brand prefix and wraps identifiers in [brackets], as Django did — the
+  // prefix now comes from config/brand rather than a string literal.
+  ...deliverySms(),
 };
 
 // ─── Accessors ──────────────────────────────────────────────────────────────

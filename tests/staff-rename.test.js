@@ -88,7 +88,12 @@ describe("PR-0 — rename is behaviour-identical", () => {
     // of the test is unchanged: a role outside the read list is refused, and the
     // message it gets is a fixed string clients can branch on.
     const { staffTokenWithRoles } = require("./helpers");
-    const { accessToken } = await staffTokenWithRoles(["security_entry"]);
+    // Own fixture row — see the note in staff-auth.test.js. These were the only
+    // two callers still on the helper's shared default.
+    const { accessToken } = await staffTokenWithRoles(
+      ["security_entry"],
+      "test-underprivileged@soroman.test"
+    );
 
     const res = await request(app)
       .get("/api/customers")

@@ -19,7 +19,8 @@
     "check:migrations": "node scripts/check-migrations.js",
     "test": "NODE_ENV=test CORS_ALLOW_NO_ORIGIN=true RATE_LIMIT_DISABLED=true SMS_ENABLED=false OTP_DEV_MODE=true OTP_DEV_CODE=000000 OTP_DAILY_SEND_CAP=1000000 OTP_REGISTER_PER_IP=1000000 OTP_LOGIN_PER_IP=1000000 node --test --test-concurrency=1 --test-force-exit \"tests/**/*.test.js\"",
     "test:watch": "node --test --watch \"tests/**/*.test.js\"",
-    "db:refresh": "bash scripts/refresh-local-from-prod.sh"
+    "db:refresh": "bash scripts/refresh-local-from-prod.sh",
+    "report:daily": "node scripts/send-daily-report.js"
   },
   "keywords": [],
   "author": "",
@@ -34,6 +35,7 @@
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-async-handler": "^1.2.0",
     "express-rate-limit": "^7.5.0",

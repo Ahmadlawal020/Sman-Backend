@@ -287,7 +287,15 @@ describe("staff auth — opaque refresh tokens, rotation, reuse detection", () =
     // is no longer a privilege boundary and the downgrade would not show up.
     // Tickets is OPS+SECURITY+audit — admin in, finance out — so the assertion
     // still measures what it claims to.
-    const { staff, accessToken } = await staffTokenWithRoles(["admin"]);
+    // Own fixture row. Sharing the helper's default email with staff-rename
+    // meant both files rewrote one staff row's roles, and because authorisation
+    // reads roles from the row rather than the token — which is the property
+    // this test exists to prove — whichever file ran second saw the other's
+    // roles and the assertion flapped between runs.
+    const { staff, accessToken } = await staffTokenWithRoles(
+      ["admin"],
+      "test-revoke-midsession@soroman.test"
+    );
     assert.equal(
       (await request(app).get("/api/tickets").set("Authorization", `Bearer ${accessToken}`)).status,
       200

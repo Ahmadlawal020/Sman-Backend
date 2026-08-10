@@ -1,5 +1,5 @@
 const { client } = require("../db");
-const { notificationRepo } = require("../repositories");
+const { notify } = require("../notifications");
 const chain = require("../lib/expenseChain");
 
 /**
@@ -28,6 +28,31 @@ const staffWithRoles = async (roles) => {
     WHERE is_active = true AND roles && ${roles}
   `;
   return rows.map((r) => r.id);
+};
+
+/**
+ * The two display names the copy quotes that are not on the expense row.
+ *
+ * `pfi_expenses` stores `category_id` and `added_by`, not their names, so
+ * reading `expense.category_name` off the row — as an earlier pass here did —
+ * yields undefined and renders a blank "Category:" line in the mail. One small
+ * read is cheaper than a silently empty email.
+ */
+const labelsFor = async (expense) => {
+  const [category, submitter] = await Promise.all([
+    expense.category_id
+      ? client`SELECT name FROM expense_categories WHERE id = ${Number(expense.category_id)}`
+      : Promise.resolve([]),
+    expense.added_by ?? expense.recorded_by
+      ? client`SELECT first_name, surname FROM staff WHERE id = ${Number(expense.added_by ?? expense.recorded_by)}`
+      : Promise.resolve([]),
+  ]);
+  return {
+    categoryName: category[0]?.name || "",
+    submitterName: submitter[0]
+      ? [submitter[0].first_name, submitter[0].surname].filter(Boolean).join(" ")
+      : "",
+  };
 };
 
 /** Everyone who has signed or raised this request. */
@@ -60,30 +85,40 @@ async function notifyExpenseStage({ expense, stage, note, actorId, actorName }) 
   recipients = [...new Set(recipients)].filter((id) => Number(id) !== Number(actorId));
   if (recipients.length === 0) return;
 
-  const label = chain.STATUS_LABELS[stage] || stage;
-  const body = [
-    `${naira(expense.amount)} to ${expense.vendor || "an unnamed payee"}`,
-    note ? `— "${note.trim()}"` : "",
-    actorName ? `(${actorName})` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  /**
+   * Routed through notify() rather than written straight to the inbox.
+   *
+   * This used to call notificationRepo.createMany, which meant an approver only
+   * ever saw the request if they happened to open the dashboard — the chain
+   * could sit for a day on someone who was in the field. The Django system it
+   * replaces mailed each stage AND sent a one-line SMS, and going through the
+   * engine restores both while adding what the direct write never had: a row in
+   * notification_deliveries, per-officer preference and quiet-hours gating, and
+   * push to the mobile app. The copy for all seven stages lives in
+   * notifications/catalog.js under `expense.*`.
+   */
+  const { categoryName, submitterName } = await labelsFor(expense);
 
-  await notificationRepo.createMany(
-    recipients.map((staffId) => ({
-      recipientType: "staff",
-      staffId,
-      type: `expense.${stage}`,
-      category: "payments",
-      priority: stage === chain.STATUS.REJECTED ? "high" : "normal",
-      title: spec.title,
-      body,
-      entityType: "pfi_expense",
-      entityId: String(expense.id),
-      actionUrl: `/expenses?expense=${expense.id}`,
-      data: { expenseId: expense.id, status: stage, label, amount: String(expense.amount) },
-    })),
-  );
+  await notify(`expense.${stage}`, {
+    to: recipients.map((staffId) => ({ staffId })),
+    data: {
+      expenseId: expense.id,
+      status: stage,
+      label: chain.STATUS_LABELS[stage] || stage,
+      amount: expense.amount,
+      // `description` is what the SMS quotes in brackets; fall back through the
+      // fields most likely to identify the request to someone reading a text.
+      description: expense.description || categoryName || expense.vendor || "",
+      category: categoryName,
+      vendor: expense.vendor || "",
+      payeeAccountName: expense.payee_account_name || "",
+      payeeBankName: expense.payee_bank_name || "",
+      payeeAccountNumber: expense.payee_account_number || "",
+      submitterName,
+      note: note ? String(note).trim() : "",
+      actorName: actorName || "",
+    },
+  });
 }
 
 module.exports = { notifyExpenseStage, STAGE_RECIPIENTS };
