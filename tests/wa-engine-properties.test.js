@@ -132,7 +132,6 @@ const arbUserValue = fc.oneof(
     "website", "community", "support", "app",
     "trackorder:1", "trackorder:", "trackorder:999", "trackorder:abc",
     "confirm", "confirm:deadbeef", "confirm:", "edit", "pickup", "delivery", "more", "resume", "startover",
-    "declare_trucks", "defer_trucks",
     "changeDepot", "states", "state:Delta", "state:nowhere", "2", "30000", "30,000", "0", "-5", "999999999",
     "edit:depot", "edit:quantity", "depot:1", "depot:404", "product:10", "ABC-123-XY"
   )

@@ -94,9 +94,6 @@ test("every copy string, pinned", (t) => {
     collectPrompt: copy.collectPrompt(),
     collectButtons: copy.collectButtons(),
 
-    truckDeclarePrompt: copy.truckDeclarePrompt(),
-    truckDeclareButtons: copy.truckDeclareButtons(),
-    truckDeferEscapeButtons: copy.truckDeferEscapeButtons(),
     truckCountPrompt: copy.truckCountPrompt(150000, 3, 10),
     truckCountInvalid: copy.truckCountInvalid(3, 10),
     truckLitresPrompt: copy.truckLitresPrompt(1, 3, 150000),
@@ -117,16 +114,6 @@ test("every copy string, pinned", (t) => {
       unitPrice: 850,
       total: 25500000,
       trucks: [{ quantity: 30000, plate: "ABC-123-XY" }],
-    }),
-    confirmPickupDeferred: copy.confirmSummary({
-      productName: "PMS",
-      quantity: 90000,
-      depotName: "Warri",
-      companyName: "Acme Fuels Ltd",
-      deliveryType: "pickup",
-      unitPrice: 850,
-      total: 76500000,
-      trucks: [],
     }),
     confirmPickupMultiTruck: copy.confirmSummary({
       productName: "PMS",
