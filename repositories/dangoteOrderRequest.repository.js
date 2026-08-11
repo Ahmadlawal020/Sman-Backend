@@ -31,6 +31,7 @@ const findByIdFull = async (id) => {
       customerName: customers.name,
       customerEmail: customers.email,
       customerPhone: customers.phone,
+      customerBalance: customers.balance,
       companyName: customers.companyName,
       licenseId: dangoteOrderRequests.licenseId,
       licenseCompanyName: dangoteOrderRequests.companyName,
@@ -74,6 +75,7 @@ const findAll = async ({
   search,
   status,
   paymentStatus,
+  payable,
   customerId,
   page = 1,
   limit = 50,
@@ -95,6 +97,14 @@ const findAll = async ({
 
   if (paymentStatus) {
     conditions.push(eq(dangoteOrderRequests.paymentStatus, paymentStatus));
+  }
+
+  if (payable === true || payable === "true" || payable === "1") {
+    conditions.push(eq(dangoteOrderRequests.paymentStatus, "Unpaid"));
+    conditions.push(eq(dangoteOrderRequests.status, "Approved"));
+    conditions.push(
+      sql`${dangoteOrderRequests.totalAmount} IS NOT NULL AND ${dangoteOrderRequests.totalAmount} > 0 AND ${dangoteOrderRequests.totalAmount} <= (SELECT c.balance FROM customers c WHERE c.id = ${dangoteOrderRequests.customerId})`
+    );
   }
 
   if (search) {
@@ -131,6 +141,8 @@ const findAll = async ({
         customerId: dangoteOrderRequests.customerId,
         customerName: customers.name,
         customerEmail: customers.email,
+        customerPhone: customers.phone,
+        customerBalance: customers.balance,
         companyName: dangoteOrderRequests.companyName,
         customerCompanyName: customers.companyName,
         product: dangoteOrderRequests.product,

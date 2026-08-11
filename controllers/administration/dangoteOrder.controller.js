@@ -79,8 +79,8 @@ const updateDangoteProduct = asyncHandler(async (req, res) => {
 // ── Dangote Order Requests ────────────────────────────────────────────────
 
 const getDangoteOrderRequests = asyncHandler(async (req, res) => {
-  const { search, status, page = 1, limit = 50 } = req.query;
-  const result = await dangoteOrderRequestRepo.findAll({ search, status, page, limit });
+  const { search, status, paymentStatus, payable, page = 1, limit = 50 } = req.query;
+  const result = await dangoteOrderRequestRepo.findAll({ search, status, paymentStatus, payable, page, limit });
   // Enrich every request with its computed expiresAt deadline
   const enriched = await withRequestExpiresAt(
     result.requests.map((r) => ({ ...r, _type: "dangote" }))
