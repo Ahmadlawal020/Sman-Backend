@@ -31,14 +31,11 @@ const notifyWhatsAppPaymentConfirmed = (orderId) => {
   );
 };
 
+const { orderExpiryHours, orderExpiryMs } = require("../config/orderExpiry");
+
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
-
-// How long an unpaid order may sit before the sweep expires it. Read lazily (not
-// captured at module load) so deployments — and tests — can tune it per run.
-const orderExpiryHours = () => Number(process.env.ORDER_EXPIRY_HOURS) || 24;
-const orderExpiryMs = () => orderExpiryHours() * 60 * 60 * 1000;
 
 /**
  * Has this order lapsed? Only a still-Pending, still-unpaid order can — once a
@@ -948,5 +945,6 @@ module.exports = {
   isOrderExpired,
   computeExpiresAt,
   withExpiresAt,
+  orderExpiryHours,
   httpError,
 };

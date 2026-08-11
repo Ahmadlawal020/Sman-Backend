@@ -78,6 +78,19 @@ describe("public catalog — what anyone may see before signing in", () => {
     assert.ok(Array.isArray(res.body.data.depots));
   });
 
+  test("exposes the payment window hours from ORDER_EXPIRY_HOURS", async () => {
+    const original = process.env.ORDER_EXPIRY_HOURS;
+    try {
+      process.env.ORDER_EXPIRY_HOURS = "12";
+      const res = await request(app).get(CATALOG);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.data.orderExpiryHours, 12);
+    } finally {
+      if (original === undefined) delete process.env.ORDER_EXPIRY_HOURS;
+      else process.env.ORDER_EXPIRY_HOURS = original;
+    }
+  });
+
   test("an in-stock priced depot is listed with its products and prices", async () => {
     const res = await request(app).get(CATALOG);
     const depot = res.body.data.depots.find((d) => d.id === stockedDepotId);
