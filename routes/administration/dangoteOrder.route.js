@@ -17,6 +17,7 @@ const {
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
   getPayableDangoteOrders,
+  payDangoteOrder,
 } = require("../../controllers/administration/dangoteOrder.controller");
 
 // Dangote Products
@@ -36,6 +37,12 @@ router.put(
   authenticateStaff,
   requireRole("orders_manager", "orders_operator", "super_admin", { message: "Order review access required" }),
   reviewDangoteOrderRequest
+);
+router.put(
+  "/dangote-order-requests/:id/pay",
+  authenticateStaff,
+  requireRole("finance", "super_admin", { message: "Finance access required to pay" }),
+  payDangoteOrder
 );
 router.put("/dangote-order-requests/:id/payment-status", verifyStaff, updateDangoteOrderPaymentStatus);
 router.put("/dangote-order-requests/:id/collection-status", verifyStaff, updateDangoteOrderCollectionStatus);
