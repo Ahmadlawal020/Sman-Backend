@@ -58,10 +58,7 @@ const createLpgOrderRequest = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "LPG station not found" });
   }
 
-  const requestNumber = await lpgOrderRequestRepo.generateRequestNumber();
-
   const request = await lpgOrderRequestRepo.create({
-    requestNumber,
     customerId: customer.id,
     lpgStationId: Number(lpgStationId),
     cylinderSizeKg: Number(cylinderSizeKg),
@@ -72,6 +69,9 @@ const createLpgOrderRequest = asyncHandler(async (req, res) => {
     pricePerKg: String(station.pricePerKg || 0),
     status: "Pending Review",
   });
+  // create() overwrites the insert filler with INITIALS+id — use that everywhere
+  // so email / push / staff alerts match the ref the API returns.
+  const requestNumber = request.requestNumber;
 
   if (customer.email) {
     try {

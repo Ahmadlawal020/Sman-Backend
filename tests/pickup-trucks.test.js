@@ -168,14 +168,15 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.match(res.body.message, /60,000|60000/);
   });
 
-  test("a pickup over 60,000 L cannot be placed without declaring trucks", async () => {
+  test("a pickup over 60,000 L can be placed without declaring trucks", async () => {
     const { accessToken } = await activeFundedCustomer("4", 90000);
     const res = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send(body({ quantity: 90000 })); // no trucks
-    assert.equal(res.status, 400);
-    assert.match(res.body.message, /split across trucks/i);
+      .send(body({ quantity: 90000 })); // no trucks — gate captures them later
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const loads = await orderTruckRepo.findByOrder(res.body.data.order.id);
+    assert.equal(loads.length, 0, "no loads until declared or gated in");
   });
 
   test("security correcting the plate at gate-in is recorded as a correction", async () => {

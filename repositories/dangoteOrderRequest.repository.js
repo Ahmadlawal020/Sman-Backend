@@ -173,7 +173,12 @@ const findAll = async ({
 };
 
 const create = async (data) => {
-  const [row] = await db.insert(dangoteOrderRequests).values(data).returning();
+  // request_number is NOT NULL; mint a short-lived filler until we know the
+  // serial id and can write the customer-facing INITIALS+id reference.
+  const [row] = await db
+    .insert(dangoteOrderRequests)
+    .values({ ...data, requestNumber: data.requestNumber || `TMP-${Date.now()}` })
+    .returning();
   const company = data.companyName || "";
   const ref = generateOrderReference(company, row.id);
   if (row.requestNumber !== ref) {

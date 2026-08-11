@@ -66,6 +66,7 @@ exports[`every copy string, pinned 1`] = `
   "trackStatusLoadingDelivery": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Loading*\\n\\nYour order is currently being loaded for delivery.",
   "trackStatusCompleted": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Completed*\\n\\nThis order has been completed. Thank you for choosing Soroman.",
   "trackStatusCancelled": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Cancelled*\\n\\nThis order was cancelled. Nothing was charged.",
+  "trackStatusExpired": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *Expired*\\n\\nPayment was not received in time, so this order has expired. Place a new order at current prices whenever you are ready.",
   "trackStatusUnknown": "Order *SOR-1042*: 30,000 L PMS, Warri.\\n\\nStatus: *??*\\n\\nWe will notify you here as your order progresses.",
   "trackPortalButton": "View full timeline",
   "trackListPrompt": "You have more than one order in progress. Please select the order you would like to check.",
@@ -112,6 +113,14 @@ exports[`every copy string, pinned 1`] = `
     "pickup": "Loading by my truck",
     "delivery": "Delivery by Soroman truck"
   },
+  "truckDeclarePrompt": "Would you like to declare your trucks now, or leave the plates for security at the gate?",
+  "truckDeclareButtons": {
+    "declare_trucks": "Declare trucks now",
+    "defer_trucks": "Skip now"
+  },
+  "truckDeferEscapeButtons": {
+    "defer_trucks": "Skip now"
+  },
   "truckCountPrompt": "You have selected 150,000 L for loading. Please enter the number of trucks you will be sending.\\n\\nEach truck can carry up to 60,000 L. For this quantity, you will require between 3 and 10 trucks.",
   "truckCountInvalid": "Please enter a number of trucks between 3 and 10 for this quantity.",
   "truckLitresPrompt": "Truck 1 of 3. Please enter the number of litres this truck will carry.\\n\\n150,000 L remain to be assigned. Each truck can carry up to 60,000 L.",
@@ -123,6 +132,7 @@ exports[`every copy string, pinned 1`] = `
   "addressPrompt": "Please provide the full delivery address.",
   "addressInvalid": "This address appears to be incomplete. Please provide the full delivery address, including the area and state.",
   "confirmPickup": "Please review your order details.\\n\\nProduct: 30,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my truck: ABC-123-XY\\nPrice: ₦850/L\\n*Total: ₦25,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
+  "confirmPickupDeferred": "Please review your order details.\\n\\nProduct: 90,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my truck — plates captured at the gate\\nPrice: ₦850/L\\n*Total: ₦76,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmPickupMultiTruck": "Please review your order details.\\n\\nProduct: 110,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my trucks: AAA-111-AA (60,000 L), BBB-222-BB (50,000 L)\\nPrice: ₦850/L\\n*Total: ₦93,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmDelivery": "Please review your order details.\\n\\nProduct: 10,000 L AGO\\nDepot: Lagos\\nCompany: Ada Logistics\\nDelivery by Soroman truck to: 14 Airport Road, Warri, Delta\\nPrice: ₦1,020/L\\n*Total: ₦10,200,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmWalletHint": "Your wallet balance is ₦30,000,000, which covers this order. After you confirm, you can pay from your wallet in one tap — no transfer needed.",
@@ -153,9 +163,15 @@ exports[`every copy string, pinned 1`] = `
     }
   },
   "orderPending": "Please wait while your order is being created.",
-  "orderCreated": "Your order *SOR-1042* has been created.\\n\\n*Total: ₦25,500,000*\\n\\nTo pay by bank transfer, send to your dedicated account:\\nBank: Wema Bank\\nAccount Number: *9930001111*\\nAccount Name: SOROMANNIGERI/ AO\\n\\nOnce your transfer reflects, tap *Pay now* below to confirm your order.",
+  "orderCreated": "Your order *SOR-1042* has been created.\\n\\n*Total: ₦25,500,000*\\n\\nPlease pay by *Wed, 12 Aug, 16:42* — after that this price is no longer held.\\n\\nTo pay by bank transfer, send to your dedicated account:\\nBank: Wema Bank\\nAccount Number: *9930001111*\\nAccount Name: SOROMANNIGERI/ AO\\n\\nOnce your transfer reflects, tap *Pay now* below to confirm your order.",
+  "orderCreatedHoursOnly": "Your order *SOR-1042* has been created.\\n\\n*Total: ₦25,500,000*\\n\\nPlease pay within *24 hours* — after that this price is no longer held.\\n\\nTo pay by bank transfer, send to your dedicated account:\\nBank: Wema Bank\\nAccount Number: *9930001111*\\nAccount Name: SOROMANNIGERI/ AO\\n\\nOnce your transfer reflects, tap *Pay now* below to confirm your order.",
   "payFailedInsufficient": "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the dedicated account above, then tap *Pay now* again.",
   "payFailedGeneric": "We couldn't take the payment. Please try again, or transfer to the account above.",
+  "orderExpired": "This order has expired. Payment was not received in time, so the price is no longer held. Please place a new order at current prices.",
+  "orderExpiredButtons": {
+    "reorder": "Reorder",
+    "order": "Place new order"
+  },
   "portalManageHint": "To change a truck or plate number at a later time, please manage this order at https://portal.example/orders/1042",
   "invoiceCaption": "Invoice for order SOR-1042",
   "orderFailedStockSome": "We regret that part of the requested stock at Warri is no longer available. Please try a smaller quantity.",
@@ -164,7 +180,7 @@ exports[`every copy string, pinned 1`] = `
   "devPaidPrompt": "Test mode: no real transfer is required. Select the button below to simulate payment.",
   "devPaidButton": "I have paid (test)",
   "devSimulating": "Simulating your transfer. Confirmation will follow shortly.",
-  "awaitPaymentNudge": "We are still awaiting your transfer for order *SOR-1042*. Amount: ₦25,500,000. Bank: Wema Bank. Account Number: *9930001111*.",
+  "awaitPaymentNudge": "We are still awaiting your transfer for order *SOR-1042*. Amount: ₦25,500,000. Bank: Wema Bank. Account Number: *9930001111*.\\n\\nPlease pay by *Wed, 12 Aug, 16:42* — after that this price is no longer held.",
   "awaitPaymentCancelButton": "Cancel this order",
   "payNowButton": "Pay now",
   "cancelOrderConfirm": "Do you wish to cancel order *SOR-1042*? This order has not been paid. No amount will be charged, and the stock will be released.",

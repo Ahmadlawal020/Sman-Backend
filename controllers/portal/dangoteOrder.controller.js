@@ -64,9 +64,7 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  const requestNumber = await dangoteOrderRequestRepo.generateRequestNumber();
   const request = await dangoteOrderRequestRepo.create({
-    requestNumber,
     customerId: req.customer.id,
     companyName: companyName || "",
     licenseId: licenseId ? Number(licenseId) : null,
@@ -78,6 +76,9 @@ const createMyDangoteOrder = asyncHandler(async (req, res) => {
     deliveryLga: deliveryLga || "",
     status: "Pending Review",
   });
+  // create() overwrites the insert filler with INITIALS+id — use that everywhere
+  // so email / push / staff alerts match the ref the API returns.
+  const requestNumber = request.requestNumber;
 
   const customer = await customerRepo.findById(req.customer.id);
   if (customer?.email) {

@@ -57,6 +57,9 @@
     "supertest": "^7.2.2"
   },
   "overrides": {
-    "esbuild": ">=0.25.0"
+    "esbuild": ">=0.25.0",
+    "exceljs": {
+      "uuid": "$uuid"
+    }
   }
 }

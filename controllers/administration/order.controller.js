@@ -313,7 +313,7 @@ const gateInTruck = asyncHandler(async (req, res) => {
         );
       }
     } else if (order.deliveryType === "pickup") {
-      // No pre-declared load (a small pickup that didn't split up front): the
+      // No pre-declared load (customer skipped the optional split): the
       // customer's truck is captured HERE, the first time it is seen.
       if (!truckNumber || quantity == null) {
         throw httpErr(400, "A pickup gate-in needs the truck's plate (truckNumber) and quantity");
