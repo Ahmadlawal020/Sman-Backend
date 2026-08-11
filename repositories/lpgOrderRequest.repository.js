@@ -170,14 +170,31 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
 };
 
 const create = async (data) => {
-  const [row] = await db.insert(lpgOrderRequests).values(data).returning();
-  const company = data.companyName || "";
+  // request_number is NOT NULL; mint a short-lived filler until we know the
+  // serial id and can write the customer-facing INITIALS+id reference.
+  const [row] = await db
+    .insert(lpgOrderRequests)
+    .values({ ...data, requestNumber: data.requestNumber || `TMP-${Date.now()}` })
+    .returning();
+
+  // LPG rows don't store company_name — resolve it from the customer so the
+  // stored/emailed ref matches what findByIdFull later recomputes on read.
+  let company = data.companyName || "";
+  if (!company && data.customerId) {
+    const [cust] = await db
+      .select({ companyName: customers.companyName, name: customers.name })
+      .from(customers)
+      .where(eq(customers.id, data.customerId))
+      .limit(1);
+    company = cust?.companyName || cust?.name || "";
+  }
+
   const ref = generateOrderReference(company, row.id);
   if (row.requestNumber !== ref) {
     await db.update(lpgOrderRequests).set({ requestNumber: ref }).where(eq(lpgOrderRequests.id, row.id));
     row.requestNumber = ref;
   }
-  return formatLpgOrderRow(row);
+  return formatLpgOrderRow({ ...row, companyName: company });
 };
 
 const update = async (id, data) => {
