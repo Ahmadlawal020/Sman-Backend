@@ -112,6 +112,14 @@ exports[`every copy string, pinned 1`] = `
     "pickup": "Loading by my truck",
     "delivery": "Delivery by Soroman truck"
   },
+  "truckDeclarePrompt": "Would you like to declare your trucks now, or leave the plates for security at the gate?",
+  "truckDeclareButtons": {
+    "declare_trucks": "Declare trucks now",
+    "defer_trucks": "Skip now"
+  },
+  "truckDeferEscapeButtons": {
+    "defer_trucks": "Skip now"
+  },
   "truckCountPrompt": "You have selected 150,000 L for loading. Please enter the number of trucks you will be sending.\\n\\nEach truck can carry up to 60,000 L. For this quantity, you will require between 3 and 10 trucks.",
   "truckCountInvalid": "Please enter a number of trucks between 3 and 10 for this quantity.",
   "truckLitresPrompt": "Truck 1 of 3. Please enter the number of litres this truck will carry.\\n\\n150,000 L remain to be assigned. Each truck can carry up to 60,000 L.",
@@ -123,6 +131,7 @@ exports[`every copy string, pinned 1`] = `
   "addressPrompt": "Please provide the full delivery address.",
   "addressInvalid": "This address appears to be incomplete. Please provide the full delivery address, including the area and state.",
   "confirmPickup": "Please review your order details.\\n\\nProduct: 30,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my truck: ABC-123-XY\\nPrice: ₦850/L\\n*Total: ₦25,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
+  "confirmPickupDeferred": "Please review your order details.\\n\\nProduct: 90,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my truck — plates captured at the gate\\nPrice: ₦850/L\\n*Total: ₦76,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmPickupMultiTruck": "Please review your order details.\\n\\nProduct: 110,000 L PMS\\nDepot: Warri\\nCompany: Acme Fuels Ltd\\nLoading by my trucks: AAA-111-AA (60,000 L), BBB-222-BB (50,000 L)\\nPrice: ₦850/L\\n*Total: ₦93,500,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmDelivery": "Please review your order details.\\n\\nProduct: 10,000 L AGO\\nDepot: Lagos\\nCompany: Ada Logistics\\nDelivery by Soroman truck to: 14 Airport Road, Warri, Delta\\nPrice: ₦1,020/L\\n*Total: ₦10,200,000*\\n\\nSelect Confirm to receive your invoice and payment details.",
   "confirmWalletHint": "Your wallet balance is ₦30,000,000, which covers this order. After you confirm, you can pay from your wallet in one tap — no transfer needed.",

@@ -128,6 +128,10 @@ describe("pure helpers", () => {
       nextStep({ depotId: 1, productId: 10, quantity: 30000, companyName: "Acme", deliveryType: "pickup" }),
       STATES.LOGISTICS
     );
+    assert.equal(
+      nextStep({ depotId: 1, productId: 10, quantity: 30000, companyName: "Acme", deliveryType: "pickup", trucksDeferred: true }),
+      STATES.CONFIRM
+    );
     assert.equal(nextStep(fullPickupCart()), STATES.CONFIRM);
     assert.equal(
       nextStep({ depotId: 1, productId: 10, quantity: 150000, companyName: "Acme", deliveryType: "pickup", truckCount: 3, trucks: [{ quantity: 60000, plate: "A1 X" }] }),
@@ -723,9 +727,11 @@ describe("COMPANY", () => {
 describe("COLLECT and LOGISTICS", () => {
   const cart = { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd" };
 
-  it("pickup asks for a plate", () => {
+  it("pickup offers declare-now or defer-to-gate", () => {
     const r = reduce(mkSession(STATES.COLLECT, cart), btn("pickup"), baseCtx());
     assert.equal(r.session.state, STATES.LOGISTICS);
+    assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
+    assert.deepEqual(buttonIds(r.replies[0]), ["declare_trucks", "defer_trucks"]);
   });
 
   it("typed 'delivery' asks for an address", () => {
@@ -746,27 +752,59 @@ describe("COLLECT and LOGISTICS", () => {
     assert.equal(r.session.state, STATES.LOGISTICS);
   });
 
-  it("one truck (implicit): one plate reaches CONFIRM", () => {
+  it("deferring trucks reaches CONFIRM with an empty fleet", () => {
     const s = mkSession(STATES.LOGISTICS, { ...cart, deliveryType: "pickup" });
-    const r = reduce(s, txt("abc-123-xy"), baseCtx());
+    const r = reduce(s, btn("defer_trucks"), baseCtx());
+    assert.equal(r.session.state, STATES.CONFIRM);
+    assert.equal(r.session.cart.trucksDeferred, true);
+    assert.equal(r.session.cart.trucks, undefined);
+    assert.match(r.replies[0].body, /plates captured at the gate/i);
+  });
+
+  it("declare-now then one plate reaches CONFIRM", () => {
+    const choice = reduce(mkSession(STATES.LOGISTICS, { ...cart, deliveryType: "pickup" }), btn("declare_trucks"), baseCtx());
+    assert.equal(choice.session.cart.declareTrucks, true);
+    assert.deepEqual(buttonIds(choice.replies[0]), ["defer_trucks"], "escape stays on the plate prompt");
+    const r = reduce(choice.session, txt("abc-123-xy"), baseCtx());
     assert.equal(r.session.state, STATES.CONFIRM);
     assert.deepEqual(r.session.cart.trucks, [{ quantity: 30000, plate: "ABC-123-XY" }]);
   });
 
   it("an implausible plate is bounced", () => {
-    const s = mkSession(STATES.LOGISTICS, { ...cart, deliveryType: "pickup" });
+    const s = mkSession(STATES.LOGISTICS, { ...cart, deliveryType: "pickup", declareTrucks: true });
     const r = reduce(s, txt("x"), baseCtx());
     assert.equal(r.session.state, STATES.LOGISTICS);
     assert.equal(r.session.failureCount, 1);
   });
 
+  it("Skip now mid-declare clears a partial split", () => {
+    const midway = {
+      ...cart,
+      deliveryType: "pickup",
+      declareTrucks: true,
+      truckCount: 2,
+      trucks: [{ quantity: 60000, plate: "AAA-111-AA" }],
+      quantity: 110000,
+    };
+    const r = reduce(mkSession(STATES.LOGISTICS, midway), btn("defer_trucks"), baseCtx());
+    assert.equal(r.session.state, STATES.CONFIRM);
+    assert.equal(r.session.cart.trucksDeferred, true);
+    assert.equal(r.session.cart.trucks, undefined);
+    assert.equal(r.session.cart.truckCount, undefined);
+    assert.equal(r.session.cart.declareTrucks, undefined);
+  });
+
   it("above one truck the CUSTOMER declares the fleet: count, litres, plates", () => {
     const big = { depotId: 1, productId: 10, quantity: 110000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" };
-    // First question: how many trucks?
+    // First: declare/defer choice.
     const s = mkSession(STATES.COLLECT, big);
-    const asked = reduce(s, btn("pickup"), baseCtx());
+    const choice = reduce(s, btn("pickup"), baseCtx());
+    assert.deepEqual(buttonIds(choice.replies[0]), ["declare_trucks", "defer_trucks"]);
+
+    const asked = reduce(choice.session, btn("declare_trucks"), baseCtx());
     assert.equal(asked.session.state, STATES.LOGISTICS);
     assert.match(asked.replies[asked.replies.length - 1].body, /number of trucks you will be sending/i);
+    assert.deepEqual(buttonIds(asked.replies[0]), ["defer_trucks"]);
 
     // 1 truck can't carry 110,000 L.
     const tooFew = reduce(asked.session, txt("1"), baseCtx());
@@ -801,6 +839,7 @@ describe("COLLECT and LOGISTICS", () => {
     // Floor: truck 2 of 3 taking ALL 50,000 remaining leaves truck 3 nothing.
     const midway = {
       depotId: 1, productId: 10, quantity: 110000, deliveryType: "pickup",
+      declareTrucks: true,
       truckCount: 3, trucks: [{ quantity: 60000, plate: "AAA-111-AA" }],
     };
     const starved = reduce(mkSession(STATES.LOGISTICS, midway), txt("50000"), baseCtx());
@@ -809,9 +848,16 @@ describe("COLLECT and LOGISTICS", () => {
 
     // Ceiling: truck 1 of 3 taking only 1,000 L of 130,000 leaves 129,000 —
     // more than two trucks can physically carry.
-    const big = { depotId: 1, productId: 10, quantity: 130000, deliveryType: "pickup", truckCount: 3, trucks: [] };
+    const big = { depotId: 1, productId: 10, quantity: 130000, deliveryType: "pickup", declareTrucks: true, truckCount: 3, trucks: [] };
     const overloaded = reduce(mkSession(STATES.LOGISTICS, big), txt("1000"), baseCtx());
     assert.equal(overloaded.session.cart.currentLitres, undefined);
+  });
+
+  it("a deferred pickup confirm places the order with no trucks", () => {
+    const cartDeferred = { ...cart, deliveryType: "pickup", trucksDeferred: true };
+    const r = reduce(mkSession(STATES.CONFIRM, cartDeferred), btn("confirm"), baseCtx());
+    assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
+    assert.deepEqual(r.effects[0].payload.trucks, []);
   });
 });
 
@@ -819,7 +865,7 @@ describe("COLLECT and LOGISTICS", () => {
 
 describe("CONFIRM", () => {
   it("the summary shows the server-side total", () => {
-    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), baseCtx());
     assert.ok(r.replies[0].body.includes("25,500,000")); // 30,000 × ₦850
     assert.ok(r.replies[0].body.includes("Acme Fuels Ltd"), "the company is on the summary");
   });
@@ -865,7 +911,8 @@ describe("CONFIRM", () => {
   it("after an edit, answered steps are skipped on the way back", () => {
     const edited = reduce(mkSession(STATES.CONFIRM, fullPickupCart()), lst("edit:quantity"), baseCtx());
     const r = reduce(edited.session, txt("40000"), baseCtx());
-    assert.equal(r.session.state, STATES.LOGISTICS); // straight to plates, not COLLECT
+    assert.equal(r.session.state, STATES.LOGISTICS); // declare/defer choice, not COLLECT
+    assert.deepEqual(buttonIds(r.replies[0]), ["declare_trucks", "defer_trucks"]);
   });
 
   it("confirming a cart whose stock shrank re-asks quantity, not a dead error", () => {
@@ -882,14 +929,14 @@ describe("CONFIRM", () => {
   });
 
   it("the Confirm button fingerprints the cart it summarises", () => {
-    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), baseCtx());
     const ids = buttonIds(r.replies[0]);
     assert.match(ids[0], /^confirm:[0-9a-f]+$/);
     assert.deepEqual(ids.slice(1), ["edit", "cancel"]);
   });
 
   it("tapping the current summary's tokened Confirm places the order", () => {
-    const summary = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const summary = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), baseCtx());
     const confirmId = buttonIds(summary.replies[0])[0];
     const r = reduce(summary.session, btn(confirmId), baseCtx());
     assert.deepEqual(effectTypes(r), [EFFECTS.CREATE_ORDER]);
@@ -926,12 +973,13 @@ describe("CONFIRM", () => {
 
   it("a Confirm from an OUTDATED summary is refused with the current one re-shown", () => {
     // Reach CONFIRM, capture that summary's button…
-    const first = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), baseCtx());
+    const first = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), baseCtx());
     const staleId = buttonIds(first.replies[0])[0];
     // …then change the quantity (new summary, new token)…
     const edited = reduce(first.session, lst("edit:quantity"), baseCtx());
     const requoted = reduce(edited.session, txt("40000"), baseCtx());
-    const replated = reduce(requoted.session, txt("ABC-123-XY"), baseCtx());
+    const declared = reduce(requoted.session, btn("declare_trucks"), baseCtx());
+    const replated = reduce(declared.session, txt("ABC-123-XY"), baseCtx());
     assert.equal(replated.session.state, STATES.CONFIRM);
     // …and tap the OLD button.
     const r = reduce(replated.session, btn(staleId), baseCtx());
@@ -948,14 +996,14 @@ describe("CONFIRM", () => {
 
   it("a wallet that covers the total announces itself on the summary", () => {
     const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "30000000" } });
-    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), ctx);
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), ctx);
     assert.match(r.replies[0].body, /wallet/i);
     assert.match(r.replies[0].body, /30,000,000/);
   });
 
   it("an insufficient wallet stays out of the summary", () => {
     const ctx = baseCtx({ customer: { id: 7, name: "Ada", status: "Active", balance: "500" } });
-    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup" }), txt("ABC-123-XY"), ctx);
+    const r = reduce(mkSession(STATES.LOGISTICS, { depotId: 1, productId: 10, quantity: 30000, companyName: "Acme Fuels Ltd", deliveryType: "pickup", declareTrucks: true }), txt("ABC-123-XY"), ctx);
     assert.doesNotMatch(r.replies[0].body, /wallet/i);
   });
 });

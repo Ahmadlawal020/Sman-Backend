@@ -170,10 +170,10 @@ const productsOf = (depot) => (depot && Array.isArray(depot.products) ? depot.pr
 const findProduct = (depot, id) => productsOf(depot).find((p) => String(p.id) === String(id));
 
 /**
- * Trucks are DECLARED by the customer, not derived: they say how many trucks
- * and how many litres each carries (portal parity). One truck is implicit
- * when the whole order fits in it; the last truck always takes the exact
- * remainder, so the sum can never disagree with the order.
+ * When the customer opts to declare trucks, they say how many and how many
+ * litres each carries. One truck is implicit when the whole order fits in it;
+ * the last truck always takes the exact remainder. Declaration is optional —
+ * they can defer plates to the gate (portal parity).
  */
 const trucksNeeded = (cart) =>
   Number(cart.quantity) <= TRUCK_CAPACITY_LITRES ? 1 : Number(cart.truckCount) || null;
@@ -184,6 +184,21 @@ const trucksComplete = (cart) => {
   const needed = trucksNeeded(cart);
   return Boolean(needed && (cart.trucks || []).length >= needed);
 };
+
+/** True once the customer has either deferred to the gate or finished declaring. */
+const pickupLogisticsDone = (cart) => Boolean(cart.trucksDeferred) || trucksComplete(cart);
+
+/**
+ * Mid-declare (including a resumed session that already has a partial fleet)
+ * vs still on the declare/defer choice.
+ */
+const isDeclaringTrucks = (cart) =>
+  Boolean(
+    cart.declareTrucks ||
+      cart.truckCount ||
+      cart.currentLitres ||
+      ((cart.trucks || []).length > 0 && !cart.trucksDeferred)
+  );
 
 const minTrucksFor = (quantity) => Math.max(1, Math.ceil(Number(quantity) / TRUCK_CAPACITY_LITRES));
 
@@ -206,7 +221,7 @@ const nextStep = (cart) => {
   if (!cart.companyName) return STATES.COMPANY;
   if (!cart.deliveryType) return STATES.COLLECT;
   if (cart.deliveryType === "delivery" && !cart.address) return STATES.LOGISTICS;
-  if (cart.deliveryType === "pickup" && !trucksComplete(cart)) return STATES.LOGISTICS;
+  if (cart.deliveryType === "pickup" && !pickupLogisticsDone(cart)) return STATES.LOGISTICS;
   return STATES.CONFIRM;
 };
 
@@ -235,22 +250,39 @@ const revalidateCart = (cart, ctx) => {
 
 // Clearing a field invalidates everything priced/sized off it. (Truck
 // declarations hang off both the quantity and the collection choice.)
+const clearTruckFields = (cart) => {
+  const { trucks, truckCount, currentLitres, declareTrucks, trucksDeferred, ...rest } = cart;
+  return rest;
+};
 const clearDepot = (cart) => {
-  const { depotId, productId, quantity, trucks, truckCount, currentLitres, ...rest } = cart;
+  const { depotId, productId, quantity, ...rest } = clearTruckFields(cart);
   return rest;
 };
 const clearProduct = (cart) => {
-  const { productId, quantity, trucks, truckCount, currentLitres, ...rest } = cart;
+  const { productId, quantity, ...rest } = clearTruckFields(cart);
   return rest;
 };
 const clearQuantity = (cart) => {
-  const { quantity, trucks, truckCount, currentLitres, ...rest } = cart;
+  const { quantity, ...rest } = clearTruckFields(cart);
   return rest;
 };
 const clearCollect = (cart) => {
-  const { deliveryType, trucks, truckCount, currentLitres, address, ...rest } = cart;
+  const { deliveryType, address, ...rest } = clearTruckFields(cart);
   return rest;
 };
+
+/** Defer plates to the gate — drops any half-finished declaration. */
+const deferTrucksToGate = (cart) => ({ ...clearTruckFields(cart), trucksDeferred: true });
+
+/** Opt into the declare-now path (clears a prior defer). */
+const startDeclareTrucks = (cart) => {
+  const { trucksDeferred, ...rest } = cart;
+  return { ...rest, declareTrucks: true };
+};
+
+/** Wrap a declare-now prompt with the abandon-to-gate escape button. */
+const declarePrompt = (body) => buttons(body, copy.truckDeferEscapeButtons());
+
 // Company is order-level: it hangs off nothing priced or sized, so clearing
 // depot/product/quantity/collect leaves it intact. Only an explicit edit drops it.
 const clearCompany = (cart) => {
@@ -330,19 +362,23 @@ const promptFor = (state, session, context) => {
       return [buttons(copy.collectPrompt(), copy.collectButtons())];
     case STATES.LOGISTICS: {
       if (cart.deliveryType === "delivery") return [text(copy.addressPrompt())];
+      // Choice first: declare now, or leave plates for the gate.
+      if (!isDeclaringTrucks(cart)) {
+        return [buttons(copy.truckDeclarePrompt(), copy.truckDeclareButtons())];
+      }
       const q = Number(cart.quantity) || 0;
       // Single truck is implicit when the whole order fits in one.
-      if (q <= TRUCK_CAPACITY_LITRES) return [text(copy.platePrompt(1, 1, q))];
+      if (q <= TRUCK_CAPACITY_LITRES) return [declarePrompt(copy.platePrompt(1, 1, q))];
       if (!cart.truckCount)
-        return [text(copy.truckCountPrompt(q, minTrucksFor(q), maxTrucksFor(q)))];
+        return [declarePrompt(copy.truckCountPrompt(q, minTrucksFor(q), maxTrucksFor(q)))];
       const trucks = cart.trucks || [];
       const index = trucks.length + 1;
       const remaining = q - litresAssigned(cart);
       if (cart.currentLitres)
-        return [text(copy.platePrompt(index, cart.truckCount, cart.currentLitres))];
+        return [declarePrompt(copy.platePrompt(index, cart.truckCount, cart.currentLitres))];
       if (index === cart.truckCount)
-        return [text(copy.lastTruckPrompt(cart.truckCount, remaining))];
-      return [text(copy.truckLitresPrompt(index, cart.truckCount, remaining))];
+        return [declarePrompt(copy.lastTruckPrompt(cart.truckCount, remaining))];
+      return [declarePrompt(copy.truckLitresPrompt(index, cart.truckCount, remaining))];
     }
     case STATES.CONFIRM:
       return [confirmReply(session, context)];
@@ -1091,8 +1127,29 @@ const handleLogistics = (session, inbound, ctx) => {
     }
     return fumble(session, ctx, [text(copy.addressInvalid())]);
   }
-  // Pickup: the customer declares their trucks — how many, the litres on
-  // each, and each plate. The last truck always takes the exact remainder.
+
+  const value = valueOf(inbound);
+
+  // Escape / defer: clear any partial split and continue to confirm.
+  if (value === "defer_trucks") {
+    const next = deferTrucksToGate(cart);
+    return goTo({ ...session, cart: next }, nextStep(next), ctx);
+  }
+
+  // Opt into declare-now (also re-shown if they fumble the choice).
+  if (value === "declare_trucks") {
+    const next = startDeclareTrucks(cart);
+    return goTo({ ...session, cart: next }, STATES.LOGISTICS, ctx);
+  }
+
+  // Still on the declare/defer choice — anything else re-prompts it.
+  if (!isDeclaringTrucks(cart)) {
+    return fumble(session, ctx, promptFor(STATES.LOGISTICS, session, ctx));
+  }
+
+  // Declare-now: how many trucks, litres on each, and each plate. The last
+  // truck always takes the exact remainder. "Skip now" stays on
+  // every prompt via declarePrompt().
   const q = Number(cart.quantity) || 0;
   const raw = typeof inbound.value === "string" ? inbound.value.trim() : "";
   const plate = raw.toUpperCase();
@@ -1104,7 +1161,7 @@ const handleLogistics = (session, inbound, ctx) => {
       const next = { ...cart, trucks: [{ quantity: q, plate }] };
       return goTo({ ...session, cart: next }, nextStep(next), ctx);
     }
-    return fumble(session, ctx, [text(copy.plateInvalid())]);
+    return fumble(session, ctx, [declarePrompt(copy.plateInvalid())]);
   }
 
   // Multi-truck: first, how many trucks?
@@ -1116,7 +1173,7 @@ const handleLogistics = (session, inbound, ctx) => {
       const next = { ...cart, truckCount: n, trucks: [] };
       return goTo({ ...session, cart: next }, nextStep(next), ctx);
     }
-    return fumble(session, ctx, [text(copy.truckCountInvalid(min, max))]);
+    return fumble(session, ctx, [declarePrompt(copy.truckCountInvalid(min, max))]);
   }
 
   const remaining = q - litresAssigned(cart);
@@ -1129,7 +1186,7 @@ const handleLogistics = (session, inbound, ctx) => {
       const next = { ...restCart, trucks: [...trucks, { quantity: currentLitres, plate }] };
       return goTo({ ...session, cart: next }, nextStep(next), ctx);
     }
-    return fumble(session, ctx, [text(copy.plateInvalid())]);
+    return fumble(session, ctx, [declarePrompt(copy.plateInvalid())]);
   }
 
   // The last truck takes the remainder — only its plate is asked.
@@ -1138,7 +1195,7 @@ const handleLogistics = (session, inbound, ctx) => {
       const next = { ...cart, trucks: [...trucks, { quantity: remaining, plate }] };
       return goTo({ ...session, cart: next }, nextStep(next), ctx);
     }
-    return fumble(session, ctx, [text(copy.plateInvalid())]);
+    return fumble(session, ctx, [declarePrompt(copy.plateInvalid())]);
   }
 
   // Otherwise: this truck's litres. Must fit the truck, and leave the
@@ -1154,7 +1211,7 @@ const handleLogistics = (session, inbound, ctx) => {
   if (valid) {
     return goTo({ ...session, cart: { ...cart, currentLitres: v } }, STATES.LOGISTICS, ctx);
   }
-  return fumble(session, ctx, [text(copy.truckLitresInvalid(remaining))]);
+  return fumble(session, ctx, [declarePrompt(copy.truckLitresInvalid(remaining))]);
 };
 
 const handleConfirm = (session, ctx, value) => {
