@@ -2,6 +2,7 @@ const { and, eq, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { orders } = require("../db/schema");
 const { orderRepo } = require("../repositories");
+const { withExpiresAt } = require("./order.service");
 
 /**
  * The signed-in customer's home screen, in one payload. Everything here is
@@ -96,6 +97,9 @@ const getDashboard = async (customer) => {
     orderRepo.findAll({ customer: customer.id, page: 1, limit: RECENT_LIMIT }),
   ]);
 
+  // Same expiresAt enrichment the order list/detail endpoints attach — the
+  // portal hero needs the payment deadline to show "valid till …" (without it
+  // the frontend used to mislabel unpaid invoices as price-expired).
   return {
     wallet: {
       balance: Number(customer.balance || 0),
@@ -103,7 +107,7 @@ const getDashboard = async (customer) => {
     },
     month,
     trend,
-    orders: recent.orders,
+    orders: await withExpiresAt(recent.orders),
   };
 };
 
