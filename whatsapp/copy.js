@@ -231,7 +231,7 @@ const truckDeclarePrompt = () =>
 
 const truckDeclareButtons = () => ({
   declare_trucks: "Declare trucks now",
-  defer_trucks: "Sort it at the gate",
+  defer_trucks: "Skip now",
 });
 
 // Shown on every declare-now prompt so a half-finished split can be abandoned.

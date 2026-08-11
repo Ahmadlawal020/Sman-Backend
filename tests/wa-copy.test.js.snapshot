@@ -115,7 +115,7 @@ exports[`every copy string, pinned 1`] = `
   "truckDeclarePrompt": "Would you like to declare your trucks now, or leave the plates for security at the gate?",
   "truckDeclareButtons": {
     "declare_trucks": "Declare trucks now",
-    "defer_trucks": "Sort it at the gate"
+    "defer_trucks": "Skip now"
   },
   "truckDeferEscapeButtons": {
     "defer_trucks": "Skip now"
