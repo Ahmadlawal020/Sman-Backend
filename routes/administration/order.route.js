@@ -10,6 +10,7 @@ const {
   createOrder,
   releaseOrder,
   cancelOrder,
+  deleteOrder,
   generateOrderTickets,
   getTruckTicketPrintData,
   getOrderTrucks,
@@ -22,6 +23,16 @@ const {
 } = require("../../controllers/administration/order.controller");
 
 // Payable orders (must be before /:id to avoid param conflict)
+// Hard delete, paid orders included. super_admin only: it destroys the payment
+// trail along with the order, leaving only the audit row behind.
+router.delete(
+  "/:id",
+  verifyStaff,
+  requireRole("super_admin", { message: "Only a super admin can delete an order" }),
+  validate({ params: orderSchemas.idParam }),
+  deleteOrder
+);
+
 router.get("/payable", verifyStaff, getPayableOrders);
 
 // Reads and creation stay behind the admin gate (verifyStaff).

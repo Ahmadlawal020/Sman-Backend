@@ -8,6 +8,7 @@ const {
   auditLogRepo,
 } = require("../../repositories");
 const { db } = require("../../config/db");
+const { sql } = require("drizzle-orm");
 const { pfiMovements } = require("../../db/schema");
 const walletService = require("../../services/wallet.service");
 const { generateTicketForTruck } = require("../../services/ticket.service");
@@ -523,6 +524,77 @@ const gateOutTruck = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Erase an order and everything hanging off it.
+ *
+ * This is a hard delete, including for paid orders — asked for deliberately so
+ * a mistaken order can be removed rather than left cancelled in the register.
+ *
+ * Three relations are ON DELETE RESTRICT and would block the statement, so
+ * they are removed explicitly first: tickets, commissions and wallet holds.
+ * order_trucks, pfi_movements and pfi allocations cascade on their own;
+ * delivery notes and WhatsApp sessions null their reference.
+ *
+ * The audit row is written BEFORE the delete and survives it — audit_logs has
+ * no foreign key to orders — so a deleted order still leaves a record of what
+ * was destroyed, by whom, and what it was worth. That is the only trace left,
+ * which is why this is restricted to super_admin: removing a paid order also
+ * removes its payment trail, and any wallet debit behind it becomes
+ * unreconcilable.
+ */
+const deleteOrder = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const order = await orderRepo.findByIdFull(orderId);
+  if (!order) throw httpErr(404, "Order not found");
+
+  const removed = await db.transaction(async (tx) => {
+    // Snapshot first: once the row is gone this is all that is left.
+    await auditLogRepo.record(
+      {
+        entityType: "order",
+        entityId: orderId,
+        action: "order.deleted",
+        actor: { type: "staff", staffId: req.user.id },
+        metadata: {
+          orderNumber: order.orderNumber,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          totalAmount: String(order.totalAmount),
+          quantity: order.quantity,
+          customerId: order.customerId,
+          customerName: order.customerName,
+          depotName: order.depotName,
+          productName: order.productName,
+          pfiId: order.pfiId,
+          createdAt: order.createdAt,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      },
+      tx
+    );
+
+    // The three RESTRICT relations, which would otherwise block the delete.
+    const counts = {};
+    for (const table of ["tickets", "commissions", "wallet_holds"]) {
+      const rows = await tx.execute(
+        sql`DELETE FROM ${sql.identifier(table)} WHERE order_id = ${orderId} RETURNING id`
+      );
+      counts[table] = rows.length ?? rows.rowCount ?? 0;
+    }
+
+    // Everything else cascades or nulls out via its own constraint.
+    await tx.execute(sql`DELETE FROM orders WHERE id = ${orderId}`);
+    return counts;
+  });
+
+  res.json({
+    success: true,
+    message: `Order ${order.orderNumber} and all its records were deleted`,
+    data: { deleted: removed },
+  });
+});
+
 const getPayableOrders = asyncHandler(async (req, res) => {
   const orders = await orderRepo.findPayableOrders();
   res.json({ success: true, data: { orders: await withExpiresAt(orders) } });
@@ -836,6 +908,7 @@ module.exports = {
   markTruckLoaded,
   gateOutTruck,
   getPayableOrders,
+  deleteOrder,
   payOrder,
   reconcileOrderEffects,
 };
