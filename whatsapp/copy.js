@@ -235,7 +235,7 @@ const truckDeclareButtons = () => ({
 });
 
 // Shown on every declare-now prompt so a half-finished split can be abandoned.
-const truckDeferEscapeButtons = () => ({ defer_trucks: "Finish at the gate" });
+const truckDeferEscapeButtons = () => ({ defer_trucks: "Skip now" });
 
 const truckCountPrompt = (quantity, minTrucks, maxTrucks) =>
   `You have selected ${litres(quantity)} for loading. Please enter the number of trucks you will be sending.\n\nEach truck can carry up to ${litres(60000)}. For this quantity, you will require ${minTrucks === maxTrucks ? minTrucks : `between ${minTrucks} and ${maxTrucks}`} truck${maxTrucks === 1 ? "" : "s"}.`;

@@ -1148,7 +1148,7 @@ const handleLogistics = (session, inbound, ctx) => {
   }
 
   // Declare-now: how many trucks, litres on each, and each plate. The last
-  // truck always takes the exact remainder. "Finish at the gate" stays on
+  // truck always takes the exact remainder. "Skip now" stays on
   // every prompt via declarePrompt().
   const q = Number(cart.quantity) || 0;
   const raw = typeof inbound.value === "string" ? inbound.value.trim() : "";

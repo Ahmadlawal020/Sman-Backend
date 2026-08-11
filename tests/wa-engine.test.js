@@ -777,7 +777,7 @@ describe("COLLECT and LOGISTICS", () => {
     assert.equal(r.session.failureCount, 1);
   });
 
-  it("finishing at the gate mid-declare clears a partial split", () => {
+  it("Skip now mid-declare clears a partial split", () => {
     const midway = {
       ...cart,
       deliveryType: "pickup",
