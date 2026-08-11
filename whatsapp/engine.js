@@ -677,6 +677,8 @@ const reduceInner = (session, inbound, ctx, expired) => {
               totalAmount: order.totalAmount,
               virtualAccountBank: order.virtualAccountBank,
               virtualAccountNumber: order.virtualAccountNumber,
+              expiresAt: order.expiresAt,
+              expiryHours: order.expiryHours,
             },
           },
       };
@@ -730,6 +732,14 @@ const reduceInner = (session, inbound, ctx, expired) => {
         return done(session, [
           text(copy.payFailed(inbound.message)),
           ...promptFor(STATES.AWAIT_PAYMENT, session, ctx),
+        ]);
+      }
+      if (inbound.reason === "expired") {
+        // The payment window closed — order is Expired. Leave AWAIT_PAYMENT
+        // and offer reorder / place new so they aren't stuck on Pay now.
+        const next = { ...session, state: STATES.MENU, cart: emptyCart(), failureCount: 0 };
+        return done(next, [
+          buttons(copy.orderExpired(), copy.orderExpiredButtons()),
         ]);
       }
       return done({ ...next, state: STATES.CONFIRM }, [
@@ -965,6 +975,8 @@ const handleMenu = (session, ctx, value) => {
           totalAmount: last.totalAmount,
           virtualAccountBank: last.virtualAccountBank,
           virtualAccountNumber: last.virtualAccountNumber,
+          expiresAt: last.expiresAt,
+          expiryHours: last.expiryHours,
         },
       },
     };

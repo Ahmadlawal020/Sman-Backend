@@ -9,11 +9,7 @@ const dangoteOrderStatus = require("./dangoteOrderStatus.service");
 const lpgOrderStatus = require("./lpgOrderStatus.service");
 const { sendDangoteOrderExpiredSMS, sendLpgOrderExpiredSMS } = require("./sms.service");
 const { notify } = require("../notifications");
-
-// How long an approved, unpaid request may sit before the sweep expires it.
-// Shares the same config as depot order expiry.
-const orderExpiryHours = () => Number(process.env.ORDER_EXPIRY_HOURS) || 24;
-const orderExpiryMs = () => orderExpiryHours() * 60 * 60 * 1000;
+const { orderExpiryHours, orderExpiryMs } = require("../config/orderExpiry");
 
 /**
  * Has this request lapsed? Only an Approved, unpaid request can — once payment

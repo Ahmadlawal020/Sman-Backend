@@ -4,7 +4,8 @@ const { loadContext } = require("./context");
 const { EFFECTS, INBOUND, REPLY } = require("./constants");
 const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { toE164 } = require("../utils/phone");
-const { placeOrder, cancelOrder, payOrder } = require("../services/order.service");
+const { placeOrder, cancelOrder, payOrder, computeExpiresAt } = require("../services/order.service");
+const { orderExpiryHours } = require("../config/orderExpiry");
 const walletService = require("../services/wallet.service");
 const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
@@ -83,7 +84,12 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
           actor: { type: "customer", customerId: effect.payload.customerId },
           idempotencyKey: wamid,
         });
-        return { type: INBOUND.ORDER_CREATED, order: result.order };
+        const order = {
+          ...result.order,
+          expiresAt: computeExpiresAt(result.order),
+          expiryHours: orderExpiryHours(),
+        };
+        return { type: INBOUND.ORDER_CREATED, order };
       } catch (err) {
         console.error("[wa-pipeline] CREATE_ORDER failed:", err.message);
         if (/stock/i.test(err.message || "")) {
@@ -124,9 +130,13 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
         return { type: INBOUND.PAYMENT_CONFIRMED, order };
       } catch (err) {
         // payOrder scopes to the customer and re-checks the balance, so this
-        // is a legitimate refusal (insufficient balance, already paid). The
-        // engine keeps the order and points at the transfer path.
+        // is a legitimate refusal (insufficient balance, already paid, or
+        // expired). The engine keeps unpaid orders on the transfer path, and
+        // offers reorder when the window has closed.
         console.error("[wa-pipeline] PAY_ORDER failed:", err.message);
+        if (/expired/i.test(err.message || "")) {
+          return { type: INBOUND.ORDER_FAILED, reason: "expired", message: err.message };
+        }
         return { type: INBOUND.ORDER_FAILED, reason: "pay", message: err.message };
       }
     }

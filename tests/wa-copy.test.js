@@ -21,6 +21,8 @@ const ORDER = {
   virtualAccountBank: "Wema Bank",
   virtualAccountNumber: "9930001111",
   virtualAccountName: "SOROMANNIGERI/ AO",
+  expiresAt: "2026-08-12T15:42:00.000Z",
+  expiryHours: 24,
 };
 
 test("every copy string, pinned", (t) => {
@@ -51,6 +53,7 @@ test("every copy string, pinned", (t) => {
     trackStatusLoadingDelivery: copy.trackStatus({ ...ORDER, status: "Loading", deliveryType: "delivery" }),
     trackStatusCompleted: copy.trackStatus({ ...ORDER, status: "Completed" }),
     trackStatusCancelled: copy.trackStatus({ ...ORDER, status: "Cancelled" }),
+    trackStatusExpired: copy.trackStatus({ ...ORDER, status: "Expired" }),
     trackStatusUnknown: copy.trackStatus({ ...ORDER, status: "??" }),
     trackPortalButton: copy.trackPortalButton(),
     trackListPrompt: copy.trackListPrompt(),
@@ -162,8 +165,11 @@ test("every copy string, pinned", (t) => {
     orderPending: copy.orderPending(),
 
     orderCreated: copy.orderCreated(ORDER),
+    orderCreatedHoursOnly: copy.orderCreated({ ...ORDER, expiresAt: undefined }),
     payFailedInsufficient: copy.payFailed("Insufficient wallet balance."),
     payFailedGeneric: copy.payFailed("Payment failed"),
+    orderExpired: copy.orderExpired(),
+    orderExpiredButtons: copy.orderExpiredButtons(),
     portalManageHint: copy.portalManageHint("https://portal.example/orders/1042"),
     invoiceCaption: copy.invoiceCaption("SOR-1042"),
     orderFailedStockSome: copy.orderFailedStock(true, "Warri"),
