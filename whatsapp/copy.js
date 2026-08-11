@@ -17,17 +17,19 @@ const naira = (amount) =>
 
 const litres = (qty) => `${Number(qty || 0).toLocaleString("en-NG")} L`;
 
-/** Absolute pay-by time for WhatsApp copy, e.g. "Tue, 12 Aug, 03:42 pm". */
+/** Absolute pay-by time for WhatsApp copy, e.g. "Tue, 12 Aug, 16:42". Always WAT. */
 const formatPayBy = (iso) => {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleString("en-NG", {
+    timeZone: "Africa/Lagos",
     weekday: "short",
     day: "numeric",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 };
 
