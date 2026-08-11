@@ -265,40 +265,29 @@ async function placeOrder({
 
   // --- Pickup truck declaration ---------------------------------------------
   // A pickup customer brings their own trucks and may split the order across
-  // several — required once the order exceeds one tanker (60,000 L). They set
-  // the quantity per truck here; the plate is optional (it can be filled or
-  // corrected at the gate and at ticketing). Delivery orders never carry trucks
-  // at order time — their fleet is allocated at release.
-  //
-  // The desk is exempt: it places orders FOR a customer and can book any pickup
-  // quantity as a single order — security still captures each arriving truck at
-  // the gate. Self-service pickups (customer portal / WhatsApp) must declare the
-  // split up front, so the requirement above is enforced only for them.
+  // several. Declaring them at order time is optional at every quantity —
+  // security still captures each arriving truck at the gate. When a split IS
+  // declared it must be coherent: quantities sum to the order, each truck ≤
+  // one tanker (60,000 L). The plate is optional (filled or corrected at the
+  // gate and at ticketing). Delivery orders never carry trucks at order time
+  // — their fleet is allocated at release.
   const declaredTrucks = Array.isArray(trucks) ? trucks : [];
   if (deliveryType === "delivery" && declaredTrucks.length) {
     throw httpError(400, "Delivery trucks are allocated at release, not at order");
   }
-  const isStaffOrder = actor?.type === "staff";
-  if (deliveryType === "pickup") {
-    if (declaredTrucks.length) {
-      const sum = declaredTrucks.reduce((s, t) => s + Number(t.quantity), 0);
-      if (sum !== Number(quantity)) {
-        throw httpError(
-          400,
-          `The truck quantities (${sum.toLocaleString()} L) must sum to the order quantity (${Number(
-            quantity
-          ).toLocaleString()} L)`
-        );
-      }
-      const tooBig = declaredTrucks.find((t) => Number(t.quantity) > 60000);
-      if (tooBig) {
-        throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
-      }
-    } else if (Number(quantity) > 60000 && !isStaffOrder) {
+  if (deliveryType === "pickup" && declaredTrucks.length) {
+    const sum = declaredTrucks.reduce((s, t) => s + Number(t.quantity), 0);
+    if (sum !== Number(quantity)) {
       throw httpError(
         400,
-        "A pickup over 60,000 L must be split across trucks — declare each truck and its quantity"
+        `The truck quantities (${sum.toLocaleString()} L) must sum to the order quantity (${Number(
+          quantity
+        ).toLocaleString()} L)`
       );
+    }
+    const tooBig = declaredTrucks.find((t) => Number(t.quantity) > 60000);
+    if (tooBig) {
+      throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
     }
   }
 
@@ -719,6 +708,8 @@ async function updatePickupTrucks({
     }
 
     const qty = Number(order.quantity);
+    // Empty clears the declaration (gate captures trucks later). A non-empty
+    // split must still sum to the order and stay within one tanker per truck.
     if (declared.length) {
       const sum = declared.reduce((s, t) => s + Number(t.quantity), 0);
       if (sum !== qty) {
@@ -731,11 +722,6 @@ async function updatePickupTrucks({
       if (tooBig) {
         throw httpError(400, "Each truck can carry at most 60,000 L — split the load across more trucks");
       }
-    } else if (qty > 60000) {
-      throw httpError(
-        400,
-        "A pickup over 60,000 L must be split across trucks — declare each truck and its quantity"
-      );
     }
 
     await orderTruckRepo.deleteByOrder(order.id, tx);

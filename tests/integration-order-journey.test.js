@@ -369,7 +369,7 @@ describe("integration — customer register → order → release → gates → 
     );
   });
 
-  test("the desk can place a pickup of any amount without declaring trucks", async () => {
+  test("pickup of any amount can be placed without declaring trucks", async () => {
     const phone = `+234813${String(RUN).slice(-6)}7`;
 
     const registered = await request(app)
@@ -390,8 +390,8 @@ describe("integration — customer register → order → release → gates → 
       virtualAccountName: "SOROMANNIGERI/ BP",
     });
 
-    // 120,000 L — well over one tanker — with no trucks declared. The desk
-    // must be able to book it as a single pickup; security splits it across
+    // 120,000 L — well over one tanker — with no trucks declared. Desk and
+    // portal may both book it as a single pickup; security splits it across
     // trucks at the gate.
     const placed = await request(app)
       .post("/api/orders")
@@ -411,8 +411,7 @@ describe("integration — customer register → order → release → gates → 
     const loads = await orderTruckRepo.findByOrder(orderId);
     assert.equal(loads.length, 0, "no loads declared at order; captured at the gate");
 
-    // A customer placing their OWN over-60k pickup still has to split it.
-    const refused = await request(app)
+    const portal = await request(app)
       .post("/api/customer/orders")
       .set("Authorization", `Bearer ${verified.body.data.accessToken}`)
       .send({
@@ -423,7 +422,11 @@ describe("integration — customer register → order → release → gates → 
         deliveryType: "pickup",
         companyName: "Big Pickup Co",
       });
-    assert.equal(refused.status, 400, "the portal still requires the truck split");
-    assert.match(refused.body.message, /split across trucks/i);
+    assert.equal(portal.status, 201, JSON.stringify(portal.body));
+    assert.equal(
+      (await orderTruckRepo.findByOrder(portal.body.data.order.id)).length,
+      0,
+      "portal pickup also defers trucks to the gate"
+    );
   });
 });
