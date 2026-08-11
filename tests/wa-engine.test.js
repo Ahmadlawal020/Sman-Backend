@@ -1020,6 +1020,8 @@ describe("order outcomes", () => {
     virtualAccountNumber: "9930001111",
     virtualAccountName: "SOROMANNIGERI/ AO",
     invoiceUrl: "https://files.example/invoice.pdf",
+    expiresAt: "2026-08-12T15:42:00.000Z",
+    expiryHours: 24,
   };
 
   it("ORDER_CREATED: invoice, then ONE Pay now / Cancel message carrying the transfer details, then portal hint", () => {
@@ -1031,6 +1033,8 @@ describe("order outcomes", () => {
     // so the "how to pay" copy can't drift from the buttons that action it.
     assert.deepEqual(kinds(r), [REPLY.DOCUMENT, REPLY.BUTTONS, REPLY.TEXT]);
     assert.ok(r.replies[1].body.includes("9930001111"));
+    assert.match(r.replies[1].body, /pay by/i);
+    assert.equal(r.session.cart.awaiting.expiresAt, ORDER.expiresAt);
     // Pay now is always offered now; the tap settles once the transfer funds the wallet.
     assert.deepEqual(buttonIds(r.replies[1]), ["paynow", "cancelorder"]);
   });
@@ -1059,6 +1063,24 @@ describe("order outcomes", () => {
     assert.equal(r.session.state, STATES.AWAIT_PAYMENT);
     assert.match(r.replies[0].body, /transfer/i);
     assert.deepEqual(effectTypes(r), []);
+  });
+
+  it("an expired Pay now leaves AWAIT_PAYMENT and offers reorder", () => {
+    const s = mkSession(STATES.AWAIT_PAYMENT, { awaiting: { orderNumber: "SOR-1", totalAmount: 100 } }, { lastOrderId: 501 });
+    const r = reduce(
+      s,
+      {
+        type: INBOUND.ORDER_FAILED,
+        reason: "expired",
+        message: "This order has expired. Please place a new order at current prices.",
+      },
+      baseCtx()
+    );
+    assert.equal(r.session.state, STATES.MENU);
+    assert.deepEqual(r.session.cart, {});
+    assert.deepEqual(kinds(r), [REPLY.BUTTONS]);
+    assert.match(r.replies[0].body, /expired/i);
+    assert.deepEqual(buttonIds(r.replies[0]), ["reorder", "order"]);
   });
 
   it("an order already paid from the wallet asks for NO transfer and awaits nothing", () => {

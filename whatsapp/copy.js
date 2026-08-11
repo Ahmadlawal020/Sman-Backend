@@ -17,6 +17,34 @@ const naira = (amount) =>
 
 const litres = (qty) => `${Number(qty || 0).toLocaleString("en-NG")} L`;
 
+/** Absolute pay-by time for WhatsApp copy, e.g. "Tue, 12 Aug, 03:42 pm". */
+const formatPayBy = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-NG", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+/** One line telling the customer how long the price is held. */
+const paymentDeadlineLine = ({ expiresAt, expiryHours } = {}) => {
+  const until = formatPayBy(expiresAt);
+  if (until) {
+    return `Please pay by *${until}* — after that this price is no longer held.`;
+  }
+  const hours = Number(expiryHours);
+  if (Number.isFinite(hours) && hours > 0) {
+    const unit = hours === 1 ? "hour" : "hours";
+    return `Please pay within *${hours} ${unit}* — after that this price is no longer held.`;
+  }
+  return null;
+};
+
 // ---------------------------------------------------------------- identify
 
 const identifyPrompt = () =>
@@ -93,6 +121,7 @@ const trackStatusLabel = (status) =>
     Loading: "Loading",
     Completed: "Completed",
     Cancelled: "Cancelled",
+    Expired: "Expired",
   }[status] || String(status || "In progress"));
 
 // What happens next, per status. The status line answers "where is it";
@@ -115,6 +144,8 @@ const trackNextStep = (order) => {
       return "This order has been completed. Thank you for choosing Soroman.";
     case "Cancelled":
       return "This order was cancelled. Nothing was charged.";
+    case "Expired":
+      return "Payment was not received in time, so this order has expired. Place a new order at current prices whenever you are ready.";
     default:
       return "We will notify you here as your order progresses.";
   }
@@ -314,14 +345,19 @@ const orderPending = () =>
 
 // ----------------------------------------------------- order outcome & payment
 
-const orderCreated = (order) =>
-  `Your order *${order.orderNumber}* has been created.\n\n` +
-  `*Total: ${naira(order.totalAmount)}*\n\n` +
-  `To pay by bank transfer, send to your dedicated account:\n` +
-  `Bank: ${order.virtualAccountBank}\n` +
-  `Account Number: *${order.virtualAccountNumber}*\n` +
-  `Account Name: ${order.virtualAccountName}\n\n` +
-  "Once your transfer reflects, tap *Pay now* below to confirm your order.";
+const orderCreated = (order) => {
+  const deadline = paymentDeadlineLine(order);
+  return (
+    `Your order *${order.orderNumber}* has been created.\n\n` +
+    `*Total: ${naira(order.totalAmount)}*\n\n` +
+    (deadline ? `${deadline}\n\n` : "") +
+    `To pay by bank transfer, send to your dedicated account:\n` +
+    `Bank: ${order.virtualAccountBank}\n` +
+    `Account Number: *${order.virtualAccountNumber}*\n` +
+    `Account Name: ${order.virtualAccountName}\n\n` +
+    "Once your transfer reflects, tap *Pay now* below to confirm your order."
+  );
+};
 
 /**
  * The wallet payment couldn't go through — either the transfer hasn't landed
@@ -332,6 +368,18 @@ const payFailed = (message) =>
   message && /balance/i.test(message)
     ? "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the dedicated account above, then tap *Pay now* again."
     : "We couldn't take the payment. Please try again, or transfer to the account above.";
+
+/**
+ * Pay now after the payment window closed. The order is Expired; offer reorder
+ * rather than pointing at a transfer that can no longer settle this order.
+ */
+const orderExpired = () =>
+  "This order has expired. Payment was not received in time, so the price is no longer held. Please place a new order at current prices.";
+
+const orderExpiredButtons = () => ({
+  reorder: "Reorder",
+  order: "Place new order",
+});
 
 const orderPaidWallet = (order) =>
   `Your order *${order.orderNumber}* has been created and has been paid in full.\n\n` +
@@ -360,8 +408,13 @@ const devPaidButton = () => "I have paid (test)";
 
 const devSimulating = () => "Simulating your transfer. Confirmation will follow shortly.";
 
-const awaitPaymentNudge = (order) =>
-  `We are still awaiting your transfer for order *${order.orderNumber}*. Amount: ${naira(order.totalAmount)}. Bank: ${order.virtualAccountBank}. Account Number: *${order.virtualAccountNumber}*.`;
+const awaitPaymentNudge = (order) => {
+  const deadline = paymentDeadlineLine(order);
+  return (
+    `We are still awaiting your transfer for order *${order.orderNumber}*. Amount: ${naira(order.totalAmount)}. Bank: ${order.virtualAccountBank}. Account Number: *${order.virtualAccountNumber}*.` +
+    (deadline ? `\n\n${deadline}` : "")
+  );
+};
 
 const awaitPaymentCancelButton = () => "Cancel this order";
 const payNowButton = () => "Pay now";
@@ -476,6 +529,8 @@ module.exports = {
   orderPending,
   orderCreated,
   payFailed,
+  orderExpired,
+  orderExpiredButtons,
   portalManageHint,
   invoiceCaption,
   orderFailedStock,
