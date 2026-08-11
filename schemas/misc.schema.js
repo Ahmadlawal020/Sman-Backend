@@ -72,8 +72,14 @@ const listDrivers = pagination.extend({
 
 const listPfis = pagination.extend({
   search: searchTerm,
-  status: enumOf("Status", ["active", "finished", "all"]).optional(),
-  location: z.string().trim().max(255, "Value is too long").optional(),
+  status: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(enumOf("Status", ["active", "finished", "all"]))
+    .optional()
+    .or(z.literal("")),
+  location: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).optional().or(z.literal("")),
 });
 
 // --- tickets --------------------------------------------------------------
@@ -265,19 +271,148 @@ const updateDangoteProduct = z.object(dangoteProductBase).partial();
 
 // --- PFI create/update ----------------------------------------------------
 
+const optPfiStr = (label, max = 255) =>
+  z
+    .union([z.string().trim().max(max, `${label} must be ${max} characters or fewer`), z.null()])
+    .optional()
+    .transform((v) => (v === null ? "" : v));
+
+const optPfiId = (label = "id") =>
+  z
+    .union([id(label), z.literal(""), z.literal("none"), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === "none" || v === null ? null : v === undefined ? undefined : Number(v)));
+
+const optPfiQty = (label = "Quantity") =>
+  z
+    .union([
+      numberLike(label).pipe(z.number().int(`${label} must be a whole number`).nonnegative(`${label} cannot be negative`)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? 0 : v === undefined ? undefined : Number(v)));
+
+const optPfiBlQty = (label = "BL Quantity") =>
+  z
+    .union([
+      numberLike(label).pipe(z.number().int(`${label} must be a whole number`).nonnegative(`${label} cannot be negative`)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? null : v === undefined ? undefined : Number(v)));
+
+const optPfiFloat = (label = "Volume") =>
+  z
+    .union([
+      numberLike(label).pipe(z.number().nonnegative(`${label} cannot be negative`)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? 0 : v === undefined ? undefined : Number(v)));
+
+const optPfiMoney = (label = "Amount") =>
+  z
+    .union([
+      money(label),
+      numberLike(label).pipe(z.number().nonnegative(`${label} cannot be negative`)).transform((v) => v.toFixed(2)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? "0.00" : v === undefined ? undefined : typeof v === "number" ? v.toFixed(2) : String(v)));
+
+const optPfiDate = (label = "Date") =>
+  z
+    .union([
+      z.string().trim().max(50),
+      z.date(),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? null : v === undefined ? undefined : v));
+
 const pfiBase = {
-  pfiNumber: requiredString("PFI number", 100),
-  productId: id("Product"),
-  depotId: id("Depot"),
-  location: optionalString("Location", 255),
-  startingQtyLitres: quantity("Starting quantity").optional(),
-  unitPrice: money("Unit price", { min: 0.01 }).optional(),
-  vesselName: optionalString("Vessel name", 255),
-  surveyorName: optionalString("Surveyor name", 255),
-  notes: optionalString("Notes", 1000),
+  pfiNumber: z.string().trim().max(100).optional(),
+  pfi_number: z.string().trim().max(100).optional(),
+  description: optPfiStr("Description", 1000),
+  pfiDate: optPfiDate("PFI date"),
+  pfi_date: optPfiDate("PFI date"),
+  locationId: optPfiId("Location"),
+  location_id: optPfiId("Location"),
+  depotId: optPfiId("Depot"),
+  depot_id: optPfiId("Depot"),
+  location: optPfiStr("Location", 255),
+  locationName: optPfiStr("Location name", 255),
+  location_name: optPfiStr("Location name", 255),
+  productId: optPfiId("Product"),
+  product_id: optPfiId("Product"),
+  productUnit: optPfiStr("Product unit", 50),
+  product_unit: optPfiStr("Product unit", 50),
+  startingQtyLitres: optPfiQty("Starting quantity"),
+  starting_qty_litres: optPfiQty("Starting quantity"),
+  blQtyLitres: optPfiBlQty("BL quantity"),
+  bl_qty_litres: optPfiBlQty("BL quantity"),
+  qtyVolumeMt: optPfiFloat("Quantity volume (MT)"),
+  qty_volume_mt: optPfiFloat("Quantity volume (MT)"),
+  unitPrice: optPfiMoney("Unit price"),
+  unit_price: optPfiMoney("Unit price"),
+  auditOfficerId: optPfiId("Audit officer"),
+  audit_officer: optPfiId("Audit officer"),
+  audit_officer_id: optPfiId("Audit officer"),
+  productOfficerId: optPfiId("Product officer"),
+  product_officer: optPfiId("Product officer"),
+  product_officer_id: optPfiId("Product officer"),
+  itComplianceOfficerId: optPfiId("IT compliance officer"),
+  it_compliance_officer: optPfiId("IT compliance officer"),
+  it_compliance_officer_id: optPfiId("IT compliance officer"),
+  securityExitOfficerId: optPfiId("Security exit officer"),
+  security_exit_officer: optPfiId("Security exit officer"),
+  security_exit_officer_id: optPfiId("Security exit officer"),
+  commissionOfficerId: optPfiId("Commission officer"),
+  commission_officer: optPfiId("Commission officer"),
+  commission_officer_id: optPfiId("Commission officer"),
+  salesManagerId: optPfiId("Sales manager"),
+  sales_manager: optPfiId("Sales manager"),
+  sales_manager_id: optPfiId("Sales manager"),
+  vesselBroker: optPfiStr("Vessel broker", 255),
+  vessel_broker: optPfiStr("Vessel broker", 255),
+  vesselName: optPfiStr("Vessel name", 255),
+  vessel_name: optPfiStr("Vessel name", 255),
+  surveyorName: optPfiStr("Surveyor name", 255),
+  surveyor_name: optPfiStr("Surveyor name", 255),
+  surveyorPhone: optPfiStr("Surveyor phone", 50),
+  surveyor_phone: optPfiStr("Surveyor phone", 50),
+  notes: optPfiStr("Notes", 1000),
+  status: enumOf("Status", ["active", "finished"]).optional(),
+  closureDate: optPfiDate("Closure date"),
+  closure_date: optPfiDate("Closure date"),
+  closureBank: optPfiStr("Closure bank", 255),
+  closure_bank: optPfiStr("Closure bank", 255),
+  closureHandler: optPfiStr("Closure handler", 255),
+  closure_handler: optPfiStr("Closure handler", 255),
+  closureRemarks: optPfiStr("Closure remarks", 1000),
+  closure_remarks: optPfiStr("Closure remarks", 1000),
+  totalInflow: optPfiMoney("Total inflow"),
+  total_inflow: optPfiMoney("Total inflow"),
+  purchaseCost: optPfiMoney("Purchase cost"),
+  purchase_cost: optPfiMoney("Purchase cost"),
+  aggregateExpenses: optPfiMoney("Aggregate expenses"),
+  aggregate_expenses: optPfiMoney("Aggregate expenses"),
+  soldQtyLitres: optPfiQty("Sold quantity"),
+  sold_qty_litres: optPfiQty("Sold quantity"),
+  totalAmount: optPfiMoney("Total amount"),
+  total_amount: optPfiMoney("Total amount"),
 };
-const createPfi = z.object(pfiBase);
-const updatePfi = z.object(pfiBase).partial();
+
+const createPfi = z.object(pfiBase).refine(
+  (d) => (d.pfiNumber && d.pfiNumber.length > 0) || (d.pfi_number && d.pfi_number.length > 0),
+  { message: "PFI number is required", path: ["pfiNumber"] }
+);
+const updatePfi = z.object(pfiBase);
 
 module.exports = {
   idParam,

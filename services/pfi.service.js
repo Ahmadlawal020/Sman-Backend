@@ -17,6 +17,9 @@ async function getDepotCapacities(depotId) {
   const { pfis } = require("../db/schema");
   const { eq, and } = require("drizzle-orm");
 
+  const numericDepotId = parseInt(depotId, 10);
+  if (isNaN(numericDepotId)) return {};
+
   const activePfis = await db
     .select({
       productId: pfis.productId,
@@ -24,7 +27,7 @@ async function getDepotCapacities(depotId) {
       soldQtyLitres: pfis.soldQtyLitres,
     })
     .from(pfis)
-    .where(and(eq(pfis.locationId, depotId), eq(pfis.status, "active")));
+    .where(and(eq(pfis.locationId, numericDepotId), eq(pfis.status, "active")));
 
   const capacityMap = {};
   for (const pfi of activePfis) {
@@ -32,9 +35,10 @@ async function getDepotCapacities(depotId) {
     if (!prodKey) continue;
     const available = Math.max(
       0,
-      (pfi.startingQtyLitres || 0) - (pfi.soldQtyLitres || 0)
+      Number(pfi.startingQtyLitres || 0) - Number(pfi.soldQtyLitres || 0)
     );
     capacityMap[prodKey] = (capacityMap[prodKey] || 0) + available;
+    capacityMap[String(prodKey)] = capacityMap[prodKey];
   }
 
   return capacityMap;
@@ -45,6 +49,9 @@ async function getMultiDepotCapacities(depotIds) {
   const { pfis } = require("../db/schema");
   const { eq, and, inArray } = require("drizzle-orm");
 
+  const numericIds = (depotIds || []).map((id) => parseInt(id, 10)).filter((n) => !isNaN(n));
+  if (numericIds.length === 0) return {};
+
   const activePfis = await db
     .select({
       locationId: pfis.locationId,
@@ -53,7 +60,7 @@ async function getMultiDepotCapacities(depotIds) {
       soldQtyLitres: pfis.soldQtyLitres,
     })
     .from(pfis)
-    .where(and(inArray(pfis.locationId, depotIds), eq(pfis.status, "active")));
+    .where(and(inArray(pfis.locationId, numericIds), eq(pfis.status, "active")));
 
   const pfiCapacityMap = {};
   for (const pfi of activePfis) {
@@ -61,12 +68,14 @@ async function getMultiDepotCapacities(depotIds) {
     const prodKey = pfi.productId;
     if (!prodKey) continue;
     if (!pfiCapacityMap[depotKey]) pfiCapacityMap[depotKey] = {};
+    if (!pfiCapacityMap[String(depotKey)]) pfiCapacityMap[String(depotKey)] = pfiCapacityMap[depotKey];
     const available = Math.max(
       0,
-      (pfi.startingQtyLitres || 0) - (pfi.soldQtyLitres || 0)
+      Number(pfi.startingQtyLitres || 0) - Number(pfi.soldQtyLitres || 0)
     );
     pfiCapacityMap[depotKey][prodKey] =
       (pfiCapacityMap[depotKey][prodKey] || 0) + available;
+    pfiCapacityMap[depotKey][String(prodKey)] = pfiCapacityMap[depotKey][prodKey];
   }
 
   return pfiCapacityMap;

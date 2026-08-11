@@ -272,6 +272,7 @@ const findAll = async ({
         customerCompanyName: customers.companyName,
         customerEmail: customers.email,
         customerPhone: customers.phone,
+        customerBalance: customers.balance,
         depotName: depots.name,
         depotCode: depots.code,
         productName: products.name,

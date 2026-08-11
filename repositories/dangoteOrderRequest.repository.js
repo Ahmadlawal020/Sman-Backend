@@ -11,6 +11,9 @@ const formatDangoteOrderRow = (row) => {
     ...row,
     requestNumber: ref,
     reference: ref,
+    bankName: row.bankName || row.virtualAccountBank || "",
+    accountName: row.accountName || row.virtualAccountName || "",
+    accountNumber: row.accountNumber || row.virtualAccountNumber || "",
   };
 };
 

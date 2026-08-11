@@ -155,7 +155,7 @@ const createPfi = asyncHandler(async (req, res) => {
     locationName: location_name,
     productId: product_id ? (parseInt(product_id, 10) || product_id) : null,
     productName: product_name,
-    productUnit: product_unit,
+    productUnit: req.body.product_unit || req.body.productUnit || product_unit || "Litres",
     startingQtyLitres: Number(starting_qty_litres) || 0,
     // Left null when not supplied — an unknown BL must not read as zero, or
     // every money figure downstream would silently compute against it.

@@ -700,7 +700,7 @@ const sendDangoteOrderConfirmedEmail = async (email, requestData) => {
                         </tr>
                         <tr>
                           <td style="padding:8px 0 0;">
-                            <p style="margin:0;color:#047857;font-size:12px;line-height:1.5;">Please make payment to the dedicated account above. Your payment will be confirmed automatically.</p>
+                            <p style="margin:0;color:#047857;font-size:12px;line-height:1.5;">Please make payment of the total amount to the bank account details above to complete your order.</p>
                           </td>
                         </tr>
                       </table>

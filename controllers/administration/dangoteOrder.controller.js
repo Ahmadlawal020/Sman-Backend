@@ -9,10 +9,8 @@ const {
   sendDangoteRequestReceivedEmail,
   sendDangoteOrderConfirmedEmail,
 } = require("../../services/email.service");
-const { createDedicatedAccount } = require("../../services/payment.service");
 const { sendDangoteDeliveryOrderSMS } = require("../../services/sms.service");
 const { notify } = require("../../notifications");
-const { virtualAccountName: formatVirtualAccountName } = require("../../utils/helpers");
 const walletService = require("../../services/wallet.service");
 const dangoteOrderStatus = require("../../services/dangoteOrderStatus.service");
 const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
@@ -191,7 +189,18 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
 
 const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
-  const { pricePerUnit, deliveryPrice, expectedArrivalDate, action } = req.body;
+  const {
+    pricePerUnit,
+    deliveryPrice,
+    expectedArrivalDate,
+    action,
+    bankName,
+    accountName,
+    accountNumber,
+    virtualAccountBank,
+    virtualAccountName,
+    virtualAccountNumber,
+  } = req.body;
 
   const existing = await dangoteOrderRequestRepo.findById(id);
   if (!existing) {
@@ -237,6 +246,17 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
     });
   }
 
+  const finalBankName = (bankName || virtualAccountBank || "").trim();
+  const finalAccountName = (accountName || virtualAccountName || "").trim();
+  const finalAccountNumber = (accountNumber || virtualAccountNumber || "").trim();
+
+  if (!finalBankName || !finalAccountName || !finalAccountNumber) {
+    return res.status(400).json({
+      success: false,
+      message: "Bank name, account name, and account number are required for approval",
+    });
+  }
+
   // Check licence status before allowing approval
   if (existing.licenseId) {
     const license = await customerLicenseRepo.findById(existing.licenseId);
@@ -257,6 +277,9 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
       deliveryPrice: String(deliveryPrice || 0),
       totalAmount: String(totalAmount),
       expectedArrivalDate: expectedArrivalDate || "",
+      virtualAccountNumber: finalAccountNumber,
+      virtualAccountBank: finalBankName,
+      virtualAccountName: finalAccountName,
       reviewedBy: req.user.id,
       reviewedAt: new Date(),
     },
@@ -264,53 +287,16 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
     metadata: { totalAmount: String(totalAmount) },
   });
 
-  // Fetch full customer record for DVA check
-  const customer = await customerRepo.findById(existing.customerId);
-
-  // Check/create DVA (Dedicated Virtual Account)
-  let virtualAccountNumber = customer?.virtualAccountNumber || "";
-  let virtualAccountBank = customer?.virtualAccountBank || "";
-  let virtualAccountName = customer?.virtualAccountName || "";
-
-  if (!virtualAccountNumber && customer) {
-    try {
-      const accountResult = await createDedicatedAccount(customer);
-      if (accountResult.success) {
-        virtualAccountNumber = accountResult.data.accountNumber;
-        virtualAccountBank = accountResult.data.bankName;
-        virtualAccountName =
-          accountResult.data.accountName ||
-          formatVirtualAccountName(customer.name);
-        const updateData = {
-          virtualAccountNumber,
-          virtualAccountBank,
-          virtualAccountName,
-        };
-        if (accountResult.data.paystackCustomerId) {
-          updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
-        }
-        await customerRepo.update(customer.id, updateData);
-      } else {
-        console.error("Failed to create DVA for customer:", accountResult.message);
-      }
-    } catch (dvaErr) {
-      console.error("DVA creation error:", dvaErr.message);
-    }
-  } else if (!virtualAccountName && customer) {
-    virtualAccountName = formatVirtualAccountName(customer.name);
-    await customerRepo.update(customer.id, { virtualAccountName });
-  }
-
-  // Store DVA on the request record
+  // Store bank details on the request record
   await dangoteOrderRequestRepo.update(id, {
-    virtualAccountNumber,
-    virtualAccountBank,
-    virtualAccountName,
+    virtualAccountNumber: finalAccountNumber,
+    virtualAccountBank: finalBankName,
+    virtualAccountName: finalAccountName,
   });
 
   const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
 
-  // Send confirmation email with DVA payment details
+  // Send confirmation email with bank payment details
   if (fullRequest.customerEmail) {
     try {
       await sendDangoteOrderConfirmedEmail(fullRequest.customerEmail, {
@@ -327,9 +313,9 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
         deliveryAddress: fullRequest.deliveryAddress,
         deliveryState: fullRequest.deliveryState,
         expectedArrivalDate: expectedArrivalDate || "",
-        accountNumber: virtualAccountNumber,
-        bankName: virtualAccountBank,
-        accountName: virtualAccountName,
+        accountNumber: finalAccountNumber,
+        bankName: finalBankName,
+        accountName: finalAccountName,
       });
     } catch (emailErr) {
       console.error("Failed to send Dangote confirmation email:", emailErr);
@@ -337,6 +323,7 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
   }
 
   // Send SMS with order summary and payment details
+  const customer = await customerRepo.findById(existing.customerId);
   if (customer?.phone) {
     try {
       await sendDangoteDeliveryOrderSMS(customer.phone, {
@@ -346,9 +333,9 @@ const reviewDangoteOrderRequest = asyncHandler(async (req, res) => {
         quantity: fullRequest.quantity,
         quantityUnit: fullRequest.quantityUnit,
         totalAmount,
-        accountNumber: virtualAccountNumber,
-        bankName: virtualAccountBank,
-        accountName: virtualAccountName,
+        accountNumber: finalAccountNumber,
+        bankName: finalBankName,
+        accountName: finalAccountName,
       });
     } catch (smsErr) {
       console.error("Failed to send Dangote delivery SMS:", smsErr);

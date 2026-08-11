@@ -107,11 +107,32 @@ const aggregatesFor = async (ids) => {
  * transaction so a PFI can never exist without its category.
  */
 const ensureCategoryForPfi = async (pfiId, pfiNumber, tx = client) => {
+  const [byPfi] = await tx`SELECT * FROM expense_categories WHERE pfi_id = ${Number(pfiId)} LIMIT 1`;
+  if (byPfi) {
+    if (byPfi.name !== pfiNumber) {
+      const [updated] = await tx`
+        UPDATE expense_categories
+        SET name = ${pfiNumber}, updated_at = NOW()
+        WHERE id = ${byPfi.id}
+        RETURNING *
+      `;
+      return updated;
+    }
+    return byPfi;
+  }
+  const [byName] = await tx`SELECT * FROM expense_categories WHERE name = ${pfiNumber} LIMIT 1`;
+  if (byName) {
+    const [updated] = await tx`
+      UPDATE expense_categories
+      SET pfi_id = ${Number(pfiId)}, is_system_category = true, updated_at = NOW()
+      WHERE id = ${byName.id}
+      RETURNING *
+    `;
+    return updated;
+  }
   const [row] = await tx`
     INSERT INTO expense_categories (name, pfi_id, is_system_category)
     VALUES (${pfiNumber}, ${Number(pfiId)}, true)
-    ON CONFLICT (pfi_id) WHERE pfi_id IS NOT NULL
-      DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
     RETURNING *
   `;
   return row;
