@@ -415,6 +415,12 @@ const updateDangoteOrderCollectionStatus = asyncHandler(async (req, res) => {
   });
 });
 
+/** Staff desk list: approved unpaid quotes whose wallet balance covers the total. */
+const getPayableDangoteOrders = asyncHandler(async (req, res) => {
+  const orders = await dangoteOrderRequestRepo.findPayableDangoteOrders();
+  res.json({ success: true, data: { orders } });
+});
+
 module.exports = {
   getDangoteProducts,
   getDangoteProductsActive,
@@ -427,4 +433,5 @@ module.exports = {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
+  getPayableDangoteOrders,
 };

@@ -16,6 +16,7 @@ const {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
+  getPayableDangoteOrders,
 } = require("../../controllers/administration/dangoteOrder.controller");
 
 // Dangote Products
@@ -26,6 +27,7 @@ router.post("/dangote-products", verifyStaff, validate({ body: misc.createDangot
 router.put("/dangote-products/:id", verifyStaff, validate({ body: misc.updateDangoteProduct }), updateDangoteProduct);
 
 // Dangote Order Requests
+router.get("/dangote-order-requests/payable", verifyStaff, getPayableDangoteOrders);
 router.get("/dangote-order-requests", verifyStaff, getDangoteOrderRequests);
 router.get("/dangote-order-requests/:id", verifyStaff, getDangoteOrderRequestById);
 router.post("/dangote-order-requests", verifyStaff, createDangoteOrderRequest);

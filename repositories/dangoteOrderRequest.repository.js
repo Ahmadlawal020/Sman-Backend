@@ -246,6 +246,41 @@ const generateRequestNumber = async () => {
   return `DNG-REQ-${year}-${String(num).padStart(3, "0")}`;
 };
 
+const findPayableDangoteOrders = async () => {
+  const rows = await db
+    .select({
+      id: dangoteOrderRequests.id,
+      requestNumber: dangoteOrderRequests.requestNumber,
+      customerId: dangoteOrderRequests.customerId,
+      customerName: customers.name,
+      companyName: dangoteOrderRequests.companyName,
+      customerCompanyName: customers.companyName,
+      customerBalance: customers.balance,
+      product: dangoteOrderRequests.product,
+      quantity: dangoteOrderRequests.quantity,
+      quantityUnit: dangoteOrderRequests.quantityUnit,
+      totalAmount: dangoteOrderRequests.totalAmount,
+      paymentStatus: dangoteOrderRequests.paymentStatus,
+      status: dangoteOrderRequests.status,
+      createdAt: dangoteOrderRequests.createdAt,
+      deliveryAddress: dangoteOrderRequests.deliveryAddress,
+      deliveryState: dangoteOrderRequests.deliveryState,
+    })
+    .from(dangoteOrderRequests)
+    .innerJoin(customers, eq(dangoteOrderRequests.customerId, customers.id))
+    .where(
+      and(
+        eq(dangoteOrderRequests.paymentStatus, "Unpaid"),
+        eq(dangoteOrderRequests.status, "Approved"),
+        sql`${dangoteOrderRequests.totalAmount} IS NOT NULL`,
+        sql`${dangoteOrderRequests.totalAmount} > 0`,
+        sql`${customers.balance} >= ${dangoteOrderRequests.totalAmount}`
+      )
+    )
+    .orderBy(dangoteOrderRequests.createdAt);
+  return rows.map(formatDangoteOrderRow);
+};
+
 /**
  * Approved, unpaid Dangote requests whose review timestamp is on or before
  * `cutoff` — the expiry sweep's work list. Oldest first.
@@ -273,5 +308,6 @@ module.exports = {
   cancelIfWithdrawable,
   countActiveByLicenseId,
   generateRequestNumber,
+  findPayableDangoteOrders,
   findStaleApproved,
 };
