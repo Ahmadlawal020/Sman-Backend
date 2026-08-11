@@ -50,6 +50,61 @@ function sameSite() {
   return ["strict", "lax", "none"].includes(raw) ? raw : "strict";
 }
 
+/**
+ * Refuse to boot with a cookie policy that silently kills the refresh flow.
+ *
+ * The refresh token is an httpOnly cookie. A browser will not attach a
+ * SameSite=Strict or Lax cookie to a request aimed at a different site, so if
+ * the dashboard and the API sit on different registrable domains — say
+ * *.railway.app calling *.onrender.com — the cookie never arrives. Login still
+ * works, because the access token comes back in the body; then fifteen minutes
+ * later the access token expires, refresh is attempted without its cookie, and
+ * every request starts failing until the user signs in again.
+ *
+ * It does not reproduce locally: localhost:5173 and localhost:5002 differ only
+ * by port, and port is not part of a "site", so Strict is honoured there.
+ *
+ * Cross-site cookies need SameSite=None, which requires Secure, which requires
+ * HTTPS. Set COOKIE_SAMESITE=none wherever the two are on different domains.
+ */
+function assertCookiePolicy() {
+  const mode = sameSite();
+  if (mode === "none") return;
+
+  const origins = (process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  // Registrable-domain comparison, close enough for the common hosts: the last
+  // two labels ("railway.app", "onrender.com"), and localhost as its own site.
+  const siteOf = (value) => {
+    try {
+      const host = new URL(value).hostname;
+      if (host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
+      return host.split(".").slice(-2).join(".");
+    } catch {
+      return null;
+    }
+  };
+
+  const apiSite = siteOf(process.env.PUBLIC_API_URL || "") ;
+  const crossSite = origins
+    .map(siteOf)
+    .filter(Boolean)
+    .filter((site) => site !== "localhost" && (!apiSite || site !== apiSite));
+
+  if (crossSite.length === 0) return;
+
+  const message =
+    `COOKIE_SAMESITE is "${mode}", but these dashboard origins are on a different site to the API: ` +
+    `${[...new Set(crossSite)].join(", ")}. The refresh cookie will not be sent from them, so every ` +
+    `session will stop working when its access token expires. Set COOKIE_SAMESITE=none (requires HTTPS).`;
+
+  if (process.env.NODE_ENV === "production") throw new Error(`Fatal: ${message}`);
+  console.warn(`[cookie] ${message}`);
+}
+
 function isSecure() {
   // Off in development so the cookie works over plain http on localhost.
   // SameSite=None is meaningless without Secure, so force it in that case.
@@ -184,6 +239,8 @@ function applyIssuedToken(req, res, realm, refreshToken) {
   const csrfToken = setCsrfCookie(res, realm);
   return { refreshToken: undefined, csrfToken };
 }
+
+assertCookiePolicy();
 
 module.exports = {
   COOKIES,
