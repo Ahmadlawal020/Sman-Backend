@@ -416,15 +416,19 @@ const updateDangoteOrderCollectionStatus = asyncHandler(async (req, res) => {
   });
 });
 
+/** Staff desk list: approved unpaid quotes whose wallet balance covers the total. */
 const getPayableDangoteOrders = asyncHandler(async (req, res) => {
   const orders = await dangoteOrderRequestRepo.findPayableDangoteOrders();
   res.json({ success: true, data: { orders } });
 });
 
+/**
+ * Staff finance: settle an approved unpaid Dangote quote from the customer's
+ * wallet balance. Customer self-serve wallet pay is removed; this desk path stays.
+ */
 const payDangoteOrder = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
 
-  // Pre-payment guard: if the request has lapsed, expire it and refuse.
   const wasExpired = await expireIfStale({ requestId: id, type: "dangote" });
   if (wasExpired) {
     return res.status(409).json({
