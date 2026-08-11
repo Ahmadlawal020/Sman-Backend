@@ -8,8 +8,7 @@ const {
 const { sendDangoteRequestReceivedEmail } = require("../../services/email.service");
 const { tradeCode } = require("../../services/catalog.service");
 const { notify } = require("../../notifications");
-const walletService = require("../../services/wallet.service");
-const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
+const { withRequestExpiresAt } = require("../../services/requestExpiry.service");
 
 /**
  * GET /api/dangote-catalog — public, read-only: the active Dangote products a
@@ -40,8 +39,9 @@ const getDangoteCatalog = asyncHandler(async (req, res) => {
 /**
  * POST /api/customer/dangote-orders — the signed-in customer submits their OWN
  * bulk quote request. The customer id comes from the session, never the body.
- * It lands as Pending Review; staff review, price, and approve it through the
- * existing admin flow, which also provisions the payment account.
+ * It lands as Pending Review; staff review, price, approve it, and attach
+ * the bank account the customer should transfer to. Payment is confirmed
+ * manually by staff after the transfer clears.
  */
 const createMyDangoteOrder = asyncHandler(async (req, res) => {
   const {
@@ -159,76 +159,6 @@ const getMyDangoteOrder = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /api/customer/dangote-orders/:id/pay — the signed-in customer settles
- * their OWN approved quote from wallet balance. Customer twin of the staff
- * finance pay route: same guards (must be Approved + Unpaid) and the same
- * wallet debit, but scoped to req.customer — a foreign request is a 404, and
- * the already-Paid / not-yet-Approved guards double as the double-pay guard.
- */
-const payMyDangoteOrder = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-
-  // Pre-payment guard: if the request has lapsed, expire it and refuse.
-  const wasExpired = await expireIfStale({ requestId: id, type: "dangote", customerId: req.customer.id });
-  if (wasExpired) {
-    return res.status(409).json({
-      success: false,
-      message: "This order has expired because payment wasn't received in time. Please submit a new request at current prices.",
-    });
-  }
-
-  const existing = await dangoteOrderRequestRepo.findById(id);
-  if (!existing || existing.customerId !== req.customer.id) {
-    return res.status(404).json({ success: false, message: "Order request not found" });
-  }
-  if (existing.paymentStatus === "Paid") {
-    return res.status(409).json({ success: false, message: "Order is already paid" });
-  }
-  if (existing.status === "Expired") {
-    return res.status(409).json({ success: false, message: "This order has expired. Please submit a new request at current prices." });
-  }
-  if (existing.status !== "Approved") {
-    return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });
-  }
-
-  const totalAmount = Number(existing.totalAmount);
-  if (!totalAmount || totalAmount <= 0) {
-    return res.status(400).json({ success: false, message: "Order total is invalid" });
-  }
-
-  const debitResult = await walletService.debit({
-    customerId: req.customer.id,
-    amount: totalAmount,
-    description: `Payment for Dangote Order ${existing.requestNumber}`,
-    reference: `DNG-PAY-${existing.id}`,
-  });
-
-  if (!debitResult.success) {
-    if (debitResult.insufficient) {
-      const customer = await customerRepo.findById(req.customer.id);
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient wallet balance. Required: ₦${totalAmount.toLocaleString()}, Available: ₦${Number(customer?.balance || 0).toLocaleString()}`,
-      });
-    }
-    return res.status(400).json({ success: false, message: debitResult.message || "Payment failed" });
-  }
-
-  await dangoteOrderRequestRepo.update(id, {
-    paymentStatus: "Paid",
-    paymentMode: "wallet",
-    paymentReference: debitResult.deposit?.reference || `DNG-PAY-${existing.id}`,
-  });
-
-  const request = await dangoteOrderRequestRepo.findByIdFull(id);
-  res.json({
-    success: true,
-    message: `Dangote order ${existing.requestNumber} paid from your wallet balance.`,
-    data: { request },
-  });
-});
-
-/**
  * POST /api/customer/dangote-orders/:id/cancel — the customer withdraws their
  * OWN quote request while it is still unpaid. Pending Review and Approved +
  * Unpaid both cancel; Paid or already-terminal requests cannot. Lands as
@@ -290,6 +220,5 @@ module.exports = {
   createMyDangoteOrder,
   listMyDangoteOrders,
   getMyDangoteOrder,
-  payMyDangoteOrder,
   cancelMyDangoteOrder,
 };

@@ -11,9 +11,8 @@ const {
 } = require("../../services/email.service");
 const { sendDangoteDeliveryOrderSMS } = require("../../services/sms.service");
 const { notify } = require("../../notifications");
-const walletService = require("../../services/wallet.service");
 const dangoteOrderStatus = require("../../services/dangoteOrderStatus.service");
-const { withRequestExpiresAt, expireIfStale } = require("../../services/requestExpiry.service");
+const { withRequestExpiresAt } = require("../../services/requestExpiry.service");
 
 // ── Dangote Products ──────────────────────────────────────────────────────
 
@@ -416,79 +415,6 @@ const updateDangoteOrderCollectionStatus = asyncHandler(async (req, res) => {
   });
 });
 
-const getPayableDangoteOrders = asyncHandler(async (req, res) => {
-  const orders = await dangoteOrderRequestRepo.findPayableDangoteOrders();
-  res.json({ success: true, data: { orders } });
-});
-
-const payDangoteOrder = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-
-  // Pre-payment guard: if the request has lapsed, expire it and refuse.
-  const wasExpired = await expireIfStale({ requestId: id, type: "dangote" });
-  if (wasExpired) {
-    return res.status(409).json({
-      success: false,
-      message: "This order has expired because payment wasn't received in time.",
-    });
-  }
-
-  const existing = await dangoteOrderRequestRepo.findById(id);
-  if (!existing) {
-    return res.status(404).json({ success: false, message: "Order request not found" });
-  }
-  if (existing.paymentStatus === "Paid") {
-    return res.status(409).json({ success: false, message: "Order is already paid" });
-  }
-  if (existing.status === "Expired") {
-    return res.status(409).json({ success: false, message: "This order has expired." });
-  }
-  if (existing.status !== "Approved") {
-    return res.status(409).json({ success: false, message: `Cannot pay an order in ${existing.status} status` });
-  }
-
-  const totalAmount = Number(existing.totalAmount);
-  if (!totalAmount || totalAmount <= 0) {
-    return res.status(400).json({ success: false, message: "Order total is invalid" });
-  }
-
-  const customer = await customerRepo.findById(existing.customerId);
-  if (!customer) {
-    return res.status(404).json({ success: false, message: "Customer not found" });
-  }
-
-  const debitResult = await walletService.debit({
-    customerId: customer.id,
-    amount: totalAmount,
-    description: `Payment for Dangote Order ${existing.requestNumber}`,
-    reference: `DNG-PAY-${existing.id}`,
-  });
-
-  if (!debitResult.success) {
-    if (debitResult.insufficient) {
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient wallet balance. Required: ₦${totalAmount.toLocaleString()}, Available: ₦${Number(customer.balance).toLocaleString()}`,
-      });
-    }
-    return res.status(400).json({ success: false, message: debitResult.message || "Payment failed" });
-  }
-
-  const updated = await dangoteOrderRequestRepo.update(id, {
-    paymentStatus: "Paid",
-    paymentMode: "wallet",
-    paymentReference: debitResult.deposit?.reference || `DNG-PAY-${existing.id}`,
-  });
-
-  const fullRequest = await dangoteOrderRequestRepo.findByIdFull(updated.id);
-
-  res.json({
-    success: true,
-    message: `Dangote order ${existing.requestNumber} paid successfully from wallet`,
-    data: { request: fullRequest },
-  });
-});
-
 module.exports = {
   getDangoteProducts,
   getDangoteProductsActive,
@@ -501,6 +427,4 @@ module.exports = {
   reviewDangoteOrderRequest,
   updateDangoteOrderPaymentStatus,
   updateDangoteOrderCollectionStatus,
-  getPayableDangoteOrders,
-  payDangoteOrder,
 };
