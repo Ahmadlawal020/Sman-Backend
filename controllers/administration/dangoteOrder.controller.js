@@ -119,10 +119,7 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Customer not found" });
   }
 
-  const requestNumber = await dangoteOrderRequestRepo.generateRequestNumber();
-
   const request = await dangoteOrderRequestRepo.create({
-    requestNumber,
     customerId: customer.id,
     companyName: companyName || "",
     licenseId: licenseId ? Number(licenseId) : null,
@@ -136,6 +133,9 @@ const createDangoteOrderRequest = asyncHandler(async (req, res) => {
     paymentReference: paymentReference || "",
     paymentMode: paymentMode || "",
   });
+  // create() overwrites the insert filler with INITIALS+id — use that everywhere
+  // so email / push / staff alerts match the ref the API returns.
+  const requestNumber = request.requestNumber;
 
   // Send "under review" email to customer
   if (customer.email) {
