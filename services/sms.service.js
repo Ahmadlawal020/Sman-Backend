@@ -58,25 +58,20 @@ const sendSMSTermii = async (phone, sms, channel = CHANNELS.GENERIC) => {
 };
 
 /**
- * Send one message, trying the transactional route first and falling back to
- * the DND route.
+ * OTP-only sender: try Termii's DND (transactional) route first, then generic.
  *
- * Nigeria's Do-Not-Disturb register is the reason this exists: `generic` is the
- * cheaper transactional route, but a number registered on DND is reachable ONLY
- * via `dnd`. Trying generic first keeps the cheap route as the default while
- * still reaching a DND-registered customer instead of silently dropping their
- * message.
- *
- * Every bespoke sender below already inlines this loop; this is the same
- * behaviour extracted so callers that need plain text — the OTP path — get it
- * too, rather than quietly sending on `generic` only.
+ * Per Termii docs, OTP/transactional traffic belongs on `dnd` — `generic` is
+ * promotional, skips DND-registered numbers, and on MTN Nigeria is blocked
+ * 8PM–8AM WAT. Preferring `dnd` avoids "Successfully Sent" on generic with no
+ * actual delivery. Order/notification senders below keep generic → dnd so this
+ * can be tested in isolation.
  *
  * Never throws: returns { success, message } so a caller can branch on the
  * outcome instead of relying on an exception that a soft failure won't raise.
  */
 const sendSMSWithFallback = async (phone, sms) => {
   const attempts = [];
-  for (const channel of [CHANNELS.GENERIC, CHANNELS.DND]) {
+  for (const channel of [CHANNELS.DND, CHANNELS.GENERIC]) {
     try {
       const result = await sendSMSTermii(phone, sms, channel);
       if (result.success) return { success: true, channel };

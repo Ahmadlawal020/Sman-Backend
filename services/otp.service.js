@@ -154,16 +154,10 @@ async function issueAndSend(customer, { action, requestIp }) {
     return { sent: true, reason: "dev_mode" };
   }
 
-  // sendSMSWithFallback, not sendSMSTermii, for two reasons that both showed up
-  // as "the customer never got their code":
-  //
-  //  1. A bare sendSMSTermii() call takes the default `generic` channel. Much
-  //     of Nigeria is on the Do-Not-Disturb register, and those numbers are
-  //     reachable ONLY via `dnd` — so sign-in failed for exactly the customers
-  //     whose order confirmations (which already fall back) arrived fine.
-  //  2. sendSMSTermii resolves with { success: false } for a soft provider
-  //     rejection rather than throwing, so a try/catch alone saw a rejected
-  //     message as a delivered one. The return value has to be checked.
+  // sendSMSWithFallback (OTP-only helper): tries Termii `dnd` first, then
+  // `generic`. Termii docs say OTPs belong on dnd; a bare sendSMSTermii()
+  // defaults to generic and soft-fails as { success: false } without throwing,
+  // so the return value must be checked.
   const result = await sendSMSWithFallback(
     customer.phone,
     `Your Soroman verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`
