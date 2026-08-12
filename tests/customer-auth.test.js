@@ -598,7 +598,8 @@ describe("customer auth — register, OTP, enumeration safety", () => {
         .post(`${BASE}/account/request-otp`)
         .set("Authorization", `Bearer ${accessToken}`);
       assert.equal(otpRes.status, 409, JSON.stringify(otpRes.body));
-      assert.match(otpRes.body.message, /balance/i);
+      assert.match(otpRes.body.message, /wallet/i);
+      assert.match(otpRes.body.message, /₦150\.00/);
 
       await customerRepo.update(customer.id, { balance: "0.00" });
       await request(app)
@@ -612,7 +613,8 @@ describe("customer auth — register, OTP, enumeration safety", () => {
         .send({ code: DEV_CODE });
 
       assert.equal(res.status, 409, JSON.stringify(res.body));
-      assert.match(res.body.message, /balance/i);
+      assert.match(res.body.message, /wallet/i);
+      assert.match(res.body.message, /₦150\.00/);
       assert.ok(Array.isArray(res.body.data?.blockers));
 
       const after = await customerRepo.findById(customer.id);
