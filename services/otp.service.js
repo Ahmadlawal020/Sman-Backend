@@ -3,15 +3,17 @@ const { sendSMSWithFallback } = require("./sms.service");
 const { checkSmsEligibility } = require("../utils/phone");
 
 /**
- * OTP issuance for customer phone authentication.
+ * OTP issuance for customer phone authentication and account deletion.
  *
- * Verification lives in the controller because it owns the response shape;
- * this module owns everything that decides whether an SMS should leave the
- * building at all.
+ * Controllers own HTTP response shapes; this module owns whether an SMS should
+ * leave the building, and the shared verify path so every purpose gets the
+ * same attempt / consume rules.
  */
 
 const CODE_TTL_MINUTES = 10;
 const DEFAULT_DAILY_CAP = 500;
+
+const { PURPOSE_AUTH, PURPOSE_ACCOUNT_DELETION } = customerOtpRepo;
 
 /**
  * Per-action limits, counted from customer_otps rather than in memory.
@@ -52,6 +54,21 @@ const LIMITS = {
     },
     windowMinutes: 60,
   },
+  delete: {
+    get perPhone() {
+      return envInt("OTP_DELETE_PER_PHONE", 3);
+    },
+    get perIp() {
+      return envInt("OTP_DELETE_PER_IP", 30);
+    },
+    windowMinutes: 60,
+  },
+};
+
+const ACTION_PURPOSE = {
+  register: PURPOSE_AUTH,
+  login: PURPOSE_AUTH,
+  delete: PURPOSE_ACCOUNT_DELETION,
 };
 
 /**
@@ -120,6 +137,13 @@ async function checkRateLimits(action, { customerId, requestIp }) {
   return { ok: true };
 }
 
+function smsBody(action, code) {
+  if (action === "delete") {
+    return `Your Soroman account deletion code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes. If you did not request this, ignore this message.`;
+  }
+  return `Your Soroman verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`;
+}
+
 /**
  * Issue a code and send it.
  *
@@ -129,6 +153,9 @@ async function checkRateLimits(action, { customerId, requestIp }) {
  * @returns {{sent: boolean, reason: string|null, capped?: boolean}}
  */
 async function issueAndSend(customer, { action, requestIp }) {
+  const purpose = ACTION_PURPOSE[action];
+  if (!purpose) throw new TypeError(`otp.service: unknown action ${JSON.stringify(action)}`);
+
   const eligibility = checkSmsEligibility(customer.phone);
   if (!eligibility.ok) return { sent: false, reason: eligibility.reason };
 
@@ -144,12 +171,13 @@ async function issueAndSend(customer, { action, requestIp }) {
   const { code } = await customerOtpRepo.issue(customer.id, {
     ttlMinutes: CODE_TTL_MINUTES,
     requestIp,
+    purpose,
     code: useDevMode ? process.env.OTP_DEV_CODE : undefined,
   });
 
   if (useDevMode) {
     console.warn(
-      `[otp] DEV MODE: using the fixed code for customer ${customer.id}; no SMS sent.`
+      `[otp] DEV MODE: using the fixed code for customer ${customer.id} (${action}); no SMS sent.`
     );
     return { sent: true, reason: "dev_mode" };
   }
@@ -164,10 +192,7 @@ async function issueAndSend(customer, { action, requestIp }) {
   //  2. sendSMSTermii resolves with { success: false } for a soft provider
   //     rejection rather than throwing, so a try/catch alone saw a rejected
   //     message as a delivered one. The return value has to be checked.
-  const result = await sendSMSWithFallback(
-    customer.phone,
-    `Your Soroman verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`
-  );
+  const result = await sendSMSWithFallback(customer.phone, smsBody(action, code));
 
   if (!result.success) {
     // The row is already written, so the code stays valid and the customer can
@@ -187,13 +212,49 @@ async function issueAndSend(customer, { action, requestIp }) {
   return { sent: true, reason: null };
 }
 
+/**
+ * Shared verify path for every OTP purpose.
+ *
+ * @returns {{ ok: true } | { ok: false, reason: "invalid" | "exhausted" }}
+ */
+async function verifyCode(customerId, code, purpose = PURPOSE_AUTH) {
+  if (typeof code !== "string" || !code) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const live = await customerOtpRepo.findLive(customerId, purpose);
+  if (!live) return { ok: false, reason: "invalid" };
+
+  if (live.attempts >= customerOtpRepo.MAX_ATTEMPTS) {
+    await customerOtpRepo.consume(live.id);
+    return { ok: false, reason: "exhausted" };
+  }
+
+  const expected = customerOtpRepo.hashCode(customerId, code);
+  if (expected !== live.codeHash) {
+    const updated = await customerOtpRepo.recordFailedAttempt(live.id);
+    if (updated && updated.attempts >= customerOtpRepo.MAX_ATTEMPTS) {
+      await customerOtpRepo.consume(live.id);
+    }
+    return { ok: false, reason: "invalid" };
+  }
+
+  const consumed = await customerOtpRepo.consume(live.id);
+  if (!consumed) return { ok: false, reason: "invalid" };
+
+  return { ok: true };
+}
+
 module.exports = {
   CODE_TTL_MINUTES,
   LIMITS,
+  PURPOSE_AUTH,
+  PURPOSE_ACCOUNT_DELETION,
   devMode,
   devCode,
   dailyCap,
   isOverDailyCap,
   checkRateLimits,
   issueAndSend,
+  verifyCode,
 };
