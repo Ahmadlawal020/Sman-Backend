@@ -341,6 +341,14 @@ const processUnpaidOrdersForCustomer = async (customerId) => {
           set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
           metadata: { via: "settlement", amount: String(orderTotal) },
         });
+
+        // Settled orders clear for loading in the same breath — see
+        // orderStatus.releaseOnPayment.
+        await orderStatus.releaseOnPayment(order.id, {
+          tx,
+          actor: { type: "system" },
+          metadata: { via: "settlement" },
+        });
       });
     } catch (txErr) {
       console.error(`[settlement] failed to pay order ${order.orderNumber}:`, txErr.message);

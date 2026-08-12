@@ -259,7 +259,7 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
 
     const after = await orderRepo.findById(session.lastOrderId);
     assert.equal(after.paymentStatus, "Paid", "wallet credit + real settlement paid it");
-    assert.equal(after.status, "Paid");
+    assert.equal(after.status, "Released", "and released it for loading in the same breath");
   });
 
   test("the dev 'I've paid' effect pays the tapped order, never an older unpaid one", async () => {

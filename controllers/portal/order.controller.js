@@ -23,8 +23,8 @@ const isDevPaymentAllowed = () =>
 // stamps — details the public feed withholds.
 const TRUCK_STATUS_LABEL = {
   pending: "Assigned",
+  loaded: "Ticket issued",
   gated_in: "At the depot",
-  loaded: "Loaded",
   gated_out: "Departed",
 };
 
