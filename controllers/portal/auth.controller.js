@@ -335,7 +335,7 @@ const handleRequestDeleteOtp = asyncHandler(async (req, res) => {
   if (blockers.length > 0) {
     return res.status(409).json({
       success: false,
-      message: blockers[0],
+      message: accountDeletionService.formatBlockerMessage(blockers),
       data: { blockers },
     });
   }

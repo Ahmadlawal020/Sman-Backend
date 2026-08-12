@@ -18,6 +18,7 @@ const {
 } = require("../db/schema");
 const { sessionRepo } = require("../repositories");
 const { principalWhere } = require("../utils/principal");
+const { generateOrderReference } = require("../utils/helpers");
 
 /**
  * Apple App Store Guideline 5.1.1(v): apps that create accounts must let the
@@ -35,8 +36,30 @@ const { principalWhere } = require("../utils/principal");
 const OPEN_ORDER_STATUSES = ["Pending", "Paid", "Released", "Loading"];
 const OPEN_REQUEST_STATUSES = ["Pending Review", "Approved"];
 const REVOKE_REASON = "account_deleted";
+const REF_LIST_LIMIT = 5;
 
 const money = (value) => Number(value || 0);
+
+const formatNaira = (value) =>
+  `₦${money(value).toLocaleString("en-NG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+/** "ORD-A, ORD-B, and 2 more" — keeps toasts readable when many refs pile up. */
+function formatRefs(refs, limit = REF_LIST_LIMIT) {
+  const clean = refs.filter(Boolean);
+  if (clean.length === 0) return "";
+  const shown = clean.slice(0, limit);
+  const extra = clean.length - shown.length;
+  const list = shown.join(", ");
+  return extra > 0 ? `${list}, and ${extra} more` : list;
+}
+
+/** Single toast/API message from the structured blocker list. */
+function formatBlockerMessage(blockers) {
+  return blockers.filter(Boolean).join(" ");
+}
 
 /**
  * Reasons the account cannot be deleted yet. Empty array means clear.
@@ -48,6 +71,7 @@ async function collectBlockers(customerId, tx = db) {
       id: customers.id,
       balance: customers.balance,
       status: customers.status,
+      companyName: customers.companyName,
     })
     .from(customers)
     .where(eq(customers.id, customerId))
@@ -60,20 +84,28 @@ async function collectBlockers(customerId, tx = db) {
   const blockers = [];
 
   if (money(customer.balance) > 0) {
-    blockers.push("Wallet still has a balance. Withdraw or spend it before deleting.");
+    blockers.push(
+      `Your wallet still has ${formatNaira(customer.balance)}. Spend it on an order (or ask the desk to clear it) before deleting.`
+    );
   }
 
-  const [[{ holds }], [{ openOrders }], [{ openLpg }], [{ openDangote }]] = await Promise.all([
+  const [[{ holds }], openOrderRows, openLpgRows, openDangoteRows] = await Promise.all([
     tx
       .select({ holds: count() })
       .from(walletHolds)
       .where(and(eq(walletHolds.customerId, customerId), eq(walletHolds.status, "active"))),
     tx
-      .select({ openOrders: count() })
+      .select({
+        id: orders.id,
+        companyName: orders.companyName,
+        status: orders.status,
+      })
       .from(orders)
       .where(and(eq(orders.customerId, customerId), inArray(orders.status, OPEN_ORDER_STATUSES))),
     tx
-      .select({ openLpg: count() })
+      .select({
+        id: lpgOrderRequests.id,
+      })
       .from(lpgOrderRequests)
       .where(
         and(
@@ -82,7 +114,10 @@ async function collectBlockers(customerId, tx = db) {
         )
       ),
     tx
-      .select({ openDangote: count() })
+      .select({
+        id: dangoteOrderRequests.id,
+        companyName: dangoteOrderRequests.companyName,
+      })
       .from(dangoteOrderRequests)
       .where(
         and(
@@ -92,17 +127,65 @@ async function collectBlockers(customerId, tx = db) {
       ),
   ]);
 
-  if (Number(holds) > 0) {
-    blockers.push("An order still has funds on hold. Finish or cancel it first.");
+  // Same customer-facing ref the portal overwrites onto orderNumber (HA10831),
+  // never the staff ORD-… column — that is what the invoice/SMS/dashboard show.
+  const orderRef = (row) =>
+    generateOrderReference(row.companyName || customer.companyName || "", row.id);
+  const requestRef = (row) =>
+    generateOrderReference(row.companyName || customer.companyName || "", row.id);
+
+  const unpaid = openOrderRows.filter((o) => o.status === "Pending");
+  const inProgress = openOrderRows.filter((o) => o.status !== "Pending");
+
+  if (unpaid.length === 1) {
+    blockers.push(`Cancel unpaid order ${orderRef(unpaid[0])} before deleting.`);
+  } else if (unpaid.length > 1) {
+    blockers.push(
+      `Cancel unpaid orders (${formatRefs(unpaid.map(orderRef))}) before deleting.`
+    );
   }
-  if (Number(openOrders) > 0) {
-    blockers.push("You have open orders. Complete or cancel them before deleting.");
+
+  if (inProgress.length === 1) {
+    const o = inProgress[0];
+    blockers.push(
+      `Order ${orderRef(o)} is still ${o.status.toLowerCase()}. It must complete at the depot before you can delete — paid orders can't be cancelled.`
+    );
+  } else if (inProgress.length > 1) {
+    blockers.push(
+      `You still have ${inProgress.length} orders in progress (${formatRefs(
+        inProgress.map(orderRef)
+      )}). They must complete at the depot before you can delete — paid orders can't be cancelled.`
+    );
   }
-  if (Number(openLpg) > 0) {
-    blockers.push("You have an open LPG request. Cancel it before deleting.");
+
+  // Holds normally ride with Paid/in-progress orders (already explained above).
+  // Only call them out alone when something is stranded without an open order.
+  if (Number(holds) > 0 && openOrderRows.length === 0) {
+    blockers.push(
+      "An order still has funds on hold. Contact the desk if this persists after all orders are finished."
+    );
   }
-  if (Number(openDangote) > 0) {
-    blockers.push("You have an open Dangote request. Cancel it before deleting.");
+
+  if (openLpgRows.length === 1) {
+    blockers.push(
+      `You have an open LPG request (${requestRef(openLpgRows[0])}). Cancel it before deleting.`
+    );
+  } else if (openLpgRows.length > 1) {
+    blockers.push(
+      `You have open LPG requests (${formatRefs(openLpgRows.map(requestRef))}). Cancel them before deleting.`
+    );
+  }
+
+  if (openDangoteRows.length === 1) {
+    blockers.push(
+      `You have an open Dangote request (${requestRef(openDangoteRows[0])}). Cancel it before deleting.`
+    );
+  } else if (openDangoteRows.length > 1) {
+    blockers.push(
+      `You have open Dangote requests (${formatRefs(
+        openDangoteRows.map(requestRef)
+      )}). Cancel them before deleting.`
+    );
   }
 
   return { customer, blockers };
@@ -176,7 +259,7 @@ async function deleteCustomerAccount(customerId) {
       return {
         ok: false,
         status: 409,
-        message: blockers[0],
+        message: formatBlockerMessage(blockers),
         blockers,
       };
     }
@@ -200,6 +283,8 @@ async function deleteCustomerAccount(customerId) {
 module.exports = {
   deleteCustomerAccount,
   collectBlockers,
+  formatBlockerMessage,
+  formatRefs,
   anonymizedFields,
   OPEN_ORDER_STATUSES,
   OPEN_REQUEST_STATUSES,
