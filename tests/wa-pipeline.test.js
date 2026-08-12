@@ -246,53 +246,6 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     });
   });
 
-  test("the dev 'I've paid' effect settles the order through the real path", async () => {
-    const session = await waSessionRepo.findByPhone(PHONE);
-    assert.ok(session.lastOrderId, "an order exists from the confirm test");
-    const before = await orderRepo.findById(session.lastOrderId);
-    assert.equal(before.paymentStatus, "Unpaid");
-
-    await performEffect(
-      { type: "DEV_SIMULATE_PAYMENT", payload: { orderId: session.lastOrderId } },
-      { wamid: `wamid.PIPE-${RUN}-DEVPAY`, waPhone: PHONE }
-    );
-
-    const after = await orderRepo.findById(session.lastOrderId);
-    assert.equal(after.paymentStatus, "Paid", "wallet credit + real settlement paid it");
-    assert.equal(after.status, "Released", "and released it for loading in the same breath");
-  });
-
-  test("the dev 'I've paid' effect pays the tapped order, never an older unpaid one", async () => {
-    const customer = await customerRepo.findByPhone(PHONE);
-    // Two unpaid orders; the button is tapped on the SECOND (newest) one.
-    const older = (await placeOrder({
-      customerId: customer.id,
-      state: this.depot.state,
-      depotId: this.depot.id,
-      productId: this.product.id,
-      quantity: 2000,
-      deliveryType: "pickup",
-      trucks: [],
-    })).order;
-    const current = (await placeOrder({
-      customerId: customer.id,
-      state: this.depot.state,
-      depotId: this.depot.id,
-      productId: this.product.id,
-      quantity: 3000,
-      deliveryType: "pickup",
-      trucks: [],
-    })).order;
-
-    await performEffect(
-      { type: "DEV_SIMULATE_PAYMENT", payload: { orderId: current.id } },
-      { wamid: `wamid.PIPE-${RUN}-DEVPAY-CURRENT`, waPhone: PHONE }
-    );
-
-    assert.equal((await orderRepo.findById(current.id)).paymentStatus, "Paid", "the tapped order is paid");
-    assert.equal((await orderRepo.findById(older.id)).paymentStatus, "Unpaid", "the older order is left untouched");
-  });
-
   test("the PAY_ORDER effect settles an unpaid order from wallet balance", async () => {
     const customer = await customerRepo.findByPhone(PHONE);
     // A fresh, own order — Unpaid on creation, like every order now.

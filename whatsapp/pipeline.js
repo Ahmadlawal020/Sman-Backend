@@ -6,7 +6,6 @@ const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../re
 const { toE164 } = require("../utils/phone");
 const { placeOrder, cancelOrder, payOrder, computeExpiresAt } = require("../services/order.service");
 const { orderExpiryHours } = require("../config/orderExpiry");
-const walletService = require("../services/wallet.service");
 const { sendReply, sendTypingIndicator } = require("./client");
 const { QUEUES, enqueue } = require("../config/queue");
 const copy = require("./copy");
@@ -139,46 +138,6 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
         }
         return { type: INBOUND.ORDER_FAILED, reason: "pay", message: err.message };
       }
-    }
-
-    case EFFECTS.DEV_SIMULATE_PAYMENT: {
-      // Belt AND braces: the engine only offers the button when context says
-      // test mode, and the effect refuses independently — a stale button in a
-      // chat history must never move real money states in production.
-      const isTest =
-        process.env.NODE_ENV !== "production" &&
-        (process.env.PAYSTACK_SECRET_KEY || "").startsWith("sk_test");
-      if (!isTest) {
-        console.error("[wa-pipeline] DEV_SIMULATE_PAYMENT refused outside test mode");
-        return null;
-      }
-      const order = await orderRepo.findById(effect.payload.orderId);
-      if (!order || order.paymentStatus === "Paid") return null;
-      // Announce on the wire BEFORE settlement, so the async "payment received"
-      // push can't win the race and arrive first.
-      await sendNow({
-        waPhone,
-        customerId: order.customerId,
-        payload: { kind: REPLY.TEXT, body: copy.devSimulating() },
-        inReplyTo: inboundMessageId,
-      });
-      // Credit the wallet by exactly THIS order's total (idempotent by
-      // reference), then pay THIS order specifically — not the oldest-first
-      // sweep a real transfer would do, so the tester always settles the order
-      // they tapped, never an older one. payOrder's push delivers the
-      // confirmation, travelling the same wa-events path as production.
-      await walletService.credit({
-        customerId: order.customerId,
-        amount: Number(order.totalAmount),
-        description: "Simulated bank transfer (dev button)",
-        reference: `DEV-SIM-${wamid}`,
-      });
-      await payOrder({
-        orderId: order.id,
-        customerId: order.customerId,
-        actor: { type: "customer", customerId: order.customerId },
-      });
-      return null; // the wa-events push delivers "payment received"
     }
 
     default:

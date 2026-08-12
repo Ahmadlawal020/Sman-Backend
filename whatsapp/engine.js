@@ -397,15 +397,13 @@ const promptFor = (state, session, context) => {
  * lands, the DVA webhook credits the wallet and the tap settles the order. A
  * tap before the money reflects can't overspend — PAY_ORDER re-checks and, if
  * the balance still falls short, replies with the "transfer first" copy.
- * Cancel is always offered; the dev "paid" button only in test mode. Always
- * ≤ 3 buttons (WhatsApp's limit).
+ * Cancel is always offered. Always ≤ 3 buttons (WhatsApp's limit).
  */
 const awaitPaymentButtonDefs = (cart, context) => {
   const total = Number(cart.awaiting?.totalAmount) || 0;
   const defs = {};
   if (total > 0) defs.paynow = copy.payNowButton();
   defs.cancelorder = copy.awaitPaymentCancelButton();
-  if (context.devSimulatePayment) defs.devpaid = copy.devPaidButton();
   return defs;
 };
 
@@ -894,15 +892,6 @@ const reduceInner = (session, inbound, ctx, expired) => {
 };
 
 const handleAwaitPayment = (session, ctx, value) => {
-  // Dev-only: the "I've paid" button simulates the transfer landing. The
-  // confirmation itself arrives through the REAL settlement → push path.
-  if (value === "devpaid" && ctx.devSimulatePayment && session.lastOrderId) {
-    // No "Simulating…" reply here — the effect sends it on the wire BEFORE
-    // settlement, so the async payment-confirmed push cannot arrive first.
-    return done(session, [], [
-      { type: EFFECTS.DEV_SIMULATE_PAYMENT, payload: { orderId: session.lastOrderId } },
-    ]);
-  }
   // Pay now: settle the unpaid order from wallet balance. The engine only
   // shows this button when the balance covers the total; the effect (and
   // payOrder itself) re-check, so a stale tap can't overspend.

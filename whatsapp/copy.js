@@ -401,15 +401,6 @@ const orderFailedStock = (hasSome, depotName) =>
 const orderFailedGeneric = (supportPhone) =>
   `An error occurred while creating your order. Please note that no amount has been charged. Please try again shortly, or contact us on ${supportPhone}.`;
 
-// ------------------------------------------------- dev-only payment simulation
-
-const devPaidPrompt = () =>
-  "Test mode: no real transfer is required. Select the button below to simulate payment.";
-
-const devPaidButton = () => "I have paid (test)";
-
-const devSimulating = () => "Simulating your transfer. Confirmation will follow shortly.";
-
 const awaitPaymentNudge = (order) => {
   const deadline = paymentDeadlineLine(order);
   return (
@@ -537,9 +528,6 @@ module.exports = {
   invoiceCaption,
   orderFailedStock,
   orderFailedGeneric,
-  devPaidPrompt,
-  devPaidButton,
-  devSimulating,
   awaitPaymentNudge,
   awaitPaymentCancelButton,
   payNowButton,
