@@ -459,18 +459,22 @@ const gateOutTruck = asyncHandler(async (req, res) => {
     if (load.status === "pending") {
       throw httpErr(409, "Truck must be marked as entered before it can exit");
     }
-    // A truck that arrived but never loaded cannot leave. It must be marked
-    // loaded (ticketing) before it can pass through the exit gate.
-    if (load.status === "gated_in") {
-      throw httpErr(409, "Truck must be marked as loaded before it can exit");
-    }
+
+    // A truck still showing gated_in loaded without anyone working the separate
+    // "mark loaded" step — the ticket was issued at generation, and a truck only
+    // reaches the exit gate loaded. Rather than block it, the exit stands in for
+    // that step: stamp the loading, issue the ticket if it is somehow missing,
+    // and audit it as a loading recorded at the gate.
+    const loadedHere = load.status === "gated_in";
+    const exitedAt = parseWhen(req.body.exitedAt);
 
     const updated = await orderTruckRepo.update(
       loadId,
       {
         status: "gated_out",
-        securityExitedAt: parseWhen(req.body.exitedAt),
+        securityExitedAt: exitedAt,
         securityExitedBy: req.user.id,
+        ...(loadedHere ? { loadedAt: exitedAt, loadedBy: req.user.id } : {}),
         // Gantry the truck loaded from and the loader on duty, per the
         // security handover record.
         ...(req.body.gantry ? { gantry: String(req.body.gantry).trim() } : {}),
@@ -478,6 +482,21 @@ const gateOutTruck = asyncHandler(async (req, res) => {
       },
       tx
     );
+
+    if (loadedHere) {
+      await generateTicketForTruck(order, updated, tx);
+      await auditLogRepo.record(
+        {
+          entityType: "order_truck",
+          entityId: loadId,
+          action: "order_truck.loaded",
+          actor,
+          metadata: { orderId, truckNumber: updated.truckNumber, via: "gate-out" },
+          ...audit,
+        },
+        tx
+      );
+    }
 
     await auditLogRepo.record(
       {

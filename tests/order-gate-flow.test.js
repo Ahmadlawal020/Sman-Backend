@@ -209,7 +209,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
 
   // ── guards ─────────────────────────────────────────────────────────────────
 
-  test("the gate order is enforced: load needs gate-in, exit needs load", async () => {
+  test("the gate order is enforced: load needs gate-in, exit needs gate-in", async () => {
     const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
@@ -220,8 +220,15 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .send({});
     assert.equal(res.status, 409, "load before gate-in is refused");
 
-    // Entered but not yet loaded: still cannot exit. A truck must not leave the
-    // depot gate without being loaded.
+    // Nor can it exit — a truck that never arrived cannot leave.
+    res = await request(app)
+      .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(res.status, 409, "exit before gate-in is refused");
+
+    // Entered but never put through the separate loading step: the exit itself
+    // stands in for it, stamping the loading and issuing the ticket.
     await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
@@ -230,18 +237,10 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
-    assert.equal(res.status, 409, "a gated-in but unloaded truck cannot exit");
-
-    // Once loaded, it may exit.
-    await request(app)
-      .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
-      .set("Authorization", `Bearer ${ticketing.accessToken}`)
-      .send({});
-    res = await request(app)
-      .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
-      .set("Authorization", `Bearer ${exit.accessToken}`)
-      .send({});
-    assert.equal(res.status, 200, "a loaded truck may exit");
+    assert.equal(res.status, 200, "a gated-in truck may exit without a separate load call");
+    assert.equal(res.body.data.truck.status, "gated_out");
+    assert.ok(res.body.data.truck.loadedAt, "the exit stamped the loading");
+    assert.ok(await ticketRepo.findByOrderTruck(t.id), "ticket present after exit");
   });
 
   test("gating the same truck in twice is idempotent — the second entry reports the first", async () => {
