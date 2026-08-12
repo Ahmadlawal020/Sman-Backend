@@ -243,6 +243,7 @@ describe("external boundaries — Turnstile and Termii", () => {
 
       assert.equal(result.sent, true);
       assert.equal(result.reason, null);
+      assert.equal(body.channel, "dnd", "OTP prefers Termii dnd over generic");
 
       const sentCode = body.sms.match(/\b(\d{6})\b/)?.[1];
       assert.ok(sentCode, `no 6-digit code found in: ${body.sms}`);
@@ -254,7 +255,8 @@ describe("external boundaries — Turnstile and Termii", () => {
     });
 
     test("a failed dispatch leaves the code usable and reports the reason", async () => {
-      nock(TERMII_HOST).post(TERMII_PATH).replyWithError("network down");
+      // OTP tries dnd then generic; both must fail for send_failed.
+      nock(TERMII_HOST).post(TERMII_PATH).twice().replyWithError("network down");
 
       const result = await otpService.issueAndSend(customer, {
         action: "login",
