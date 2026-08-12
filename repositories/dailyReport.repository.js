@@ -17,6 +17,14 @@ const findById = async (id) => {
 };
 
 const findAll = async ({
+  /**
+   * Filtered in SQL, not after the fact.
+   *
+   * The system this replaces fetched 50 mixed rows and filtered client-side,
+   * so a busy week of other people's reports could push yours off the page
+   * entirely — and the pager would still say "1 of 1".
+   */
+  reportType,
   location,
   status,
   pfiNumber,
@@ -33,6 +41,7 @@ const findAll = async ({
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+  if (reportType) conditions.push(eq(dailyReports.reportType, reportType));
   if (location) conditions.push(ilike(dailyReports.location, `%${location}%`));
   if (status) conditions.push(eq(dailyReports.status, status));
   if (pfiNumber) conditions.push(eq(dailyReports.pfiNumber, pfiNumber));
@@ -76,4 +85,10 @@ const update = async (id, data) => {
   return row || null;
 };
 
-module.exports = { findById, findAll, create, update };
+/** Hard delete — a report is a submission, not a ledger entry. */
+const remove = async (id) => {
+  const [row] = await db.delete(dailyReports).where(eq(dailyReports.id, Number(id))).returning();
+  return row || null;
+};
+
+module.exports = { findById, findAll, create, update, remove };

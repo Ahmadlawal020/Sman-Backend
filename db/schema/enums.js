@@ -85,6 +85,22 @@ const pfiStatusEnum = pgEnum("pfi_status", ["active", "finished"]);
  * `rejected` is terminal; `changes_requested` returns the request to whoever
  * raised it and re-enters the chain at the start when they save.
  */
+/**
+ * Which of the five daily reports a row is.
+ *
+ * The system this replaces had no such column — it appended "[SECURITY]" to
+ * the submitter's name and filtered on that client-side, which meant the tag
+ * leaked into every display of the name and a busy day could push your own
+ * reports off the fetched page entirely. A real column filters in SQL.
+ */
+const reportTypeEnum = pgEnum("report_type", [
+  "sales_manager",
+  "product_manager",
+  "security_gate",
+  "commissions",
+  "it_compliance",
+]);
+
 const expenseStatusEnum = pgEnum("expense_status", [
   "pending",
   "verified",
@@ -341,6 +357,7 @@ module.exports = {
   orderStatusEnum,
   pfiStatusEnum,
   expenseStatusEnum,
+  reportTypeEnum,
   ticketStatusEnum,
   depositTypeEnum,
   walletHoldStatusEnum,

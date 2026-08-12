@@ -38,7 +38,29 @@ const reviewDailyReport = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Remove a report. Only the person who filed it, or an admin.
+ *
+ * Role gating upstream was client-side only — localStorage decided which panel
+ * rendered and the API enforced nothing, so any signed-in user could file or
+ * remove any report type by hand.
+ */
+const deleteDailyReport = asyncHandler(async (req, res) => {
+  const existing = await dailyReportRepo.findById(req.params.id);
+  if (!existing) return res.status(404).json({ success: false, message: "Report not found" });
+
+  const roles = new Set(req.user?.roles || []);
+  const mine = Number(existing.submittedBy) === Number(req.user?.id);
+  if (!mine && !roles.has("admin") && !roles.has("super_admin")) {
+    return res.status(403).json({ success: false, message: "You can only delete your own reports" });
+  }
+
+  await dailyReportRepo.remove(existing.id);
+  res.json({ success: true, message: "Report deleted" });
+});
+
 module.exports = {
+  deleteDailyReport,
   getDailyReports,
   getDailyReportById,
   submitDailyReport,

@@ -288,6 +288,20 @@
       "when": 1786188494568,
       "tag": "0041_nasty_lord_hawal",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786466907157,
+      "tag": "0042_careful_hitman",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786481940252,
+      "tag": "0043_magical_jamie_braddock",
+      "breakpoints": true
     }
   ]
 }

@@ -9,7 +9,24 @@ const priceBandSchema = z.object({
   litres: z.coerce.number().nonnegative(),
 });
 
+const REPORT_TYPES = [
+  "sales_manager",
+  "product_manager",
+  "security_gate",
+  "commissions",
+  "it_compliance",
+];
+
 const submitDailyReportSchema = z.object({
+  // Which of the five reports this is. Zod strips unknown keys, so without
+  // this the field was silently dropped and every report saved as the
+  // column default — the type filter then found nothing.
+  reportType: z.enum(REPORT_TYPES).optional(),
+  // Commission and compliance fields, real columns rather than text packed
+  // into remarks.
+  customerCount: z.coerce.number().int().nonnegative().optional(),
+  orderCount: z.coerce.number().int().nonnegative().optional(),
+  rates: z.string().max(500).optional(),
   reportDate: z.string().date(),
   location: z.string().min(1).max(255),
   pfiNumber: z.string().max(50).optional().default(""),
@@ -38,6 +55,7 @@ const reviewDailyReportSchema = z.object({
 });
 
 const dailyReportQuerySchema = z.object({
+  reportType: z.enum(REPORT_TYPES).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
   location: z.string().max(255).optional(),

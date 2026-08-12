@@ -13,12 +13,14 @@ const {
   getDailyReports,
   getDailyReportById,
   submitDailyReport,
+  deleteDailyReport,
   amendDailyReport,
   reviewDailyReport,
 } = require("../../controllers/administration/dailyReport.controller");
 
 router.get("/", verifyStaff, validate({ query: dailyReportQuerySchema }), getDailyReports);
 router.get("/:id", verifyStaff, validate({ params: idParamSchema }), getDailyReportById);
+router.delete("/:id", verifyStaff, deleteDailyReport);
 router.post("/", verifyStaff, validate({ body: submitDailyReportSchema }), submitDailyReport);
 router.patch(
   "/:id",

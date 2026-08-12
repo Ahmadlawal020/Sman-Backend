@@ -61,7 +61,7 @@ const submitReport = async (data, { actor }) => {
       return {
         success: false,
         duplicate: true,
-        message: "A report for this date, location and PFI has already been submitted by you",
+        message: "You have already filed this report for that date, location and PFI",
       };
     }
     throw err;

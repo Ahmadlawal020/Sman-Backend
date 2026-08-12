@@ -13,7 +13,7 @@ const {
   check,
 } = require("drizzle-orm/pg-core");
 const { sql } = require("drizzle-orm");
-const { dailyReportStatusEnum } = require("./enums");
+const { dailyReportStatusEnum , reportTypeEnum } = require("./enums");
 const { staff } = require("./staff");
 
 // One location/PFI's handwritten daily sales sheet, keyed in by staff and
@@ -23,6 +23,9 @@ const dailyReports = pgTable(
   "daily_reports",
   {
     id: serial("id").primaryKey(),
+    // Which report this is. Replaces the "[TAG]" suffix the old system packed
+    // into submittedByName.
+    reportType: reportTypeEnum("report_type").default("sales_manager").notNull(),
     reportDate: date("report_date").notNull(),
     location: varchar("location", { length: 255 }).notNull(),
     pfiNumber: varchar("pfi_number", { length: 50 }).default("").notNull(),
@@ -47,6 +50,13 @@ const dailyReports = pgTable(
 
     bankName: varchar("bank_name", { length: 255 }).default(""),
     accountNumber: varchar("account_number", { length: 50 }).default(""),
+    // Commission and compliance fields. The old system had no columns for
+    // these and encoded them into remarks as "Customers: 12 | Orders: 30" and
+    // "RATES: …", recovering them by regex — so editing your own note silently
+    // destroyed the numbers.
+    customerCount: integer("customer_count"),
+    orderCount: integer("order_count"),
+    rates: text("rates").default(""),
     remarks: text("remarks").default(""),
 
     // Workflow: submitted -> approved | rejected (manager review).
@@ -62,7 +72,11 @@ const dailyReports = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    // reportType is part of the key: five report types share this table, so
+    // without it filing a gate report would block the same person filing a
+    // commission report for the same day and location.
     uniqueIndex("daily_reports_unique_idx").on(
+      table.reportType,
       table.reportDate,
       table.location,
       table.pfiNumber,
