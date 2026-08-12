@@ -160,12 +160,15 @@ describe("integration — customer register → order → release → gates → 
 
     order = await orderRepo.findById(orderId);
     assert.equal(order.paymentStatus, "Paid", "wallet covered it");
-    assert.equal(order.status, "Paid", "payment advanced the lifecycle to Paid");
+    assert.equal(order.status, "Released", "payment released it in the same transaction");
     assert.ok(order.paymentConfirmedAt, "paymentConfirmedAt stamped");
+    assert.ok(order.releasedAt, "releasedAt stamped");
     // The wallet was fully spent.
     assert.equal(Number((await customerRepo.findById(customerId)).balance), 0);
 
     // ── 3. Release desk allocates the fleet trucks ───────────────────────────
+    // The order is already Released; this call is here for the allocation, and
+    // the transition it used to drive is a no-op.
     const released = await request(app)
       .post(`/api/orders/${orderId}/release`)
       .set("Authorization", `Bearer ${release.accessToken}`)
@@ -196,14 +199,17 @@ describe("integration — customer register → order → release → gates → 
       .send({ loadId: t2.id });
     assert.equal(res.status, 200);
 
-    // ── 5. Ticketing loads each and issues its ticket ────────────────────────
+    // ── 5. Ticketing confirms each loading and issues its ticket ─────────────
+    // A truck already through the entrance gate keeps that state — being marked
+    // loaded afterwards must not read as though it were back outside.
     for (const t of [t1, t2]) {
       res = await request(app)
         .post(`/api/orders/${orderId}/trucks/${t.id}/load`)
         .set("Authorization", `Bearer ${ticketing.accessToken}`)
         .send({});
       assert.equal(res.status, 200);
-      assert.equal(res.body.data.truck.status, "loaded");
+      assert.equal(res.body.data.truck.status, "gated_in");
+      assert.ok(res.body.data.truck.loadedAt, "the loading is stamped");
       const ticket = await ticketRepo.findByOrderTruck(t.id);
       assert.ok(ticket, `truck ${t.truckIndex} has a ticket`);
       assert.ok(ticket.ticketNumber.endsWith(`-${t.truckIndex}`), "per-truck ticket number");
@@ -240,13 +246,16 @@ describe("integration — customer register → order → release → gates → 
       "the audit trail is the full pipeline, in order"
     );
     // The Paid step is now a staff action (finance's manual "Pay Now"); the
-    // rest were staff at their posts.
+    // rest were staff at their posts. Release rides on the payment, so it is
+    // attributed to whoever took the money — not to the release desk, whose
+    // call arrived afterwards and found the work already done.
     const paidEvent = timeline.find((e) => e.newState === "Paid");
     assert.equal(paidEvent.actorType, "staff");
     assert.equal(paidEvent.actorStaffId, desk.staff.id);
     const releasedEvent = timeline.find((e) => e.newState === "Released");
     assert.equal(releasedEvent.actorType, "staff");
-    assert.equal(releasedEvent.actorStaffId, release.staff.id);
+    assert.equal(releasedEvent.actorStaffId, desk.staff.id);
+    assert.equal(releasedEvent.metadata?.trigger, "payment");
 
     // The audit trail records every business event, not only state changes:
     // creation is there before any transition, and each truck's physical
@@ -313,7 +322,7 @@ describe("integration — customer register → order → release → gates → 
       .set("Authorization", `Bearer ${desk.accessToken}`)
       .send({});
     assert.equal(settled.status, 200, JSON.stringify(settled.body));
-    assert.equal((await orderRepo.findById(orderId)).status, "Paid", "wallet payment advanced it to Paid");
+    assert.equal((await orderRepo.findById(orderId)).status, "Released", "payment released it");
 
     // ── 3. Release desk allocates the fleet trucks ──────────────────────────
     const released = await request(app)

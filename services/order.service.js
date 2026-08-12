@@ -657,8 +657,8 @@ async function notifyOrderExpired(order) {
  * never touched here.
  *
  * Editable while the order is Pending / Paid / Released and every existing
- * load is still `pending`. Once a truck has gated in, the customer can no
- * longer change the declaration (staff corrects at the gate / ticketing).
+ * load is still `pending`. Once a load has been ticketed or gated, the customer
+ * can no longer change the declaration (staff corrects at the gate/ticketing).
  *
  * @param {object} input
  * @param {number} input.orderId
@@ -695,12 +695,15 @@ async function updatePickupTrucks({
       );
     }
 
+    // Anything past `pending` has been ticketed or gated, and the declaration
+    // is no longer the customer's to rewrite — the ticket already names a plate,
+    // and deleting the load below would take that ticket with it.
     const existing = await orderTruckRepo.findByOrder(order.id, tx);
     const locked = existing.find((l) => l.status !== "pending");
     if (locked) {
       throw httpError(
         409,
-        "A truck has already arrived at the depot — truck details can no longer be changed here"
+        "A ticket has already been issued for this order — truck details can no longer be changed here"
       );
     }
 
@@ -923,6 +926,11 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
       set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
       metadata: { via: "wallet", amount: String(orderTotal) },
     });
+
+    // Payment IS the release: the order goes straight onto the ticketing desk
+    // rather than waiting for someone to click a button that has no other
+    // condition attached to it.
+    await orderStatus.releaseOnPayment(order.id, { tx, actor, metadata: { via: "wallet" } });
 
     return order;
   }).then(async (order) => {

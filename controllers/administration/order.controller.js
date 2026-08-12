@@ -134,16 +134,30 @@ const releaseOrder = asyncHandler(async (req, res) => {
   }
 
   const released = await db.transaction(async (tx) => {
-    const updated = await orderStatus.transition(orderId, "Released", {
-      tx,
-      actor: { type: "staff", staffId: req.user.id },
-      set: { releasedAt: new Date(), releasedBy: req.user.id },
-      metadata: { truckCount: isDelivery ? trucks.length : 0 },
-      ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
-    });
+    const current = await orderRepo.lockById(orderId, tx);
+    if (!current) throw httpErr(404, "Order not found");
 
-    if (isDelivery) {
+    // Payment releases an order on its own now (orderStatus.releaseOnPayment),
+    // so this desk action almost always arrives at an order that is already
+    // Released. That is a no-op, not a conflict — the caller came here to
+    // allocate trucks, which still runs below.
+    const updated =
+      current.status === "Released"
+        ? current
+        : await orderStatus.transition(orderId, "Released", {
+            tx,
+            actor: { type: "staff", staffId: req.user.id },
+            set: { releasedAt: new Date(), releasedBy: req.user.id },
+            metadata: { truckCount: isDelivery ? trucks.length : 0 },
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"],
+          });
+
+    // Allocating again over an order that already carries loads would double
+    // them — the second call reports the first allocation instead.
+    const already = await orderTruckRepo.findByOrder(orderId, tx);
+
+    if (isDelivery && already.length === 0) {
       let index = 1;
       for (const t of trucks) {
         // A fleet truck contributes its registered plate; the stored plate is
@@ -227,11 +241,20 @@ const cancelOrder = asyncHandler(async (req, res) => {
 
 // --- The truck gate flow ----------------------------------------------------
 //
-// Three physical checkpoints move a released order through loading:
+// A load's life, and where each step happens:
 //
-//   gate-in  (security_entry)  pending  → gated_in   ; first truck ⇒ Released→Loading
-//   load     (ticketing)       gated_in → loaded     ; issues the per-truck ticket
-//   gate-out (security_exit)   loaded   → gated_out  ; last truck  ⇒ Loading→Completed
+//   generate-tickets (ticketing)  →  loaded     ; the ticket IS the loading
+//   gate-in   (security_entry)  loaded → gated_in   ; first truck ⇒ Released→Loading
+//   gate-out  (security_exit)  gated_in → gated_out ; last truck  ⇒ Loading→Completed
+//
+// `pending` is the odd one out: it is a fleet allocation captured at release
+// before its ticket exists. Ticketing turns it `loaded`; it may also be gated
+// in as-is, and the exit stamps the loading it never got.
+//
+// The separate `load` (ticketing) endpoint is what remains of a third
+// checkpoint. Nothing in the flow needs it now — it stays as the correction
+// desk for a truck swapped at the gantry, where the plate on the ticket must
+// change after the ticket was cut.
 //
 // Every action locks the ORDER row first (orderRepo.lockById), so concurrent
 // trucks on the same order serialise: exactly one sees the "first in" / "last
@@ -275,9 +298,11 @@ const gateInTruck = asyncHandler(async (req, res) => {
       // pickup truck the customer declared at order. Flip that specific one.
       const existing = await orderTruckRepo.findById(loadId, tx);
       if (!existing || existing.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
-      // Idempotent: a second entry reports the first rather than
+      // A truck may arrive ticketed (`loaded`, the normal case) or merely
+      // allocated (`pending`). Anything further along has been here already:
+      // idempotent, so a second entry reports the first rather than
       // overwriting the original timestamp.
-      if (existing.status !== "pending") {
+      if (existing.status !== "pending" && existing.status !== "loaded") {
         return { load: existing, alreadyEntered: true };
       }
       // The truck that actually arrived may differ from the one declared (a
@@ -370,11 +395,13 @@ const gateInTruck = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Truck gated in", data: { truck: load } });
 });
 
-// ticketing: the truck has loaded; issue its ticket. This is the LAST moment
-// the plate can change — trucks get swapped at the gantry (the declared one
-// broke down, another came), and the ticket must name the truck that actually
-// loaded. An optional truckNumber/driver here records that actual truck; the
-// change is audited and the ticket is generated from the corrected load.
+// ticketing: confirm the loading and issue the ticket if the load somehow has
+// none. Tickets are now cut at generation, so the flow no longer passes through
+// here — what it remains good for is the LAST moment the plate can change.
+// Trucks get swapped at the gantry (the declared one broke down, another came)
+// and the ticket must name the truck that actually loaded. An optional
+// truckNumber/driver here records that actual truck; the change is audited and
+// the ticket is generated from the corrected load.
 const markTruckLoaded = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
   const loadId = Number(req.params.loadId);
@@ -388,8 +415,8 @@ const markTruckLoaded = asyncHandler(async (req, res) => {
 
     const load = await orderTruckRepo.findById(loadId, tx);
     if (!load || load.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
-    if (load.status !== "gated_in") {
-      throw httpErr(409, `Truck is ${load.status}; only a gated-in truck can be marked loaded`);
+    if (load.status === "gated_out") {
+      throw httpErr(409, "Truck has already left the depot; its ticket can no longer be changed");
     }
 
     // optionalString yields "" for an omitted field — treat that as "not
@@ -398,7 +425,9 @@ const markTruckLoaded = asyncHandler(async (req, res) => {
     const updated = await orderTruckRepo.update(
       loadId,
       {
-        status: "loaded",
+        // A truck already through the entrance gate keeps that state — being
+        // marked loaded afterwards must not send it back outside.
+        ...(load.status === "gated_in" ? {} : { status: "loaded" }),
         loadedAt: new Date(),
         loadedBy: req.user.id,
         ...(truckNumber ? { truckNumber } : {}),
@@ -455,17 +484,16 @@ const gateOutTruck = asyncHandler(async (req, res) => {
     if (load.status === "gated_out") {
       return { load, alreadyExited: true };
     }
-    // The ordering rule: a truck that never arrived cannot leave.
-    if (load.status === "pending") {
+    // The one ordering rule left: a truck that never arrived cannot leave.
+    if (load.status !== "gated_in") {
       throw httpErr(409, "Truck must be marked as entered before it can exit");
     }
 
-    // A truck still showing gated_in loaded without anyone working the separate
-    // "mark loaded" step — the ticket was issued at generation, and a truck only
-    // reaches the exit gate loaded. Rather than block it, the exit stands in for
-    // that step: stamp the loading, issue the ticket if it is somehow missing,
-    // and audit it as a loading recorded at the gate.
-    const loadedHere = load.status === "gated_in";
+    // A load with no loading stamped is one security captured at the gate
+    // itself — a pickup truck the customer brought without a ticket. The exit
+    // stands in for the loading it never had: stamp it, issue the ticket, and
+    // audit it as a loading recorded at the gate.
+    const loadedHere = !load.loadedAt;
     const exitedAt = parseWhen(req.body.exitedAt);
 
     const updated = await orderTruckRepo.update(
@@ -700,6 +728,12 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
     // Read under the row lock, so a concurrent call cannot pick the same start.
     const startIndex = existing.reduce((max, l) => Math.max(max, Number(l.truckIndex || 0)), 0);
 
+    // The ticket IS the loading authority: a load leaves this desk already
+    // `loaded`, so security can take it straight in and out with no separate
+    // "mark loaded" step in between. `pending` is now only what a release-time
+    // fleet allocation looks like before its ticket is cut.
+    const loadedNow = { status: "loaded", loadedAt: new Date(), loadedBy: req.user.id };
+
     const created = [];
     for (let i = 0; i < trucks.length; i++) {
       const t = trucks[i];
@@ -715,10 +749,15 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
         (l) => l.truckNumber === plate && String(l.quantity) === String(t.quantity)
       );
       if (dup) {
+        const patch = {};
         if (dup.driverName !== driverName || dup.driverPhone !== driverPhone) {
-          await orderTruckRepo.update(dup.id, { driverName, driverPhone }, tx);
-          dup.driverName = driverName;
-          dup.driverPhone = driverPhone;
+          Object.assign(patch, { driverName, driverPhone });
+        }
+        // An allocation made at release is still `pending`; ticketing it now is
+        // what makes it loaded. A truck already at the gate keeps its own state.
+        if (dup.status === "pending") Object.assign(patch, loadedNow);
+        if (Object.keys(patch).length) {
+          Object.assign(dup, await orderTruckRepo.update(dup.id, patch, tx));
         }
         const ticket = await generateTicketForTruck(order, dup, tx);
         created.push({ load: dup, ticket, alreadyExisted: true });
@@ -737,7 +776,7 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
           driverPhone: String(t.driverPhone).trim(),
           loaderName: t.loaderName ?? null,
           loaderPhone: t.loaderPhone ?? null,
-          status: "pending",
+          ...loadedNow,
         },
         tx,
       );

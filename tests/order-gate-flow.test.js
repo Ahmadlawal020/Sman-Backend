@@ -43,8 +43,10 @@ async function productFixture() {
 
 let seq = 0;
 const RUN = Date.now();
-// A Released order plus its allocated loads, ready for the gate.
-async function releasedDeliveryOrder(customerId, depotId, productId, truckQtys) {
+// A Released order plus its allocated loads, ready for the gate. With
+// `allocate: false` the order is released carrying no loads at all — what
+// payment's automatic release leaves behind for the ticketing desk.
+async function releasedDeliveryOrder(customerId, depotId, productId, truckQtys, { allocate = true } = {}) {
   const [order] = await db
     .insert(orders)
     .values({
@@ -63,14 +65,16 @@ async function releasedDeliveryOrder(customerId, depotId, productId, truckQtys) 
     .returning();
 
   let index = 1;
-  for (const q of truckQtys) {
-    await orderTruckRepo.create({
-      orderId: order.id,
-      truckIndex: index++,
-      truckNumber: `PLATE-${RUN}-${index}`,
-      quantity: String(q),
-      status: "pending",
-    });
+  if (allocate) {
+    for (const q of truckQtys) {
+      await orderTruckRepo.create({
+        orderId: order.id,
+        truckIndex: index++,
+        truckNumber: `PLATE-${RUN}-${index}`,
+        quantity: String(q),
+        status: "pending",
+      });
+    }
   }
   return order;
 }
@@ -145,14 +149,16 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     assert.equal(res.status, 200);
     assert.equal((await orderRepo.findById(order.id)).status, "Loading");
 
-    // Both load → each gets a ticket.
+    // Both load → each gets a ticket. A truck already inside the gate keeps its
+    // gated_in state; only the loading stamp is added.
     for (const t of [t1, t2]) {
       res = await request(app)
         .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
         .set("Authorization", `Bearer ${ticketing.accessToken}`)
         .send({});
       assert.equal(res.status, 200);
-      assert.equal(res.body.data.truck.status, "loaded");
+      assert.equal(res.body.data.truck.status, "gated_in");
+      assert.ok(res.body.data.truck.loadedAt, "the loading is stamped");
       assert.ok(res.body.data.ticket.ticketNumber.includes(`-${t.truckIndex}`), "per-truck ticket number");
       const tk = await ticketRepo.findByOrderTruck(t.id);
       assert.ok(tk, "ticket row linked to the load");
@@ -207,28 +213,82 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     assert.equal((await orderRepo.findById(order.id)).status, "Completed");
   });
 
+  test("the ticket is the loading: generated loads go straight in and out", async () => {
+    // The flow the desks actually work: ticketing cuts the tickets, security
+    // takes each truck in and back out. No "mark loaded" step in between.
+    const order = await releasedDeliveryOrder(
+      customerId, depotId, productId, [30000, 30000], { allocate: false },
+    );
+
+    let res = await request(app)
+      .post(`/api/orders/${order.id}/generate-tickets`)
+      .set("Authorization", `Bearer ${ticketing.accessToken}`)
+      .send({
+        trucks: [
+          { quantity: 30000, truckNumber: `TKT-${RUN}-1`, driverName: "Musa", driverPhone: "+2348010000011" },
+          { quantity: 30000, truckNumber: `TKT-${RUN}-2`, driverName: "Ben", driverPhone: "+2348010000012" },
+        ],
+      });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const loads = await orderTruckRepo.findByOrder(order.id);
+    assert.equal(loads.length, 2);
+    for (const l of loads) {
+      assert.equal(l.status, "loaded", "generating the ticket loaded it");
+      assert.ok(l.loadedAt, "loadedAt stamped at generation");
+      assert.ok(await ticketRepo.findByOrderTruck(l.id), "each load carries its ticket");
+    }
+
+    for (const l of loads) {
+      res = await request(app)
+        .post(`/api/orders/${order.id}/gate-in`)
+        .set("Authorization", `Bearer ${entry.accessToken}`)
+        .send({ loadId: l.id });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.data.truck.status, "gated_in", "a ticketed truck enters");
+      assert.ok(res.body.data.truck.securityEnteredAt, "entry stamped");
+    }
+
+    res = await request(app)
+      .post(`/api/orders/${order.id}/trucks/${loads[0].id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.orderCompleted, false);
+
+    res = await request(app)
+      .post(`/api/orders/${order.id}/trucks/${loads[1].id}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.orderCompleted, true, "the last exit completed the order");
+    assert.equal((await orderRepo.findById(order.id)).status, "Completed");
+  });
+
   // ── guards ─────────────────────────────────────────────────────────────────
 
-  test("the gate order is enforced: load needs gate-in, exit needs gate-in", async () => {
+  test("the one ordering rule left: a truck that never arrived cannot leave", async () => {
     const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
-    // A pending truck cannot be marked loaded — it must be entered first.
+    // Loading now precedes the gate, so an allocated truck may be ticketed
+    // before it arrives — that is the ticketing desk doing its job.
     let res = await request(app)
       .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
       .set("Authorization", `Bearer ${ticketing.accessToken}`)
       .send({});
-    assert.equal(res.status, 409, "load before gate-in is refused");
+    assert.equal(res.status, 200, "ticketing does not wait for the gate");
+    assert.equal(res.body.data.truck.status, "loaded");
 
-    // Nor can it exit — a truck that never arrived cannot leave.
+    // Being loaded is not being present: it still cannot skip the entrance.
     res = await request(app)
       .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
     assert.equal(res.status, 409, "exit before gate-in is refused");
+    assert.match(res.body.message, /entered/);
 
-    // Entered but never put through the separate loading step: the exit itself
-    // stands in for it, stamping the loading and issuing the ticket.
+    // In through the gate, and it may leave.
     await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
@@ -237,10 +297,31 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
-    assert.equal(res.status, 200, "a gated-in truck may exit without a separate load call");
+    assert.equal(res.status, 200, "an entered truck may exit");
     assert.equal(res.body.data.truck.status, "gated_out");
-    assert.ok(res.body.data.truck.loadedAt, "the exit stamped the loading");
     assert.ok(await ticketRepo.findByOrderTruck(t.id), "ticket present after exit");
+  });
+
+  test("a truck captured at the gate is stamped as loaded on its way out", async () => {
+    // The pickup case: security creates the load at gate-in, so nothing ever
+    // ticketed it. The exit stands in for the loading it never had.
+    const order = await releasedPickupOrder(customerId, depotId, productId, 40000);
+
+    let res = await request(app)
+      .post(`/api/orders/${order.id}/gate-in`)
+      .set("Authorization", `Bearer ${entry.accessToken}`)
+      .send({ truckNumber: `GATE-${RUN}-X`, quantity: 40000, driverName: "Ada" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const loadId = res.body.data.truck.id;
+    assert.equal(res.body.data.truck.loadedAt, null, "captured at the gate, never loaded");
+
+    res = await request(app)
+      .post(`/api/orders/${order.id}/trucks/${loadId}/gate-out`)
+      .set("Authorization", `Bearer ${exit.accessToken}`)
+      .send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.ok(res.body.data.truck.loadedAt, "the exit stamped the loading");
+    assert.ok(await ticketRepo.findByOrderTruck(loadId), "and issued the missing ticket");
   });
 
   test("gating the same truck in twice is idempotent — the second entry reports the first", async () => {

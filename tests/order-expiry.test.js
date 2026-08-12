@@ -146,7 +146,9 @@ describe("order expiry — unpaid orders lapse after the window, distinct from c
     await backdate(orderId, 100);
     await orderService.expireStaleOrders();
 
-    assert.equal((await orderRepo.findById(orderId)).status, "Paid", "a funded order never lapses");
+    // Paid orders are Released the moment they are paid, and neither status is
+    // reachable from the expiry sweep — only Pending lapses.
+    assert.equal((await orderRepo.findById(orderId)).status, "Released", "a funded order never lapses");
   });
 
   test("the window is set by ORDER_EXPIRY_HOURS", async () => {
