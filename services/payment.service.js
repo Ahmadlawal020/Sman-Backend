@@ -38,15 +38,31 @@ const getPaystackHeaders = () => ({
   "Content-Type": "application/json",
 });
 
+// const splitName = (name) => {
+//   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+//   if (parts.length === 0) {
+//     return { first_name: "C", last_name: "U" };
+//   }
+//   const initials = parts.map((p) => p.charAt(0).toUpperCase());
+//   return {
+//     first_name: initials[0] || "",
+//     last_name: initials.slice(1).join(" ") || initials[0] || "",
+//   };
+// };
+
 const splitName = (name) => {
   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    return { first_name: "C", last_name: "U" };
+    return {
+      first_name: "C",
+      last_name: "U",
+    };
   }
+
   const initials = parts.map((p) => p.charAt(0).toUpperCase());
   return {
-    first_name: initials[0] || "",
-    last_name: initials.slice(1).join(" ") || initials[0] || "",
+    first_name: initials[0],
+    last_name: initials.slice(1).join("") || initials[0],
   };
 };
 
