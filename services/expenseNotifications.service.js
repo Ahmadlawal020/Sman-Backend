@@ -121,4 +121,36 @@ async function notifyExpenseStage({ expense, stage, note, actorId, actorName }) 
   });
 }
 
-module.exports = { notifyExpenseStage, STAGE_RECIPIENTS };
+/**
+ * Announce a comment to everyone already involved.
+ *
+ * Role-based recipients would be wrong here: a question about one request
+ * concerns the people on that request, not every officer in the company. The
+ * submitter is always in `participantsOf`, which is what makes an answer
+ * possible at all.
+ */
+async function notifyExpenseComment({ expense, body, actorId, actorName }) {
+  const recipients = [...new Set(participantsOf(expense))]
+    .filter((id) => Number(id) !== Number(actorId));
+  if (recipients.length === 0) return;
+
+  const { categoryName, submitterName } = await labelsFor(expense);
+
+  await notify("expense.comment", {
+    to: recipients.map((staffId) => ({ staffId })),
+    data: {
+      expenseId: expense.id,
+      status: expense.status,
+      label: chain.STATUS_LABELS[expense.status] || expense.status,
+      amount: expense.amount,
+      description: expense.description || categoryName || expense.vendor || "",
+      category: categoryName,
+      vendor: expense.vendor || "",
+      submitterName,
+      note: String(body || "").trim(),
+      actorName: actorName || "",
+    },
+  });
+}
+
+module.exports = { notifyExpenseStage, notifyExpenseComment, STAGE_RECIPIENTS };

@@ -371,6 +371,30 @@ function expenseStages() {
         `${smsPrefix()}${expenseRef(d)} (${what(d)}) sent back for changes.` +
         `${d.note ? ` Reason: ${d.note}` : ""}`,
     },
+
+    /**
+     * Someone said something on the request. Email only: a comment is a
+     * conversation, and texting every participant on every remark is how people
+     * learn to ignore the channel that also carries the approvals.
+     */
+    "expense.comment": {
+      ...base,
+      priority: "normal",
+      channels: APP_AND_EMAIL,
+      title: (d) => `${who(d)} commented on an expense`,
+      body: (d) => d.note || what(d),
+      email: (d) =>
+        mail(d, {
+          subject: "New comment on an expense request",
+          heading: `${who(d)} commented on this expense request`,
+          lead: `${who(d)} left a comment on a request you are involved in.`,
+          rows: [
+            { label: "Comment", value: d.note },
+            { label: "Stage", value: d.label },
+          ],
+          note: "Reply from the Expenses page — everyone on the request will see it.",
+        }),
+    },
   };
 }
 

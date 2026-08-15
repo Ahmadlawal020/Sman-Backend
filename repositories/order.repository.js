@@ -1,6 +1,9 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders, customers, depots, products, pfis, orderTrucks } = require("../db/schema");
+const {
+  orders, customers, depots, products, pfis, orderTrucks,
+  deposits, orderDepositAllocations, staff,
+} = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 const formatOrderRow = (row) => {
@@ -307,6 +310,135 @@ const findAll = async ({
   };
 };
 
+/**
+ * Every confirmed payment, order by order, with exactly where the money for
+ * each one is understood to have come from.
+ *
+ * `funding` is built from a second, batched query rather than a join on the
+ * main select — a LEFT JOIN against order_deposit_allocations would multiply
+ * order rows by however many deposits funded them, breaking pagination counts.
+ * An order with zero funding rows genuinely predates the allocation ledger
+ * (see wallet.service.js) — that's surfaced as fundingTracked: false, not an
+ * error.
+ */
+const findFinanceReport = async ({
+  search,
+  paymentStatus = "Paid",
+  dateFrom,
+  dateTo,
+  page = 1,
+  limit = 50,
+} = {}) => {
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = [];
+  if (paymentStatus && paymentStatus !== "all") {
+    conditions.push(eq(orders.paymentStatus, paymentStatus));
+  }
+  if (search) {
+    const possibleId = parseOrderReference(search);
+    const term = `%${search}%`;
+    conditions.push(
+      possibleId
+        ? or(ilike(orders.orderNumber, term), eq(orders.id, possibleId), ilike(customers.name, term), ilike(customers.phone, term))
+        : or(ilike(orders.orderNumber, term), ilike(customers.name, term), ilike(customers.phone, term))
+    );
+  }
+  if (dateFrom) conditions.push(gte(orders.paymentConfirmedAt, new Date(dateFrom)));
+  if (dateTo) conditions.push(lte(orders.paymentConfirmedAt, new Date(dateTo)));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const columns = {
+    ...FULL_ORDER_COLUMNS,
+    customerVirtualAccountNumber: customers.virtualAccountNumber,
+    customerVirtualAccountBank: customers.virtualAccountBank,
+  };
+
+  const [rows, [{ total, totalAmount }], [{ trackedCount }]] = await Promise.all([
+    db
+      .select(columns)
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(depots, eq(orders.depotId, depots.id))
+      .leftJoin(products, eq(orders.productId, products.id))
+      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
+      .where(whereClause)
+      .orderBy(asc(orders.paymentConfirmedAt), asc(orders.id))
+      .limit(limitNum)
+      .offset(offset),
+    // Independent of pagination, over the same filtered set — so the stat
+    // cards can never disagree with the rows a filter/search actually shows.
+    db
+      .select({ total: count(), totalAmount: sql`COALESCE(SUM(${orders.totalAmount}), 0)` })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .where(whereClause),
+    db
+      .select({ trackedCount: sql`COUNT(DISTINCT ${orders.id})` })
+      .from(orders)
+      .innerJoin(orderDepositAllocations, eq(orders.id, orderDepositAllocations.orderId))
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .where(whereClause),
+  ]);
+
+  const orderIds = rows.map((r) => r.id);
+  const funding = orderIds.length
+    ? await db
+        .select({
+          orderId: orderDepositAllocations.orderId,
+          depositId: orderDepositAllocations.depositId,
+          amount: orderDepositAllocations.amount,
+          depositReference: deposits.reference,
+          depositCreatedAt: deposits.createdAt,
+          paystackDetails: deposits.paystackDetails,
+          recorderFirstName: staff.firstName,
+          recorderSurname: staff.surname,
+        })
+        .from(orderDepositAllocations)
+        .innerJoin(deposits, eq(orderDepositAllocations.depositId, deposits.id))
+        .leftJoin(staff, eq(deposits.recordedBy, staff.id))
+        .where(inArray(orderDepositAllocations.orderId, orderIds))
+        .orderBy(asc(orderDepositAllocations.createdAt))
+    : [];
+
+  const fundingByOrder = new Map();
+  for (const f of funding) {
+    if (!fundingByOrder.has(f.orderId)) fundingByOrder.set(f.orderId, []);
+    fundingByOrder.get(f.orderId).push(f);
+  }
+
+  const decorated = rows.map((row) => {
+    const orderFunding = fundingByOrder.get(row.id) || [];
+    const allocated = orderFunding.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+    const fundingTracked = orderFunding.length > 0;
+    return {
+      ...row,
+      funding: orderFunding,
+      fundingTracked,
+      unattributedAmount: fundingTracked ? Math.max(0, Number(row.totalAmount || 0) - allocated) : 0,
+    };
+  });
+
+  return {
+    orders: decorated.map(formatOrderRow),
+    totals: {
+      count: total,
+      totalAmount: Number(totalAmount),
+      trackedCount: Number(trackedCount),
+      notTrackedCount: total - Number(trackedCount),
+    },
+    pagination: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: Math.ceil(total / limitNum),
+    },
+  };
+};
+
 const create = async (data, tx = db) => {
   const [row] = await tx.insert(orders).values(data).returning();
   return formatOrderRow(row);
@@ -441,6 +573,7 @@ module.exports = {
   findByNumberFull,
   findTrucksByOrderId,
   findAll,
+  findFinanceReport,
   create,
   update,
   findUnpaidByCustomer,

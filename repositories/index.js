@@ -33,6 +33,8 @@ module.exports = {
   waSessionRepo: require("./waSession.repository"),
   waMessageRepo: require("./waMessage.repository"),
   bankAccountRepo: require("./bankAccount.repository"),
+  vendorRepo: require("./vendor.repository"),
+  expectedPaymentRepo: require("./expectedPayment.repository"),
   commissionRepo: require("./commission.repository"),
   customerLicenseRepo: require("./customerLicense.repository"),
   notificationRepo: require("./notification.repository"),

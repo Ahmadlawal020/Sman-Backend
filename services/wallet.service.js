@@ -1,6 +1,8 @@
-const { eq, and, sql } = require("drizzle-orm");
+const { eq, and, sql, asc, gt, inArray } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { customers, deposits, walletHolds } = require("../db/schema");
+const {
+  customers, deposits, walletHolds, orderDepositAllocations, bankStatementLines,
+} = require("../db/schema");
 const customerRepo = require("../repositories/customer.repository");
 
 // Every operation here runs inside a single database transaction, and every
@@ -36,80 +38,97 @@ const asDecimal = (value) => money(value).toFixed(2);
  * `trackDeposit` also bumps the customers.deposit / previousDeposit counters —
  * true for genuine money-in (bank transfer, manual deposit), false for
  * refunds, which are returned money rather than new deposits.
+ *
+ * An optional `tx` lets a caller (e.g. a bulk statement-line deposit) commit
+ * the credit atomically with other writes in its own transaction — same
+ * pattern as placeHold. Without one, the credit gets its own transaction.
  */
-const credit = async ({
-  customerId,
-  amount,
-  description = "",
-  reference = "",
-  paystackDetails = null,
-  recordedBy = null,
-  trackDeposit = true,
-}) => {
+const credit = async (
+  {
+    customerId,
+    amount,
+    description = "",
+    reference = "",
+    paystackDetails = null,
+    recordedBy = null,
+    trackDeposit = true,
+  },
+  tx,
+) => {
   const value = money(amount);
   if (value <= 0) {
     return { success: false, message: "Credit amount must be positive" };
   }
 
-  try {
-    return await db.transaction(async (tx) => {
-      if (reference) {
-        const [existing] = await tx
-          .select()
-          .from(deposits)
-          .where(eq(deposits.reference, reference))
-          .limit(1);
-        if (existing) {
-          return {
-            success: true,
-            alreadyProcessed: true,
-            deposit: existing,
-            message: `Transaction reference ${reference} has already been recorded.`,
-          };
-        }
+  const run = async (trx) => {
+    if (reference) {
+      const [existing] = await trx
+        .select()
+        .from(deposits)
+        .where(eq(deposits.reference, reference))
+        .limit(1);
+      if (existing) {
+        return {
+          success: true,
+          alreadyProcessed: true,
+          deposit: existing,
+          message: `Transaction reference ${reference} has already been recorded.`,
+        };
       }
+    }
 
-      // Credits can never overdraw, so the guarded UPDATE only needs to
-      // match on id; it returns null solely when the customer doesn't exist.
-      let updated = await customerRepo.creditBalance(customerId, value, tx);
-      if (!updated) {
-        return { success: false, message: "Customer not found" };
-      }
+    // Credits can never overdraw, so the guarded UPDATE only needs to
+    // match on id; it returns null solely when the customer doesn't exist.
+    let updated = await customerRepo.creditBalance(customerId, value, trx);
+    if (!updated) {
+      return { success: false, message: "Customer not found" };
+    }
 
-      if (trackDeposit) {
-        // previousDeposit is the counter as of right after the balance-only
-        // update above — deposit/previousDeposit are untouched by
-        // creditBalance, so this is exactly "before this credit's deposit
-        // counter changed", computed inside the same transaction rather than
-        // from a separate earlier read.
-        const [withDeposit] = await tx
-          .update(customers)
-          .set({
-            previousDeposit: updated.deposit,
-            deposit: sql`${customers.deposit} + ${value}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(customers.id, customerId))
-          .returning();
-        updated = withDeposit;
-      }
-
-      const [deposit] = await tx
-        .insert(deposits)
-        .values({
-          customerId,
-          amount: asDecimal(value),
-          type: "credit",
-          description,
-          reference,
-          recordedBy,
-          balanceAfter: asDecimal(updated.balance),
-          paystackDetails,
+    if (trackDeposit) {
+      // previousDeposit is the counter as of right after the balance-only
+      // update above — deposit/previousDeposit are untouched by
+      // creditBalance, so this is exactly "before this credit's deposit
+      // counter changed", computed inside the same transaction rather than
+      // from a separate earlier read.
+      const [withDeposit] = await trx
+        .update(customers)
+        .set({
+          previousDeposit: updated.deposit,
+          deposit: sql`${customers.deposit} + ${value}`,
+          updatedAt: new Date(),
         })
+        .where(eq(customers.id, customerId))
         .returning();
+      updated = withDeposit;
+    }
 
-      return { success: true, deposit, customer: updated };
-    });
+    const [deposit] = await trx
+      .insert(deposits)
+      .values({
+        customerId,
+        amount: asDecimal(value),
+        type: "credit",
+        description,
+        reference,
+        recordedBy,
+        balanceAfter: asDecimal(updated.balance),
+        paystackDetails,
+        // Starts fully unclaimed; allocateOrderFunding() draws it down as
+        // orders are paid from it.
+        remainingAmount: asDecimal(value),
+      })
+      .returning();
+
+    return { success: true, deposit, customer: updated };
+  };
+
+  // Inside a caller's transaction a duplicate-reference violation must
+  // propagate — the caller's atomic unit can't be soft-recovered here
+  // (Postgres aborts it). The soft-recovery path below only applies to the
+  // standalone transaction case.
+  if (tx) return run(tx);
+  try {
+    return await db.transaction(run);
   } catch (err) {
     // Two requests raced past the pre-check with the same reference; the
     // partial unique index on deposits.reference stopped the second one.
@@ -128,6 +147,105 @@ const credit = async ({
     }
     throw err;
   }
+};
+
+/**
+ * A manual deposit sourced from one or more bank-statement lines: claim the
+ * lines and credit the wallet once per line — each keeps its own amount,
+ * depositor, date and reference rather than being folded into a single
+ * summed row, so the ledger mirrors the bank statement one row at a time.
+ * All of it commits in one transaction.
+ *
+ * The claim is a guarded UPDATE (`WHERE status = 'UNMATCHED'`), so two staff
+ * racing to use an overlapping set of lines can't both win — whoever loses
+ * gets back fewer claimed rows than they asked for and the whole transaction
+ * is rolled back rather than under-crediting silently.
+ *
+ * Amounts are never trusted from the client — each deposit's amount comes
+ * from the claimed line itself.
+ */
+const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, staffId, description }) => {
+  if (!Array.isArray(lineIds) || !lineIds.length) {
+    return { success: false, message: "No statement lines were selected" };
+  }
+
+  return db.transaction(async (tx) => {
+    const claimed = await tx
+      .update(bankStatementLines)
+      .set({ status: "MATCHED", matchedBy: staffId ?? null, matchedAt: new Date() })
+      .where(
+        and(
+          inArray(bankStatementLines.id, lineIds),
+          eq(bankStatementLines.bankAccountId, bankAccountId),
+          eq(bankStatementLines.status, "UNMATCHED"),
+        ),
+      )
+      .returning();
+
+    // Returning a failure object here (instead of throwing) would still let
+    // Drizzle commit the transaction — silently leaving whichever lines DID
+    // get claimed stuck in MATCHED with no deposit behind them. Throwing is
+    // what actually rolls the partial claim back.
+    if (claimed.length !== lineIds.length) {
+      throw Object.assign(
+        new Error("One or more of those lines were already used in another deposit — refresh and try again."),
+        { status: 409 },
+      );
+    }
+
+    const createdDeposits = [];
+    for (const line of claimed) {
+      const creditResult = await credit(
+        {
+          customerId,
+          amount: money(line.amount),
+          description:
+            description ||
+            `Manual deposit — bank statement line${line.narration ? `: ${line.narration}` : ` #${line.id}`}`,
+          // The line's own bank reference, if it has one — falling back to a
+          // synthetic key that's stable per line (so retrying a failed
+          // request is idempotent) rather than per request.
+          reference: line.bankRef || `STMT-${line.id}`,
+          paystackDetails: {
+            paymentMethod: "manual_bank_transfer",
+            channel: "manual_bank_transfer",
+            bankAccountId,
+            senderName: line.depositor || null,
+            paidAt: line.txnDate,
+            statementLineIds: [line.id],
+            statementLineCount: 1,
+          },
+          recordedBy: staffId ?? null,
+        },
+        tx,
+      );
+
+      // Same reasoning as the claim check above: a credit failure, or a
+      // reference that unexpectedly already belonged to some other deposit,
+      // must abort the whole transaction rather than leave this line
+      // claimed with no (or the wrong) deposit behind it.
+      if (!creditResult.success || creditResult.alreadyProcessed) {
+        throw Object.assign(
+          new Error(
+            creditResult.alreadyProcessed
+              ? `Statement line ${line.id}'s reference was already used by another deposit — refresh and try again.`
+              : creditResult.message || "Credit failed",
+          ),
+          { status: creditResult.alreadyProcessed ? 409 : 400 },
+        );
+      }
+
+      await tx
+        .update(bankStatementLines)
+        .set({ matchedDepositId: creditResult.deposit.id })
+        .where(eq(bankStatementLines.id, line.id));
+
+      createdDeposits.push(creditResult.deposit);
+    }
+
+    const total = claimed.reduce((sum, l) => sum + money(l.amount), 0);
+    return { success: true, deposits: createdDeposits, claimedLines: claimed, totalAmount: total };
+  });
 };
 
 /**
@@ -173,6 +291,66 @@ const debit = async ({
 };
 
 /**
+ * Which credit deposit(s) an order's payment drew from, FIFO — oldest
+ * unclaimed money first.
+ *
+ * Purely additive bookkeeping: called from placeHold()/releaseHold() wrapped
+ * in try/catch that only logs. A bug here must never be able to fail or roll
+ * back an actual payment — the balance debit above this call is the real
+ * money movement and already happened by the time this runs. Any remainder
+ * left unallocated came from deposits that predate this ledger
+ * (remainingAmount IS NULL, so the `gt` filter below excludes them) — that's
+ * expected, not an error, and the finance report surfaces it as "not tracked."
+ */
+const allocateOrderFunding = async (customerId, orderId, amount, tx) => {
+  let remaining = money(amount);
+  if (remaining <= 0) return;
+
+  const candidates = await tx
+    .select({ id: deposits.id, remainingAmount: deposits.remainingAmount })
+    .from(deposits)
+    .where(and(eq(deposits.customerId, customerId), eq(deposits.type, "credit"), gt(deposits.remainingAmount, 0)))
+    .orderBy(asc(deposits.createdAt))
+    .for("update");
+
+  for (const d of candidates) {
+    if (remaining <= 0) break;
+    const take = Math.min(money(d.remainingAmount), remaining);
+    if (take <= 0) continue;
+
+    await tx
+      .update(deposits)
+      .set({ remainingAmount: sql`${deposits.remainingAmount} - ${asDecimal(take)}` })
+      .where(eq(deposits.id, d.id));
+
+    await tx.insert(orderDepositAllocations).values({
+      orderId,
+      depositId: d.id,
+      amount: asDecimal(take),
+    });
+
+    remaining -= take;
+  }
+};
+
+/** Reverses allocateOrderFunding() — an order's hold was released, so nothing was actually spent. */
+const deallocateOrderFunding = async (orderId, tx) => {
+  const rows = await tx
+    .select({ depositId: orderDepositAllocations.depositId, amount: orderDepositAllocations.amount })
+    .from(orderDepositAllocations)
+    .where(eq(orderDepositAllocations.orderId, orderId));
+
+  for (const r of rows) {
+    await tx
+      .update(deposits)
+      .set({ remainingAmount: sql`${deposits.remainingAmount} + ${r.amount}` })
+      .where(eq(deposits.id, r.depositId));
+  }
+
+  await tx.delete(orderDepositAllocations).where(eq(orderDepositAllocations.orderId, orderId));
+};
+
+/**
  * Commit funds to an order. Decrements the balance so the money cannot be
  * spent twice, but writes no ledger row yet — that happens on conversion.
  * The unique index on orderId makes re-attempts fail closed (alreadyHeld)
@@ -202,6 +380,12 @@ const placeHold = async ({ customerId, orderId, amount, description = "" }, tx) 
         description,
       })
       .returning();
+
+    try {
+      await allocateOrderFunding(customerId, orderId, value, trx);
+    } catch (err) {
+      console.error(`[wallet] allocateOrderFunding failed for order ${orderId}:`, err.message);
+    }
 
     return { success: true, hold, customer: updated };
   };
@@ -247,6 +431,12 @@ const releaseHold = async (orderId, tx) => {
     // A release can never overdraw — it is only ever returning money this
     // same hold already took.
     await customerRepo.creditBalance(hold.customerId, money(hold.amount), trx);
+
+    try {
+      await deallocateOrderFunding(orderId, trx);
+    } catch (err) {
+      console.error(`[wallet] deallocateOrderFunding failed for order ${orderId}:`, err.message);
+    }
 
     return { success: true, hold: updatedHold };
   };
@@ -332,10 +522,13 @@ const getLedgerBalance = async (customerId) => {
 
 module.exports = {
   credit,
+  creditFromStatementLines,
   debit,
   placeHold,
   releaseHold,
   convertHold,
   findHoldByOrder,
   getLedgerBalance,
+  allocateOrderFunding,
+  deallocateOrderFunding,
 };

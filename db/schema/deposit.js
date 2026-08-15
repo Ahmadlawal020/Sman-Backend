@@ -30,6 +30,11 @@ const deposits = pgTable(
     recordedBy: integer("recorded_by").references(() => staff.id, { onDelete: "set null" }),
     balanceAfter: decimal("balance_after", { precision: 15, scale: 2 }).default("0"),
     paystackDetails: jsonb("paystack_details"),
+    // How much of this credit deposit hasn't yet been claimed by an order,
+    // via order_deposit_allocations. NULL means "predates that tracking" —
+    // deliberately distinct from 0 ("tracked, and now fully spent"). Never
+    // set on debit rows.
+    remainingAmount: decimal("remaining_amount", { precision: 15, scale: 2 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

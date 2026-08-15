@@ -9,7 +9,7 @@ const {
   orderRepo,
 } = require("../../repositories");
 const { computeFinancials } = require("../../lib/pfiFinance");
-const { applyCategoryPfi, actorFor } = require("./expense.controller");
+const { resolveBooking, actorFor, vendorFor } = require("./expense.controller");
 
 function httpErr(status, message) {
   return Object.assign(new Error(message), { status });
@@ -412,9 +412,11 @@ const getPfiExpenses = asyncHandler(async (req, res) => {
 /**
  * Quick-add from inside the PFI drawer.
  *
- * The category is resolved server-side from the PFI itself, so a line added
- * here is indistinguishable from one added on the expenses page — same row,
- * same stamped `pfi_id`, same audit entry.
+ * The PFI comes from the URL, so a line added here is indistinguishable from
+ * one added on the expenses page — same row, same stamped `pfi_id`, same audit
+ * entry. A GL account named in the body is used when there is one; without it
+ * the line falls back to this PFI's own category, where every pre-chart row
+ * already sits.
  */
 const addPfiExpense = asyncHandler(async (req, res) => {
   const pfi = await pfiRepo.findById(req.params.id);
@@ -423,13 +425,15 @@ const addPfiExpense = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
   if (!Number.isFinite(amount) || amount < 0) throw httpErr(400, "Amount must be a positive number");
 
-  const category =
-    (await pfiExpenseRepo.ensureCategoryForPfi(pfi.id, pfi.pfiNumber)) ||
-    (await pfiExpenseRepo.findCategoryById(req.body.category_id));
-  if (!category) throw httpErr(500, "Could not resolve this PFI's expense category");
+  const requested = req.body.category_id ?? req.body.categoryId;
+  const category = requested
+    ? await pfiExpenseRepo.findCategoryById(requested)
+    : await pfiExpenseRepo.ensureCategoryForPfi(pfi.id, pfi.pfiNumber);
+  if (!category) throw httpErr(400, "Could not resolve this PFI's expense category");
 
-  const { pfiId } = await applyCategoryPfi(category.id);
+  const { pfiId } = await resolveBooking(category.id, pfi.id);
   const { actorId, actorName } = await actorFor(req);
+  const { vendorId, vendorName } = await vendorFor(req.body);
 
   const expense = await pfiExpenseRepo.createExpense({
     pfi_id: pfiId,
@@ -437,7 +441,8 @@ const addPfiExpense = asyncHandler(async (req, res) => {
     expense_date:
       parseDate(req.body.expense_date ?? req.body.expenseDate)?.toISOString?.() ||
       new Date().toISOString(),
-    vendor: req.body.vendor || "",
+    vendor: vendorName,
+    vendor_id: vendorId,
     description: req.body.description || "",
     amount: String(amount),
     bank_paid_from: req.body.bank_paid_from ?? req.body.bankPaidFrom ?? "",

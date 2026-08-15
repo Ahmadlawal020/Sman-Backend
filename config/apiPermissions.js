@@ -58,8 +58,21 @@ const API_PERMISSIONS = {
   // decides who can review, and the list scopes non-oversight users to their
   // own rows.
   "/api/expenses": { read: null },
+  // Same reasoning as expenses: any staff raising a request for a
+  // not-yet-listed vendor must be able to save it there and then, not wait on
+  // a finance admin to add it first.
+  "/api/vendors": { read: null },
+  // Narrower than MONEY (which includes commissions roles) — this exposes
+  // customer bank/sender account details, not just spend totals.
+  "/api/finance-report": { read: ["admin", "finance", "audit"] },
   "/api/pfis": { read: [...MONEY, ...SALES], write: ["admin", "finance"] },
   "/api/deposits": { read: MONEY, write: ["admin", "finance"] },
+  // Deliberately open, unlike deposits: this is an advisory note, not money
+  // movement, and it's written from two different contexts by two different
+  // staff populations — sales/ops staff placing an order, and finance staff
+  // working the customer's page or a manual deposit. Narrowing it to MONEY
+  // would 403 the order-wizard case for no real protection.
+  "/api/expected-payments": { read: null },
   "/api/bank-accounts": { read: MONEY, write: ["admin", "finance"] },
   "/api/bank-statements": { read: MONEY, write: ["admin", "finance"] },
   "/api/settlements": { read: MONEY, write: ["admin", "finance"] },

@@ -18,11 +18,19 @@ const depotPriceHistorySchema = require("./depotPriceHistory");
 const driverTruckHistorySchema = require("./driverTruckHistory");
 const pfiSchema = require("./pfi");
 const orderSchema = require("./order");
-// After ./order — pfiExpense destructures `orders` at load time.
+const vendorSchema = require("./vendor");
+// After ./order and ./vendor — pfiExpense destructures `orders` and `vendors`
+// at load time.
 const pfiExpenseSchema = require("./pfiExpense");
 const orderPfiAllocationSchema = require("./orderPfiAllocation");
 const ticketSchema = require("./ticket");
 const depositSchema = require("./deposit");
+// After ./order and ./deposit — orderDepositAllocation destructures both at
+// load time.
+const orderDepositAllocationSchema = require("./orderDepositAllocation");
+// After ./customer, ./order, ./deposit, ./staff — expectedPayment
+// destructures all four at load time.
+const expectedPaymentSchema = require("./expectedPayment");
 const walletHoldSchema = require("./walletHold");
 const deliveryCustomerSchema = require("./deliveryCustomer");
 const deliveryNoteSchema = require("./deliveryNote");
@@ -75,10 +83,13 @@ module.exports = {
   ...driverTruckHistorySchema,
   ...pfiSchema,
   ...orderSchema,
+  ...vendorSchema,
   ...pfiExpenseSchema,
   ...orderPfiAllocationSchema,
   ...ticketSchema,
   ...depositSchema,
+  ...orderDepositAllocationSchema,
+  ...expectedPaymentSchema,
   ...walletHoldSchema,
   ...deliveryCustomerSchema,
   ...deliveryNoteSchema,

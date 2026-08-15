@@ -202,6 +202,23 @@ const bankAccountBase = {
 const createBankAccount = z.object(bankAccountBase);
 const updateBankAccount = z.object(bankAccountBase).partial();
 
+// --- vendors ----------------------------------------------------------------
+
+const vendorBase = {
+  name: requiredString("Vendor name", 255),
+  contactPerson: optionalString("Contact person", 255),
+  phone: optionalString("Phone", 50),
+  email: optionalString("Email", 255),
+  address: optionalString("Address", 1000),
+  bankName: optionalString("Bank name", 200),
+  accountNumber: optionalString("Account number", 50),
+  accountName: optionalString("Account name", 255),
+  taxId: optionalString("Tax/registration ID", 50),
+  status: enumOf("Status", ["Active", "Inactive"]).optional(),
+};
+const createVendor = z.object(vendorBase);
+const updateVendor = z.object(vendorBase).partial();
+
 // --- bank statements ------------------------------------------------------
 
 const createBankStatement = z.object({
@@ -220,17 +237,73 @@ const matchBankLines = z.object({
 
 // --- expenses --------------------------------------------------------------
 
+/**
+ * An invoice figure. Blank stays blank — mapping it to "0.00" the way the PFI
+ * fields do would turn "no invoice was raised" into "an invoice worth nothing",
+ * and those read very differently on a payment schedule.
+ */
+/** A percentage between 0 and 100. Blank stays blank. */
+const optPercent = (label = "Rate") =>
+  z
+    .union([
+      numberLike(label).pipe(
+        z.number().min(0, `${label} cannot be negative`).max(100, `${label} cannot exceed 100%`)
+      ),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? null : v === undefined ? undefined : Number(v)));
+
+const optInvoiceMoney = (label = "Amount") =>
+  z
+    .union([
+      money(label),
+      numberLike(label).pipe(z.number().nonnegative(`${label} cannot be negative`)).transform((v) => v.toFixed(2)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? null : v === undefined ? undefined : String(v)));
+
 const expenseBase = {
   // A description is genuinely optional — the category, vendor and amount
   // already identify the line, and forcing prose here just gets "expense".
   description: optionalString("Description", 500),
   amount: money("Amount", { min: 0.01 }),
-  // The category decides which cargo the line lands on, so it is the one
-  // field the create path actually needs. Accepted as an id in either casing.
+  // The GL account the cost is posted to. Accepted as an id in either casing.
   category: id("Category").optional().nullable(),
   category_id: id("Category").optional().nullable(),
   categoryId: id("Category").optional().nullable(),
+  // Which cargo carries the cost. Only honoured for a PFI/product-related
+  // account — the controller refuses it on any other, so it can never be used
+  // to slip an overhead into a batch's landed cost.
+  pfi_id: id("PFI").optional().nullable(),
+  pfiId: id("PFI").optional().nullable(),
   vendor: optionalString("Vendor", 255),
+  // Set when the requester picked (or saved) an entry from the vendor list;
+  // `vendor` above still carries the name — see expense.controller.js.
+  vendor_id: id("Vendor").optional().nullable(),
+  vendorId: id("Vendor").optional().nullable(),
+  tin_number: optionalString("TIN number", 30),
+  tinNumber: optionalString("TIN number", 30),
+  invoice_number: optionalString("Invoice number", 100),
+  invoiceNumber: optionalString("Invoice number", 100),
+  // The invoice behind the payment. `amount` above stays the money paid.
+  amount_ex_vat: optInvoiceMoney("Amount excluding VAT"),
+  amountExVat: optInvoiceMoney("Amount excluding VAT"),
+  vat_amount: optInvoiceMoney("VAT"),
+  vatAmount: optInvoiceMoney("VAT"),
+  invoice_amount: optInvoiceMoney("Invoice amount"),
+  invoiceAmount: optInvoiceMoney("Invoice amount"),
+  wht_deduction: optInvoiceMoney("WHT deduction"),
+  whtDeduction: optInvoiceMoney("WHT deduction"),
+  // The rate behind the deduction, as a percentage. Bounded rather than free:
+  // a "50" typed into a percent field is a decimal point away from a disaster.
+  wht_rate: optPercent("WHT rate"),
+  whtRate: optPercent("WHT rate"),
+  bank_code: optionalString("Bank code", 20),
+  bankCode: optionalString("Bank code", 20),
   expense_date: optionalString("Expense date", 40),
   expenseDate: optionalString("Expense date", 40),
   bank_paid_from: optionalString("Bank paid from", 255),
@@ -252,9 +325,39 @@ const updateExpense = z.object(expenseBase).partial();
 const categoryBase = {
   name: requiredString("Category name", 255),
   description: optionalString("Description", 500),
+  // The chart fields. Present here or the validator strips them before the
+  // controller ever sees them — a whitelist is only a whitelist if it lists
+  // everything the endpoint accepts.
+  gl_code: optionalString("GL code", 20),
+  glCode: optionalString("GL code", 20),
+  gl_group: optionalString("GL group", 40),
+  glGroup: optionalString("GL group", 40),
+  gl_subgroup: optionalString("GL subgroup", 60),
+  glSubgroup: optionalString("GL subgroup", 60),
 };
 const createCategory = z.object(categoryBase);
-const updateCategory = z.object(categoryBase).partial();
+
+/**
+ * A PATCH must be able to leave a field alone.
+ *
+ * `optionalString` turns an absent key into "", which is right on create and
+ * catastrophic here: a rename that omitted `gl_group` would arrive as a request
+ * to clear it. These keep `undefined` undefined, so only what was sent is
+ * touched.
+ */
+const chartField = (label, max) =>
+  z.string({ error: `${label} must be text` }).trim().max(max, `${label} must be ${max} characters or fewer`).optional();
+
+const updateCategory = z.object({
+  name: chartField("Category name", 255),
+  description: chartField("Description", 500),
+  gl_code: chartField("GL code", 20),
+  glCode: chartField("GL code", 20),
+  gl_group: chartField("GL group", 40),
+  glGroup: chartField("GL group", 40),
+  gl_subgroup: chartField("GL subgroup", 60),
+  glSubgroup: chartField("GL subgroup", 60),
+});
 
 // --- dangote products -----------------------------------------------------
 
@@ -426,6 +529,7 @@ module.exports = {
   createStaff, updateStaff, listStaff,
   createBankAccount, updateBankAccount,
   createBankStatement, bankStatementMapping, matchBankLines,
+  createVendor, updateVendor,
   createExpense, updateExpense, createCategory, updateCategory,
   createDangoteProduct, updateDangoteProduct,
   createPfi, updatePfi,

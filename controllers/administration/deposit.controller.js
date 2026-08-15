@@ -35,9 +35,12 @@ const createDeposit = asyncHandler(async (req, res) => {
     depositorName,
     paymentDate,
     paystackDetails,
+    lineIds,
   } = req.body;
 
-  if (!customerId || !amount) {
+  const fromStatementLines = Array.isArray(lineIds) && lineIds.length > 0;
+
+  if (!customerId || (!amount && !fromStatementLines)) {
     return res.status(400).json({
       success: false,
       message: "Customer and amount are required",
@@ -54,6 +57,40 @@ const createDeposit = asyncHandler(async (req, res) => {
   const customer = await customerRepo.findById(customerId);
   if (!customer) {
     return res.status(404).json({ success: false, message: "Customer not found" });
+  }
+
+  // Several statement lines, one deposit each: every line's own amount,
+  // depositor, date and reference stay intact rather than being summed into
+  // one row — see wallet.service.js. A claim/credit failure partway through
+  // throws and rolls the whole transaction back (handled by errorHandler).
+  if (fromStatementLines) {
+    if (!bankAccountId) {
+      return res.status(400).json({
+        success: false,
+        message: "bankAccountId is required to claim statement lines",
+      });
+    }
+
+    const result = await walletService.creditFromStatementLines({
+      customerId,
+      bankAccountId: Number(bankAccountId),
+      lineIds: lineIds.map(Number),
+      staffId: req.user?.id || null,
+      description,
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, message: result.message });
+    }
+
+    const fullDeposits = await Promise.all(
+      result.deposits.map((d) => depositRepo.findByIdFull(d.id)),
+    );
+    return res.status(201).json({
+      success: true,
+      message: `Recorded ${fullDeposits.length} deposit${fullDeposits.length === 1 ? "" : "s"} from ${result.claimedLines.length} bank statement line${result.claimedLines.length === 1 ? "" : "s"}`,
+      data: { deposits: fullDeposits, totalAmount: result.totalAmount, deposit: fullDeposits[0] },
+    });
   }
 
   const metadata = paystackDetails || {

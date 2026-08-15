@@ -3,6 +3,15 @@ const { REVENUE_STATUSES } = require("../lib/pfiFinance");
 const { OPEN_STATES } = require("../lib/expenseChain");
 
 /**
+ * The figure a total should use.
+ *
+ * A paid request counts for what actually cleared the bank; anything earlier
+ * counts for what it asked for. `amount_paid` is null on rows settled before it
+ * existed, hence the fallback — without it, historical spend would vanish.
+ */
+const SPEND = client`CASE WHEN e.status = 'paid' THEN COALESCE(e.amount_paid, e.amount) ELSE e.amount END`;
+
+/**
  * Aggregates for many PFIs at once.
  *
  * The obvious shape here is one set of queries per PFI, which costs a dozen
@@ -38,14 +47,14 @@ const aggregatesFor = async (ids) => {
     // or landing price. `open` is the committed-but-not-yet-out figure, which
     // the UI shows beside the cost and never inside it.
     client`
-      SELECT pfi_id,
-             COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)::text AS total,
-             COUNT(*) FILTER (WHERE status = 'paid')::int AS lines,
-             COALESCE(SUM(amount) FILTER (WHERE status = ANY(${OPEN_STATES})), 0)::text AS open_total,
-             COUNT(*) FILTER (WHERE status = ANY(${OPEN_STATES}))::int AS open_lines
-      FROM pfi_expenses
-      WHERE pfi_id = ANY(${list}) AND deleted_at IS NULL
-      GROUP BY pfi_id
+      SELECT e.pfi_id,
+             COALESCE(SUM(${SPEND}) FILTER (WHERE e.status = 'paid'), 0)::text AS total,
+             COUNT(*) FILTER (WHERE e.status = 'paid')::int AS lines,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.status = ANY(${OPEN_STATES})), 0)::text AS open_total,
+             COUNT(*) FILTER (WHERE e.status = ANY(${OPEN_STATES}))::int AS open_lines
+      FROM pfi_expenses e
+      WHERE e.pfi_id = ANY(${list}) AND e.deleted_at IS NULL
+      GROUP BY e.pfi_id
     `,
     client`
       SELECT pfi_id, COALESCE(SUM(total_amount), 0)::text AS total, COUNT(*)::int AS orders
@@ -157,26 +166,37 @@ const findCategoryById = async (id) => {
 const listCategories = async () => {
   // PFI-backed categories carry their PFI's status so the picker can show
   // which batches are still open.
+  //
+  // Ordered by GL code, not alphabetically: the code is the order Finance reads
+  // the chart in, and it keeps each subgroup's accounts together.
+  //
+  // The line count comes back with the row so the chart editor can say why an
+  // account cannot be deleted, rather than only refusing after the click.
   return client`
-    SELECT c.*, p.status AS pfi_status, p.pfi_number
+    SELECT c.*, p.status AS pfi_status, p.pfi_number,
+           (SELECT COUNT(*)::int FROM pfi_expenses e
+            WHERE e.category_id = c.id AND e.deleted_at IS NULL) AS expense_count
     FROM expense_categories c
     LEFT JOIN pfis p ON p.id = c.pfi_id
-    ORDER BY c.is_system_category ASC, c.name ASC
+    ORDER BY c.is_system_category ASC, c.gl_code ASC NULLS LAST, c.name ASC
   `;
 };
 
-const createCategory = async (name) => {
+const createCategory = async (name, { glCode = null, glGroup = null, glSubgroup = "" } = {}) => {
   const [row] = await client`
-    INSERT INTO expense_categories (name, pfi_id, is_system_category)
-    VALUES (${name}, NULL, false)
+    INSERT INTO expense_categories (name, gl_code, gl_group, gl_subgroup, pfi_id, is_system_category)
+    VALUES (${name}, ${glCode || null}, ${glGroup || null}, ${glSubgroup || ""}, NULL, false)
     RETURNING *
   `;
   return row;
 };
 
-const updateCategory = async (id, name) => {
+/** Takes a name alone in the common case, or a patch of columns to set. */
+const updateCategory = async (id, data) => {
+  const patch = typeof data === "string" ? { name: data } : { ...(data || {}) };
   const [row] = await client`
-    UPDATE expense_categories SET name = ${name}, updated_at = NOW()
+    UPDATE expense_categories
+    SET ${client({ ...patch, updated_at: new Date().toISOString() })}
     WHERE id = ${Number(id)} RETURNING *
   `;
   return row || null;
@@ -215,9 +235,13 @@ const autoPopulateCategories = async () => {
 
 // ─── Expenses ───────────────────────────────────────────────────────────────
 
+// The GL pair travels with every expense read — joined, never copied onto the
+// row, so a corrected account name can never disagree with the code.
+const GL_COLS = client`c.name AS category_name, c.gl_code, c.gl_group, c.gl_subgroup`;
+
 const findExpenseById = async (id) => {
   const [row] = await client`
-    SELECT e.*, c.name AS category_name, c.is_system_category, p.pfi_number
+    SELECT e.*, ${GL_COLS}, c.is_system_category, p.pfi_number
     FROM pfi_expenses e
     JOIN expense_categories c ON c.id = e.category_id
     LEFT JOIN pfis p ON p.id = e.pfi_id
@@ -228,7 +252,7 @@ const findExpenseById = async (id) => {
 
 const listExpensesForPfi = async (pfiId) => {
   return client`
-    SELECT e.*, c.name AS category_name
+    SELECT e.*, ${GL_COLS}
     FROM pfi_expenses e
     JOIN expense_categories c ON c.id = e.category_id
     WHERE e.pfi_id = ${Number(pfiId)} AND e.deleted_at IS NULL
@@ -243,7 +267,10 @@ const listExpensesForPfi = async (pfiId) => {
 const listExpenses = async ({
   search,
   categoryId,
+  /** One of GL_GROUPS — narrows to a whole section of the chart at once. */
+  glGroup,
   pfiId,
+  vendorId,
   bank,
   type,
   status,
@@ -271,12 +298,16 @@ const listExpenses = async ({
     const p = `%${search}%`;
     base.push(
       client`(e.description ILIKE ${p} OR e.vendor ILIKE ${p} OR c.name ILIKE ${p}
-              OR e.bank_paid_from ILIKE ${p} OR e.receipt_reference ILIKE ${p})`
+              OR e.bank_paid_from ILIKE ${p} OR e.receipt_reference ILIKE ${p}
+              OR e.invoice_number ILIKE ${p} OR e.tin_number ILIKE ${p}
+              OR c.gl_code ILIKE ${p})`
     );
   }
   if (categoryId === "none") base.push(client`e.category_id IS NULL`);
   else if (categoryId && categoryId !== "all") base.push(client`e.category_id = ${Number(categoryId)}`);
+  if (glGroup && glGroup !== "all") base.push(client`c.gl_group = ${glGroup}`);
   if (pfiId && pfiId !== "all") base.push(client`e.pfi_id = ${Number(pfiId)}`);
+  if (vendorId && vendorId !== "all") base.push(client`e.vendor_id = ${Number(vendorId)}`);
   if (bank) base.push(client`LOWER(e.bank_paid_from) = LOWER(${bank})`);
   if (type === "pfi") base.push(client`e.pfi_id IS NOT NULL`);
   if (type === "general") base.push(client`e.pfi_id IS NULL`);
@@ -300,7 +331,7 @@ const listExpenses = async ({
 
   const [rows, [totals], [counts], banks] = await Promise.all([
     client`
-      SELECT e.*, c.name AS category_name, c.is_system_category, p.pfi_number,
+      SELECT e.*, ${GL_COLS}, c.is_system_category, p.pfi_number,
              sub.first_name || ' ' || sub.surname AS submitted_by_name,
              rev.first_name || ' ' || rev.surname AS reviewed_by_name,
              (SELECT COUNT(*)::int FROM pfi_expense_attachments a WHERE a.expense_id = e.id)
@@ -319,10 +350,10 @@ const listExpenses = async ({
     client`
       SELECT
         COUNT(*)::int AS count,
-        COALESCE(SUM(e.amount), 0)::text AS total,
-        COALESCE(SUM(e.amount) FILTER (WHERE e.pfi_id IS NOT NULL), 0)::text AS pfi_total,
-        COALESCE(SUM(e.amount) FILTER (WHERE e.pfi_id IS NULL), 0)::text AS general_total,
-        COALESCE(SUM(e.amount) FILTER (WHERE e.status = 'paid'), 0)::text AS paid_total,
+        COALESCE(SUM(${SPEND}), 0)::text AS total,
+        COALESCE(SUM(${SPEND}) FILTER (WHERE e.pfi_id IS NOT NULL), 0)::text AS pfi_total,
+        COALESCE(SUM(${SPEND}) FILTER (WHERE e.pfi_id IS NULL), 0)::text AS general_total,
+        COALESCE(SUM(${SPEND}) FILTER (WHERE e.status = 'paid'), 0)::text AS paid_total,
         COALESCE(SUM(e.amount) FILTER (WHERE e.status = ANY(${OPEN_STATES})), 0)::text AS open_total
       FROM pfi_expenses e
       JOIN expense_categories c ON c.id = e.category_id
@@ -377,7 +408,7 @@ const listExpenses = async ({
 /** One expense with everything the detail view needs, in two queries. */
 const findExpenseFull = async (id) => {
   const [row] = await client`
-    SELECT e.*, c.name AS category_name, c.is_system_category, p.pfi_number,
+    SELECT e.*, ${GL_COLS}, c.is_system_category, p.pfi_number,
            sub.first_name || ' ' || sub.surname AS submitted_by_name
     FROM pfi_expenses e
     JOIN expense_categories c ON c.id = e.category_id
@@ -387,7 +418,7 @@ const findExpenseFull = async (id) => {
   `;
   if (!row) return null;
 
-  const [attachments, history] = await Promise.all([
+  const [attachments, history, comments] = await Promise.all([
     client`
       SELECT a.*, s.first_name || ' ' || s.surname AS uploaded_by_name
       FROM pfi_expense_attachments a
@@ -403,9 +434,32 @@ const findExpenseFull = async (id) => {
       WHERE a.expense_id = ${row.id}
       ORDER BY a.created_at ASC, a.id ASC
     `,
+    listComments(row.id),
   ]);
 
-  return { ...row, attachments, history };
+  return { ...row, attachments, history, comments };
+};
+
+// ─── The conversation ───────────────────────────────────────────────────────
+
+const listComments = async (expenseId) =>
+  client`
+    SELECT m.id, m.body, m.author_id, m.created_at,
+           COALESCE(NULLIF(TRIM(s.first_name || ' ' || s.surname), ''), m.author_name) AS author_name,
+           s.roles AS author_roles
+    FROM pfi_expense_comments m
+    LEFT JOIN staff s ON s.id = m.author_id
+    WHERE m.expense_id = ${Number(expenseId)}
+    ORDER BY m.created_at ASC, m.id ASC
+  `;
+
+const addComment = async ({ expenseId, body, authorId, authorName }) => {
+  const [row] = await client`
+    INSERT INTO pfi_expense_comments (expense_id, body, author_id, author_name)
+    VALUES (${Number(expenseId)}, ${body}, ${authorId ?? null}, ${authorName || ""})
+    RETURNING *
+  `;
+  return row;
 };
 
 const createExpense = async (data, tx = client) => {
@@ -495,6 +549,8 @@ module.exports = {
   createExpense,
   updateExpense,
   softDeleteExpense,
+  listComments,
+  addComment,
   writeAudit,
   recordMovement,
   listMovements,

@@ -309,6 +309,62 @@
       "when": 1786548000000,
       "tag": "0044_customer_otp_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786634400000,
+      "tag": "0045_expense_gl_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786636000000,
+      "tag": "0046_expense_payment_and_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786637000000,
+      "tag": "0047_expense_wht_rate",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786638000000,
+      "tag": "0048_vendors",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1786639000000,
+      "tag": "0049_expense_payment_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1786640000000,
+      "tag": "0050_expense_reference_number",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1786641000000,
+      "tag": "0051_order_deposit_allocations",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1786642000000,
+      "tag": "0052_expected_payments",
+      "breakpoints": true
     }
   ]
 }
