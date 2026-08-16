@@ -90,8 +90,10 @@ const createPfi = asyncHandler(async (req, res) => {
   const product_id = req.body.product_id || req.body.productId;
   const starting_qty_litres = req.body.starting_qty_litres ?? req.body.startingQtyLitres;
   const bl_qty_litres = req.body.bl_qty_litres ?? req.body.blQtyLitres;
+  const bl_qty_mt = req.body.bl_qty_mt ?? req.body.blQtyMt;
   const qty_volume_mt = req.body.qty_volume_mt ?? req.body.qtyVolumeMt;
   const unit_price = req.body.unit_price ?? req.body.unitPrice;
+  const credit_balance = req.body.credit_balance ?? req.body.creditBalance;
   const audit_officer = req.body.audit_officer || req.body.auditOfficerId;
   const product_officer = req.body.product_officer || req.body.productOfficerId;
   const it_compliance_officer = req.body.it_compliance_officer || req.body.itComplianceOfficerId;
@@ -160,8 +162,10 @@ const createPfi = asyncHandler(async (req, res) => {
     // Left null when not supplied — an unknown BL must not read as zero, or
     // every money figure downstream would silently compute against it.
     blQtyLitres: bl_qty_litres == null || bl_qty_litres === "" ? null : Number(bl_qty_litres),
+    blQtyMt: bl_qty_mt == null || bl_qty_mt === "" ? null : Number(bl_qty_mt),
     qtyVolumeMt: Number(qty_volume_mt) || 0,
     unitPrice: String(Number(unit_price) || 0),
+    creditBalance: String(Number(credit_balance) || 0),
     auditOfficerId: audit_officer ? (parseInt(audit_officer, 10) || audit_officer) : null,
     productOfficerId: product_officer ? (parseInt(product_officer, 10) || product_officer) : null,
     itComplianceOfficerId: it_compliance_officer ? (parseInt(it_compliance_officer, 10) || it_compliance_officer) : null,
@@ -195,8 +199,8 @@ const updatePfi = asyncHandler(async (req, res) => {
 
   const allowedFields = [
     "pfi_number", "description", "pfi_date", "status", "starting_qty_litres",
-    "bl_qty_litres",
-    "qty_volume_mt", "sold_qty_litres", "total_amount", "unit_price", "product_unit",
+    "bl_qty_litres", "bl_qty_mt",
+    "qty_volume_mt", "sold_qty_litres", "total_amount", "unit_price", "credit_balance", "product_unit",
     "vessel_broker", "vessel_name", "surveyor_name", "surveyor_phone",
     "closure_date", "total_inflow", "closure_bank", "purchase_cost",
     "aggregate_expenses", "closure_handler", "closure_remarks",
@@ -214,6 +218,9 @@ const updatePfi = asyncHandler(async (req, res) => {
       } else if (field === "bl_qty_litres") {
         // Blank clears it back to unknown rather than setting zero.
         updateData.blQtyLitres = value === "" || value === null ? null : Number(value);
+      } else if (field === "bl_qty_mt") {
+        // Same "blank means unknown" rule as bl_qty_litres.
+        updateData.blQtyMt = value === "" || value === null ? null : Number(value);
       } else {
         updateData[camelKey] = value;
       }

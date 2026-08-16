@@ -416,6 +416,17 @@ const optPfiFloat = (label = "Volume") =>
     .optional()
     .transform((v) => (v === "" || v === null ? 0 : v === undefined ? undefined : Number(v)));
 
+/** Same as optPfiBlQty (nullable, not zero-defaulted) but without the whole-number constraint. */
+const optPfiBlFloat = (label = "Volume") =>
+  z
+    .union([
+      numberLike(label).pipe(z.number().nonnegative(`${label} cannot be negative`)),
+      z.literal(""),
+      z.null(),
+    ])
+    .optional()
+    .transform((v) => (v === "" || v === null ? null : v === undefined ? undefined : Number(v)));
+
 const optPfiMoney = (label = "Amount") =>
   z
     .union([
@@ -461,8 +472,12 @@ const pfiBase = {
   bl_qty_litres: optPfiBlQty("BL quantity"),
   qtyVolumeMt: optPfiFloat("Quantity volume (MT)"),
   qty_volume_mt: optPfiFloat("Quantity volume (MT)"),
+  blQtyMt: optPfiBlFloat("BL quantity (MT)"),
+  bl_qty_mt: optPfiBlFloat("BL quantity (MT)"),
   unitPrice: optPfiMoney("Unit price"),
   unit_price: optPfiMoney("Unit price"),
+  creditBalance: optPfiMoney("Credit balance"),
+  credit_balance: optPfiMoney("Credit balance"),
   auditOfficerId: optPfiId("Audit officer"),
   audit_officer: optPfiId("Audit officer"),
   audit_officer_id: optPfiId("Audit officer"),
