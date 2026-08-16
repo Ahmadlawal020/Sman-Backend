@@ -77,10 +77,11 @@ const handleRegister = asyncHandler(async (req, res) => {
     });
   }
 
-  if (await otpService.isOverDailyCap()) {
+  if (!otpService.isDemoAccount(e164) && (await otpService.isOverDailyCap())) {
     // Global, not per-phone, so a 503 discloses nothing about any number — and
     // silently returning 200 would strand real customers with no signal to
-    // anyone that the budget is spent.
+    // anyone that the budget is spent. Demo-review numbers skip this: a spent
+    // SMS budget must not strand an App Store reviewer.
     return res.status(503).json({
       success: false,
       message: "Verification is temporarily unavailable. Please try again later.",
@@ -135,7 +136,7 @@ const handleRequestOtp = asyncHandler(async (req, res) => {
   const customer = e164 ? await customerRepo.findByPhone(e164) : null;
 
   if (customer) {
-    if (await otpService.isOverDailyCap()) {
+    if (!otpService.isDemoAccount(customer.phone) && (await otpService.isOverDailyCap())) {
       return res.status(503).json({
         success: false,
         message: "Verification is temporarily unavailable. Please try again later.",
@@ -340,7 +341,10 @@ const handleRequestDeleteOtp = asyncHandler(async (req, res) => {
     });
   }
 
-  if (await otpService.isOverDailyCap()) {
+  if (
+    !otpService.isDemoAccount(req.customer.phone) &&
+    (await otpService.isOverDailyCap())
+  ) {
     return res.status(503).json({
       success: false,
       message: "Verification is temporarily unavailable. Please try again later.",

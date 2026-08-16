@@ -90,7 +90,10 @@ const handlePasswordLogin = asyncHandler(async (req, res) => {
 
   const trusted = await identityService.isTrustedDevice(result.customer.id, deviceToken);
   if (!trusted) {
-    if (await otpService.isOverDailyCap()) {
+    if (
+      !otpService.isDemoAccount(result.customer.phone) &&
+      (await otpService.isOverDailyCap())
+    ) {
       return res.status(503).json({
         success: false,
         message: "Verification is temporarily unavailable. Please try again later.",
