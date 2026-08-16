@@ -1,4 +1,4 @@
-const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, asc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
   depots,
@@ -54,7 +54,11 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
       .select()
       .from(depots)
       .where(whereClause)
-      .orderBy(desc(depots.createdAt))
+      // createdAt alone ties for depots seeded/created at the same instant,
+      // and Postgres doesn't preserve tie order across queries — especially
+      // after an UPDATE rewrites a row. id is a strictly increasing tiebreaker
+      // that keeps the list order stable regardless of what gets edited.
+      .orderBy(desc(depots.createdAt), asc(depots.id))
       .limit(limitNum)
       .offset(offset),
     db
