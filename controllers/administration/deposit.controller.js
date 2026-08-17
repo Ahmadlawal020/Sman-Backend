@@ -6,7 +6,7 @@ const { processPaystackPayment } = require("../../services/payment.service");
 const getDeposits = asyncHandler(async (req, res) => {
   const { customer, page = 1, limit = 50, type = "credit" } = req.query;
 
-  const result = await depositRepo.findAll({ customer, page, limit, type });
+  const result = await depositRepo.findAll({ customer, page, limit, type, scopeUser: req.user });
 
   res.json({ success: true, data: result });
 });

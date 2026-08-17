@@ -1,6 +1,7 @@
 const { eq, and, or, ilike, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { pfis, depots, products, staff } = require("../db/schema");
+const { scopeCondition } = require("../lib/scopeFilter");
 
 const findById = async (id) => {
   const numericId = parseInt(id, 10) || id;
@@ -19,12 +20,19 @@ const findByNumber = async (pfiNumber) => {
   return { ...row, _id: String(row.id) };
 };
 
-const findAll = async ({ search, status, location, page = 1, limit = 100 } = {}) => {
+const findAll = async ({ search, status, location, scopeUser, page = 1, limit = 100 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+
+  const scope = scopeCondition(scopeUser, {
+    depotColumn: pfis.locationId,
+    lpgStationColumn: pfis.lpgStationId,
+    pfiColumn: pfis.id,
+  });
+  if (scope) conditions.push(scope);
 
   if (search) {
     const pattern = `%${search}%`;

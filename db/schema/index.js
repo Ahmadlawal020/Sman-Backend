@@ -17,6 +17,8 @@ const depotProductPricesSchema = require("./depotProductPrices");
 const depotPriceHistorySchema = require("./depotPriceHistory");
 const driverTruckHistorySchema = require("./driverTruckHistory");
 const pfiSchema = require("./pfi");
+// After ./pfi and ./staff — pfiStaff destructures both at load time.
+const pfiStaffSchema = require("./pfiStaff");
 const orderSchema = require("./order");
 const vendorSchema = require("./vendor");
 // After ./order and ./vendor — pfiExpense destructures `orders` and `vendors`
@@ -64,6 +66,7 @@ const notificationSchema = require("./notification");
 const notificationDeliverySchema = require("./notificationDelivery");
 const notificationPreferenceSchema = require("./notificationPreference");
 const deviceTokenSchema = require("./deviceToken");
+const staffPageOverrideSchema = require("./staffPageOverride");
 
 module.exports = {
   ...enums,
@@ -82,6 +85,7 @@ module.exports = {
   ...depotPriceHistorySchema,
   ...driverTruckHistorySchema,
   ...pfiSchema,
+  ...pfiStaffSchema,
   ...orderSchema,
   ...vendorSchema,
   ...pfiExpenseSchema,
@@ -122,4 +126,5 @@ module.exports = {
   ...notificationDeliverySchema,
   ...notificationPreferenceSchema,
   ...deviceTokenSchema,
+  ...staffPageOverrideSchema,
 };

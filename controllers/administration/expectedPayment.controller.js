@@ -1,9 +1,9 @@
 const asyncHandler = require("express-async-handler");
-const { expectedPaymentRepo } = require("../../repositories");
+const { expectedPaymentRepo, orderRepo } = require("../../repositories");
 
 const getExpectedPayments = asyncHandler(async (req, res) => {
   const { customerId, orderId, status, search } = req.query;
-  const rows = await expectedPaymentRepo.findAll({ customerId, orderId, status, search });
+  const rows = await expectedPaymentRepo.findAll({ customerId, orderId, status, search, scopeUser: req.user });
 
   res.json({ success: true, data: { expectedPayments: rows, count: rows.length } });
 });
@@ -15,9 +15,24 @@ const createExpectedPayment = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: "Customer is required" });
   }
 
+  // Raised from the order wizard: inherit the order's depot/PFI so this note
+  // is location/PFI-scoped the same way the order itself is. Raised
+  // standalone (no orderId), it stays unattributed — see deposits.depotId.
+  let depotId = null;
+  let pfiId = null;
+  if (orderId) {
+    const order = await orderRepo.findById(Number(orderId));
+    if (order) {
+      depotId = order.depotId ?? null;
+      pfiId = order.pfiId ?? null;
+    }
+  }
+
   const row = await expectedPaymentRepo.create({
     customerId: Number(customerId),
     orderId: orderId ? Number(orderId) : null,
+    depotId,
+    pfiId,
     expectedAmount: expectedAmount != null && expectedAmount !== "" ? String(expectedAmount) : null,
     reference: reference || "",
     note: note || "",

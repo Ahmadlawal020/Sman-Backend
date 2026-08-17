@@ -1,11 +1,14 @@
 const { eq, and, or, ilike, desc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { expectedPayments, customers, orders, staff } = require("../db/schema");
+const { scopeCondition } = require("../lib/scopeFilter");
 
 const COLUMNS = {
   id: expectedPayments.id,
   customerId: expectedPayments.customerId,
   orderId: expectedPayments.orderId,
+  depotId: expectedPayments.depotId,
+  pfiId: expectedPayments.pfiId,
   expectedAmount: expectedPayments.expectedAmount,
   reference: expectedPayments.reference,
   note: expectedPayments.note,
@@ -29,8 +32,10 @@ const baseQuery = () =>
     .leftJoin(orders, eq(expectedPayments.orderId, orders.id))
     .leftJoin(staff, eq(expectedPayments.createdBy, staff.id));
 
-const findAll = async ({ customerId, orderId, status, search } = {}) => {
+const findAll = async ({ customerId, orderId, status, search, scopeUser } = {}) => {
   const conditions = [];
+  const scope = scopeCondition(scopeUser, { depotColumn: expectedPayments.depotId, pfiColumn: expectedPayments.pfiId });
+  if (scope) conditions.push(scope);
   if (customerId) conditions.push(eq(expectedPayments.customerId, Number(customerId)));
   if (orderId) conditions.push(eq(expectedPayments.orderId, Number(orderId)));
   if (status && status !== "all") conditions.push(eq(expectedPayments.status, status));

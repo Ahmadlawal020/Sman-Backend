@@ -281,6 +281,8 @@ const listExpenses = async ({
   limit = 25,
   /** Null means oversight — see everything. A number scopes to one submitter. */
   onlySubmitterId = null,
+  /** The authenticated caller, for location/PFI scoping (undefined = unfiltered). */
+  scopeUser = null,
 } = {}) => {
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 25));
@@ -292,6 +294,17 @@ const listExpenses = async ({
   const base = [client`e.deleted_at IS NULL`];
   if (onlySubmitterId != null) {
     base.push(client`COALESCE(e.added_by, e.recorded_by) = ${Number(onlySubmitterId)}`);
+  }
+  // A location-scoped user sees a line if it's tagged to a PFI they hold
+  // directly, OR to a PFI whose depot/LPG-station is in their scope. A
+  // general expense (pfi_id IS NULL) has no location to check it against, so
+  // it fails closed — invisible to a scoped user, same rule as everywhere
+  // else in this feature.
+  if (scopeUser && !scopeUser.canViewAllLocations) {
+    const { depotIds = [], lpgStationIds = [], pfiIds = [] } = scopeUser.scope || {};
+    base.push(client`(e.pfi_id = ANY(${pfiIds}) OR e.pfi_id IN (
+      SELECT id FROM pfis WHERE location_id = ANY(${depotIds}) OR lpg_station_id = ANY(${lpgStationIds})
+    ))`);
   }
 
   if (search) {

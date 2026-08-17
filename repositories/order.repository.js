@@ -5,6 +5,7 @@ const {
   deposits, orderDepositAllocations, staff,
 } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+const { scopeCondition } = require("../lib/scopeFilter");
 
 const formatOrderRow = (row) => {
   if (!row) return null;
@@ -190,6 +191,8 @@ const findAll = async ({
   dateTo,
   /** Same rule findPayableOrders uses — see the condition below. */
   payable,
+  /** The authenticated caller, for location/PFI scoping. Omitted = unfiltered (internal callers). */
+  scopeUser,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -198,6 +201,9 @@ const findAll = async ({
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+
+  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
+  if (scope) conditions.push(scope);
 
   if (search) {
     // A reference-shaped search ("SO600", or the legacy "SO/600") also matches
@@ -326,6 +332,7 @@ const findFinanceReport = async ({
   paymentStatus = "Paid",
   dateFrom,
   dateTo,
+  scopeUser,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -334,6 +341,8 @@ const findFinanceReport = async ({
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
+  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
+  if (scope) conditions.push(scope);
   if (paymentStatus && paymentStatus !== "all") {
     conditions.push(eq(orders.paymentStatus, paymentStatus));
   }
@@ -512,7 +521,15 @@ const countByPfi = async (pfiId) => {
   return total;
 };
 
-const findPayableOrders = async () => {
+const findPayableOrders = async (scopeUser) => {
+  const conditions = [
+    eq(orders.paymentStatus, "Unpaid"),
+    eq(orders.status, "Pending"),
+    sql`${customers.balance} >= ${orders.totalAmount}`,
+  ];
+  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
+  if (scope) conditions.push(scope);
+
   const rows = await db
     .select({
       id: orders.id,
@@ -535,13 +552,7 @@ const findPayableOrders = async () => {
     .innerJoin(customers, eq(orders.customerId, customers.id))
     .leftJoin(depots, eq(orders.depotId, depots.id))
     .leftJoin(products, eq(orders.productId, products.id))
-    .where(
-      and(
-        eq(orders.paymentStatus, "Unpaid"),
-        eq(orders.status, "Pending"),
-        sql`${customers.balance} >= ${orders.totalAmount}`
-      )
-    )
+    .where(and(...conditions))
     .orderBy(asc(orders.createdAt));
   return rows.map(formatOrderRow);
 };

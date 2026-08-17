@@ -18,6 +18,7 @@ const getFinanceReport = asyncHandler(async (req, res) => {
     paymentStatus: req.query.paymentStatus,
     dateFrom: parseDate(req.query.dateFrom),
     dateTo: parseDate(req.query.dateTo),
+    scopeUser: req.user,
     page: req.query.page,
     limit: req.query.limit,
   });

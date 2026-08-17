@@ -10,6 +10,7 @@ const {
 } = require("../../repositories");
 const { computeFinancials } = require("../../lib/pfiFinance");
 const { resolveBooking, actorFor, vendorFor } = require("./expense.controller");
+const { isWithinScope } = require("../../lib/scopeFilter");
 
 function httpErr(status, message) {
   return Object.assign(new Error(message), { status });
@@ -59,7 +60,7 @@ const resolveOfficerName = async (id) => {
 const getPfis = asyncHandler(async (req, res) => {
   const { search, status, page = 1, limit = 100, location } = req.query;
 
-  const result = await pfiRepo.findAll({ search, status, location, page, limit });
+  const result = await pfiRepo.findAll({ search, status, location, scopeUser: req.user, page, limit });
   result.pfis = await withFinancials(result.pfis || []);
 
   res.json({ success: true, data: result });
@@ -119,6 +120,9 @@ const createPfi = asyncHandler(async (req, res) => {
 
   if (location_id) {
     location_id_val = parseInt(location_id, 10) || location_id;
+    if (!isWithinScope(req.user, "depotIds", location_id_val)) {
+      return res.status(403).json({ success: false, message: "You cannot create a PFI for this location" });
+    }
     const depot = await depotRepo.findById(location_id_val);
     if (depot) location_name = depot.name;
   }
@@ -236,6 +240,9 @@ const updatePfi = asyncHandler(async (req, res) => {
     const locId = req.body.location_id !== undefined ? req.body.location_id : req.body.locationId;
     if (locId && locId !== "none") {
       const parsedLoc = parseInt(locId, 10) || locId;
+      if (!isWithinScope(req.user, "depotIds", parsedLoc)) {
+        return res.status(403).json({ success: false, message: "You cannot move this PFI to a location outside your scope" });
+      }
       updateData.locationId = parsedLoc;
       updateData.lpgStationId = null;
       const depot = await depotRepo.findById(parsedLoc);

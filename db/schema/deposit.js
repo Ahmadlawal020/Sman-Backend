@@ -15,6 +15,8 @@ const { sql } = require("drizzle-orm");
 const { depositTypeEnum } = require("./enums");
 const { customers } = require("./customer");
 const { staff } = require("./staff");
+const { depots } = require("./depot");
+const { pfis } = require("./pfi");
 
 const deposits = pgTable(
   "deposits",
@@ -23,6 +25,12 @@ const deposits = pgTable(
     customerId: integer("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "restrict" }),
+    // Set when the deposit is attributable to a depot/PFI (e.g. matched to an
+    // order at that depot) — null for a deposit that predates this or was
+    // never allocated. Drives location/PFI scoping; a null value is only
+    // visible to a full-access (canViewAllLocations) user.
+    depotId: integer("depot_id").references(() => depots.id, { onDelete: "set null" }),
+    pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "set null" }),
     amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
     type: depositTypeEnum("type").notNull(),
     description: text("description").default(""),

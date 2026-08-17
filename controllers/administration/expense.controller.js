@@ -291,6 +291,7 @@ const listExpenses = asyncHandler(async (req, res) => {
     page: req.query.page,
     limit: req.query.limit,
     onlySubmitterId: oversight ? null : req.user?.id ?? -1,
+    scopeUser: req.user,
   });
 
   res.json({

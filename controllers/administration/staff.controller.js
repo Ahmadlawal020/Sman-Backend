@@ -1,8 +1,10 @@
 const crypto = require("crypto");
 const asyncHandler = require("express-async-handler");
-const { staffRepo } = require("../../repositories");
+const { staffRepo, staffScopeRepo } = require("../../repositories");
 const { mapRolesToBackend } = require("../../config/roleMapping");
 const { notifyAndWait } = require("../../notifications");
+
+const toIdList = (list) => (Array.isArray(list) ? list.map((v) => Number(v)).filter(Number.isFinite) : []);
 
 const generateResetToken = () => {
   const rawToken = crypto.randomBytes(32).toString("hex");
@@ -14,7 +16,10 @@ const generateResetToken = () => {
 };
 
 const createAdmin = asyncHandler(async (req, res) => {
-  const { first_name, surname, other_names, email, phone_number, roles, suspended } = req.body;
+  const {
+    first_name, surname, other_names, email, phone_number, roles, suspended,
+    can_view_all_locations, depot_ids, lpg_station_ids, pfi_ids, page_overrides,
+  } = req.body;
 
   if (!first_name || !surname || !email) {
     return res.status(400).json({
@@ -47,10 +52,22 @@ const createAdmin = asyncHandler(async (req, res) => {
     phoneNumber: phone_number || null,
     roles: backendRoles,
     suspended: suspended || false,
+    canViewAllLocations: can_view_all_locations ?? true,
     isPasswordSet: false,
     passwordResetToken: hashedToken,
     passwordResetExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
+
+  if (depot_ids || lpg_station_ids || pfi_ids) {
+    await staffScopeRepo.setScope(admin.id, {
+      depotIds: toIdList(depot_ids),
+      lpgStationIds: toIdList(lpg_station_ids),
+      pfiIds: toIdList(pfi_ids),
+    });
+  }
+  if (page_overrides) {
+    await staffScopeRepo.setPageOverrides(admin.id, page_overrides.map((o) => ({ routePath: o.route_path, allowed: o.allowed })));
+  }
 
   // Through the engine rather than the bare sender, so the send lands in
   // notification_deliveries — "did the invite email actually go out?" is the
@@ -81,12 +98,22 @@ const getAllAdmins = asyncHandler(async (req, res) => {
   const { staff, pagination } = await staffRepo.findAll({ page: 1, limit: 1000 });
 
   const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
+  const staffIds = safeStaff.map((s) => s.id);
+  const [scopeByStaff, overridesByStaff] = await Promise.all([
+    staffScopeRepo.getScopeWithNamesForStaffIds(staffIds),
+    staffScopeRepo.getPageOverridesForStaffIds(staffIds),
+  ]);
+  const enriched = safeStaff.map((s) => ({
+    ...s,
+    ...scopeByStaff.get(s.id),
+    pageOverrides: overridesByStaff.get(s.id) || [],
+  }));
 
   res.json({
     success: true,
     // dual-emit: `staff` is the new key, `admins` retained for the existing frontend.
     // Drop `admins` once the dashboard is updated.
-    data: { staff: safeStaff, admins: safeStaff },
+    data: { staff: enriched, admins: enriched },
   });
 });
 
@@ -98,15 +125,22 @@ const getAdminById = asyncHandler(async (req, res) => {
   }
 
   const { password, refreshToken, passwordResetToken, passwordResetExpires, ...safeAdmin } = admin;
+  const [scope, pageOverrides] = await Promise.all([
+    staffScopeRepo.getScopeWithNames(admin.id),
+    staffScopeRepo.getPageOverrides(admin.id),
+  ]);
 
   res.json({
     success: true,
-    data: { admin: safeAdmin },
+    data: { admin: { ...safeAdmin, ...scope, pageOverrides } },
   });
 });
 
 const updateAdmin = asyncHandler(async (req, res) => {
-  const { first_name, surname, other_names, email, phone_number, roles, suspended } = req.body;
+  const {
+    first_name, surname, other_names, email, phone_number, roles, suspended,
+    can_view_all_locations, depot_ids, lpg_station_ids, pfi_ids, page_overrides,
+  } = req.body;
 
   const admin = await staffRepo.findById(req.params.id);
   if (!admin) {
@@ -115,16 +149,25 @@ const updateAdmin = asyncHandler(async (req, res) => {
 
   // --- AUDIT H5: privilege escalation ------------------------------------
   //
-  // This endpoint edits ordinary profile fields AND the two fields that decide
+  // This endpoint edits ordinary profile fields AND the fields that decide
   // what an account may do. It carried no role gate, so any `admin` could
   // PATCH their own row with roles:[0] and become a super_admin — defeating
-  // the super_admin gates on create and delete.
+  // the super_admin gates on create and delete. Scope and page overrides are
+  // gated the same way, for the same reason: either one narrows or widens
+  // what an account can see or do.
   //
   // The gate is per-field rather than per-route on purpose. Putting
   // requireRole("super_admin") on the route would fix the escalation and break
   // every staff member's ability to edit their own name and phone number.
   const isSuperAdmin = (req.user?.roles || []).includes("super_admin");
-  const changesPrivileges = roles !== undefined || suspended !== undefined;
+  const changesPrivileges =
+    roles !== undefined ||
+    suspended !== undefined ||
+    can_view_all_locations !== undefined ||
+    depot_ids !== undefined ||
+    lpg_station_ids !== undefined ||
+    pfi_ids !== undefined ||
+    page_overrides !== undefined;
 
   if (changesPrivileges && !isSuperAdmin) {
     return res.status(403).json({
@@ -165,8 +208,21 @@ const updateAdmin = asyncHandler(async (req, res) => {
   if (phone_number !== undefined) updateData.phoneNumber = phone_number || null;
   if (roles && roles.length > 0) updateData.roles = mapRolesToBackend(roles);
   if (suspended !== undefined) updateData.suspended = suspended;
+  if (can_view_all_locations !== undefined) updateData.canViewAllLocations = can_view_all_locations;
 
   const updated = await staffRepo.update(admin.id, updateData);
+
+  if (depot_ids !== undefined || lpg_station_ids !== undefined || pfi_ids !== undefined) {
+    const current = await staffScopeRepo.getScopeWithNames(admin.id);
+    await staffScopeRepo.setScope(admin.id, {
+      depotIds: depot_ids !== undefined ? toIdList(depot_ids) : current.depotIds,
+      lpgStationIds: lpg_station_ids !== undefined ? toIdList(lpg_station_ids) : current.lpgStationIds,
+      pfiIds: pfi_ids !== undefined ? toIdList(pfi_ids) : current.pfiIds,
+    });
+  }
+  if (page_overrides !== undefined) {
+    await staffScopeRepo.setPageOverrides(admin.id, page_overrides.map((o) => ({ routePath: o.route_path, allowed: o.allowed })));
+  }
 
   res.json({
     success: true,

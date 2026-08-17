@@ -7,6 +7,7 @@ const {
   orderTruckRepo,
   auditLogRepo,
 } = require("../../repositories");
+const { isWithinScope } = require("../../lib/scopeFilter");
 const { db } = require("../../config/db");
 const { sql } = require("drizzle-orm");
 const { pfiMovements } = require("../../db/schema");
@@ -32,6 +33,7 @@ const getOrders = asyncHandler(async (req, res) => {
     depot,
     dateFrom,
     dateTo,
+    scopeUser: req.user,
     page,
     limit,
   });
@@ -63,6 +65,13 @@ const createOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: "Please fill in all required fields to place the order",
+    });
+  }
+
+  if (!isWithinScope(req.user, "depotIds", depotId)) {
+    return res.status(403).json({
+      success: false,
+      message: "You cannot create orders for this location",
     });
   }
 
@@ -643,7 +652,7 @@ const deleteOrder = asyncHandler(async (req, res) => {
 });
 
 const getPayableOrders = asyncHandler(async (req, res) => {
-  const orders = await orderRepo.findPayableOrders();
+  const orders = await orderRepo.findPayableOrders(req.user);
   res.json({ success: true, data: { orders: await withExpiresAt(orders) } });
 });
 

@@ -3,6 +3,8 @@ const { customers } = require("./customer");
 const { orders } = require("./order");
 const { deposits } = require("./deposit");
 const { staff } = require("./staff");
+const { depots } = require("./depot");
+const { pfis } = require("./pfi");
 
 /**
  * What a customer said they'd pay, before the money actually shows up.
@@ -20,6 +22,10 @@ const expectedPayments = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
     orderId: integer("order_id").references(() => orders.id, { onDelete: "set null" }),
+    // Same rule as deposits.depotId/pfiId — set when attributable, null
+    // otherwise, and null is only visible to a full-access user.
+    depotId: integer("depot_id").references(() => depots.id, { onDelete: "set null" }),
+    pfiId: integer("pfi_id").references(() => pfis.id, { onDelete: "set null" }),
     expectedAmount: decimal("expected_amount", { precision: 15, scale: 2 }),
     reference: varchar("reference", { length: 255 }).default(""),
     note: text("note").default(""),

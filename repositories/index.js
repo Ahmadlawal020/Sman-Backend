@@ -1,5 +1,6 @@
 module.exports = {
   staffRepo: require("./staff.repository"),
+  staffScopeRepo: require("./staffScope.repository"),
   customerRepo: require("./customer.repository"),
   truckRepo: require("./truck.repository"),
   driverRepo: require("./driver.repository"),

@@ -173,6 +173,22 @@ const staffBase = {
     .max(ROLE_COUNT, `A user cannot have more than ${ROLE_COUNT} roles`)
     .optional(),
   suspended: z.boolean({ error: "Suspended must be true or false" }).optional(),
+  // Location/PFI scope and per-page overrides — gated the same way as roles
+  // and suspended (see staff.controller.js#updateAdmin's changesPrivileges
+  // check), since they equally decide what an account may see or do.
+  can_view_all_locations: z.boolean({ error: "can_view_all_locations must be true or false" }).optional(),
+  depot_ids: z.array(z.union([id("Depot id"), z.string(), z.number()])).optional(),
+  lpg_station_ids: z.array(z.union([id("LPG station id"), z.string(), z.number()])).optional(),
+  pfi_ids: z.array(z.union([id("PFI id"), z.string(), z.number()])).optional(),
+  page_overrides: z
+    .array(
+      z.object({
+        route_path: requiredString("Route path", 100),
+        allowed: z.boolean({ error: "allowed must be true or false" }),
+      })
+    )
+    .max(200, "Too many page overrides")
+    .optional(),
 };
 const createStaff = z.object({
   ...staffBase,
