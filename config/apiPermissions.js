@@ -97,7 +97,9 @@ const API_PERMISSIONS = {
   "/api/offline-sales": { read: [...SALES, ...MONEY], write: SALES },
 
   "/api/incidents": { read: [...SECURITY, ...OPS, "audit"], write: [...SECURITY, ...OPS] },
-  "/api/daily-reports": { read: [...OPS, ...MONEY, "audit"], write: OPS },
+  // audit can view (it's on the Reports Hub's allowed-roles list) but not
+  // file — write stays with the five reporting roles themselves.
+  "/api/daily-reports": { read: [...REPORTS, "audit"], write: REPORTS },
   "/api/reports": { read: [...MONEY, ...OPS, "audit"] },
   "/api/order-expiry": { read: [...OPS, ...MONEY], write: ["admin"] },
 
