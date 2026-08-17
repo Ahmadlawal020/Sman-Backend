@@ -42,4 +42,5 @@ module.exports = {
   deviceTokenRepo: require("./deviceToken.repository"),
   notificationPreferenceRepo: require("./notificationPreference.repository"),
   notificationDeliveryRepo: require("./notificationDelivery.repository"),
+  messageTemplateRepo: require("./messageTemplate.repository"),
 };

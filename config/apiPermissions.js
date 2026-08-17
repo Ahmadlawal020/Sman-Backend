@@ -23,6 +23,17 @@ const MONEY = ["admin", "finance", "audit", "commissions", "commission_officer"]
 const SALES = ["admin", "sales_manager", "truck_sales", "product_manager"];
 const LPG = ["admin", "lpg_dashboard", "lpg_plants", "lpg_stock", "lpg_sales"];
 const SECURITY = ["admin", "security_entry", "security_exit"];
+// Filers of the five daily returns under My Report (see ROLE_REPORT in the
+// dashboard's report-config.ts) plus the roles the Reports Hub is gated to.
+const REPORTS = [
+  "admin",
+  "sales_manager",
+  "product_manager",
+  "security_entry",
+  "commissions",
+  "commission_officer",
+  "it_compliance",
+];
 
 /**
  * mount path -> { read: [...roles], write: [...roles] }
@@ -98,6 +109,9 @@ const API_PERMISSIONS = {
 
   // Staff administration stays with admins.
   "/api/admin": { read: ["admin"], write: ["admin"] },
+  // Same boundary as /api/notifications' broadcast route — only reachable
+  // from the messaging page, which is itself admin/super_admin only.
+  "/api/message-templates": { read: ["admin"], write: ["admin"] },
 };
 
 /**

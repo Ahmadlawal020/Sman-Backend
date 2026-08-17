@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, ne, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { customers } = require("../db/schema");
+const { customers, orders } = require("../db/schema");
 
 const findById = async (id, tx = db) => {
   const [row] = await tx.select().from(customers).where(eq(customers.id, id)).limit(1);
@@ -247,6 +247,65 @@ const existsByEmail = async (email, excludeId = null) => {
   return !!row;
 };
 
+/**
+ * Resolve a messaging audience — every filter is optional and independent
+ * (AND'd together); with none supplied this is just "every reachable active
+ * customer." Always excludes marketing_opt_out (staff-set suppression) unless
+ * a caller explicitly opts out of that, which nothing currently does.
+ *
+ * Returns up to `limit` rows plus the TRUE matching count, so a segment
+ * larger than the cap still shows an honest recipient number in the preview
+ * — the caller (messaging page) fetches the full id list separately/in
+ * batches when it actually sends, rather than this being the send path.
+ */
+const findForSegment = async ({
+  depotId,
+  minOrders,
+  sinceDays,
+  inactiveSinceDays,
+  excludeOptedOut = true,
+  limit = 5000,
+} = {}) => {
+  const conditions = [eq(customers.status, "Active")];
+  if (excludeOptedOut) conditions.push(eq(customers.marketingOptOut, false));
+
+  if (depotId) {
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.customerId} = ${customers.id} AND ${orders.depotId} = ${Number(depotId)})`
+    );
+  }
+
+  if (minOrders && sinceDays) {
+    const since = new Date(Date.now() - Number(sinceDays) * 24 * 60 * 60 * 1000).toISOString();
+    conditions.push(
+      sql`(SELECT COUNT(*) FROM ${orders} WHERE ${orders.customerId} = ${customers.id} AND ${orders.createdAt} >= ${since}) >= ${Number(minOrders)}`
+    );
+  }
+
+  if (inactiveSinceDays) {
+    const since = new Date(Date.now() - Number(inactiveSinceDays) * 24 * 60 * 60 * 1000).toISOString();
+    // Also true for a customer who has never ordered — "inactive" includes
+    // "never active" rather than excluding it.
+    conditions.push(
+      sql`NOT EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.customerId} = ${customers.id} AND ${orders.createdAt} >= ${since})`
+    );
+  }
+
+  const whereClause = and(...conditions);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ id: customers.id, name: customers.name, phone: customers.phone, email: customers.email, companyName: customers.companyName })
+      .from(customers)
+      .where(whereClause)
+      .orderBy(customers.id)
+      .limit(Math.min(5000, Math.max(1, Number(limit) || 5000))),
+    db.select({ total: count() }).from(customers).where(whereClause),
+  ]);
+
+  return { customers: rows, count: Number(total) };
+};
+
 module.exports = {
   findById,
   findByPhone,
@@ -259,6 +318,7 @@ module.exports = {
   creditBalance,
   debitBalance,
   findWithPositiveBalance,
+  findForSegment,
   deleteById,
   existsByPhone,
   existsByEmail,

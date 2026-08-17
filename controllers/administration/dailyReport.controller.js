@@ -4,8 +4,20 @@ const dailyReportService = require("../../services/dailyReport.service");
 const { sendServiceResult } = require("../../utils/serviceResult");
 const { staffActor } = require("../../utils/actor");
 
+// Roles that manage reports rather than file them — the Reports Hub's own
+// allowed-roles list (see rbac.ts '/admin-reports'). Everyone else only ever
+// sees their own submissions, no matter what the query string asks for:
+// trusting a client-supplied submittedBy here would let any reporting role
+// read any other filer's numbers by hand-editing the request.
+const CAN_VIEW_ALL_REPORTS = new Set(["admin", "super_admin", "audit"]);
+
 const getDailyReports = asyncHandler(async (req, res) => {
-  const result = await dailyReportRepo.findAll(req.query);
+  const roles = new Set(req.user?.roles || []);
+  const canViewAll = [...roles].some((r) => CAN_VIEW_ALL_REPORTS.has(r));
+  const result = await dailyReportRepo.findAll({
+    ...req.query,
+    submittedBy: canViewAll ? req.query.submittedBy : req.user?.id,
+  });
   res.json({ success: true, data: result });
 });
 

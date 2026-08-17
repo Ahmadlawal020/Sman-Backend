@@ -93,7 +93,7 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
   const allowedFields = [
     "name", "email", "phone", "companyName", "address",
-    "status", "balance", "deposit", "previousDeposit",
+    "status", "balance", "deposit", "previousDeposit", "marketingOptOut",
   ];
 
   // Validate before building updateData, so an invalid number cannot be
@@ -141,6 +141,21 @@ const updateCustomer = asyncHandler(async (req, res) => {
   });
 });
 
+/** GET /api/customers/segments — the messaging page's audience preview + recipient source. */
+const getCustomerSegment = asyncHandler(async (req, res) => {
+  const { depotId, minOrders, sinceDays, inactiveSinceDays, limit } = req.query;
+
+  const result = await customerRepo.findForSegment({
+    depotId,
+    minOrders,
+    sinceDays,
+    inactiveSinceDays,
+    limit,
+  });
+
+  res.json({ success: true, data: result });
+});
+
 const deleteCustomer = asyncHandler(async (req, res) => {
   const customer = await customerRepo.findById(req.params.id);
 
@@ -169,4 +184,4 @@ const deleteCustomer = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Customer deleted successfully" });
 });
 
-module.exports = { getCustomers, getCustomerById, createCustomer, updateCustomer, deleteCustomer };
+module.exports = { getCustomers, getCustomerById, createCustomer, updateCustomer, deleteCustomer, getCustomerSegment };

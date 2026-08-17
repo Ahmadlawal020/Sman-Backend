@@ -248,7 +248,14 @@ const findAll = async ({
   }
 
   if (dateTo) {
-    conditions.push(lte(orders.createdAt, new Date(dateTo)));
+    // Inclusive of the whole day: a bare "2026-08-06" parses as that date's
+    // UTC midnight, so comparing createdAt against it as-is excluded every
+    // order placed later that same day — a caller asking for "today" got
+    // nothing. Built as an explicit UTC string, same as dateFrom above, so
+    // the two boundaries don't drift against each other by the server's
+    // local timezone.
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? `${dateTo}T23:59:59.999Z` : dateTo;
+    conditions.push(lte(orders.createdAt, new Date(end)));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
