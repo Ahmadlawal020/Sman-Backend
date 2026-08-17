@@ -47,6 +47,16 @@ const dailyReports = pgTable(
     amountPaid: decimal("amount_paid", { precision: 15, scale: 2 }).default("0").notNull(),
     differentials: decimal("differentials", { precision: 15, scale: 2 }).default("0"),
     truckCount: integer("truck_count").default(0).notNull(),
+    // Money owed/refundable from yesterday's shortfall or excess, settled
+    // today — distinct from today's own differentials above.
+    yesterdayDeficitPayment: decimal("yesterday_deficit_payment", { precision: 15, scale: 2 }).default("0"),
+    yesterdaySurplusPayment: decimal("yesterday_surplus_payment", { precision: 15, scale: 2 }).default("0"),
+    // The running bank total for this PFI (deposits matched to it, to date),
+    // as distinct from amountPaid, which is only today's sales receipt.
+    totalInflow: decimal("total_inflow", { precision: 15, scale: 2 }).default("0"),
+    // Trucks that entered today — security_gate's mirror of truckCount, which
+    // this role uses for "trucks exited" instead.
+    trucksEntered: integer("trucks_entered"),
 
     bankName: varchar("bank_name", { length: 255 }).default(""),
     accountNumber: varchar("account_number", { length: 50 }).default(""),
@@ -57,6 +67,8 @@ const dailyReports = pgTable(
     customerCount: integer("customer_count"),
     orderCount: integer("order_count"),
     rates: text("rates").default(""),
+    // [{ name, phone, litres }, ...] — compliance's top 5 for the day.
+    topCustomers: jsonb("top_customers").default(sql`'[]'::jsonb`),
     remarks: text("remarks").default(""),
 
     // Workflow: submitted -> approved | rejected (manager review).

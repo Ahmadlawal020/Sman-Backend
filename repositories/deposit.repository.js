@@ -46,7 +46,7 @@ const findByReference = async (reference) => {
   return row || null;
 };
 
-const findAll = async ({ customer, page = 1, limit = 50, type = "credit", scopeUser } = {}) => {
+const findAll = async ({ customer, pfiId, page = 1, limit = 50, type = "credit", scopeUser } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -60,6 +60,7 @@ const findAll = async ({ customer, page = 1, limit = 50, type = "credit", scopeU
   const scope = scopeCondition(scopeUser, { depotColumn: deposits.depotId, pfiColumn: deposits.pfiId });
   if (scope) conditions.push(scope);
   if (customer) conditions.push(eq(deposits.customerId, customer));
+  if (pfiId) conditions.push(eq(deposits.pfiId, pfiId));
   if (type) conditions.push(eq(deposits.type, type));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

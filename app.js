@@ -83,6 +83,7 @@ app.use("/api/uploads", require("./routes/administration/upload.route"));
 // Staff notifications: every signed-in staff member's own inbox, preferences
 // and push devices, plus the admin-only broadcast and delivery-log endpoints.
 app.use("/api/notifications", require("./routes/administration/notification.route"));
+app.use("/api/message-templates", require("./routes/administration/messageTemplate.route"));
 
 // Dangote orders
 app.use("/api", require("./routes/administration/dangoteOrder.route"));

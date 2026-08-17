@@ -67,6 +67,8 @@ const notificationDeliverySchema = require("./notificationDelivery");
 const notificationPreferenceSchema = require("./notificationPreference");
 const deviceTokenSchema = require("./deviceToken");
 const staffPageOverrideSchema = require("./staffPageOverride");
+// After ./staff — messageTemplate destructures it at load time.
+const messageTemplateSchema = require("./messageTemplate");
 
 module.exports = {
   ...enums,
@@ -127,4 +129,5 @@ module.exports = {
   ...notificationPreferenceSchema,
   ...deviceTokenSchema,
   ...staffPageOverrideSchema,
+  ...messageTemplateSchema,
 };

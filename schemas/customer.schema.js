@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, money, requiredString, optionalString, optionalEmail, enumOf, searchTerm, pagination } = require("./fields");
+const { id, money, numberLike, requiredString, optionalString, optionalEmail, enumOf, searchTerm, pagination } = require("./fields");
 
 /**
  * Replaces a Mongo-era schema that validated ids with an ObjectId regex
@@ -20,6 +20,7 @@ const createCustomer = z.object({
   balance: money("Balance").optional(),
   deposit: money("Deposit").optional(),
   previousDeposit: money("Previous deposit").optional(),
+  marketingOptOut: z.boolean({ error: "marketingOptOut must be true or false" }).optional(),
 });
 
 /**
@@ -38,4 +39,20 @@ const listCustomers = pagination.extend({
 
 const idParam = z.object({ id: id("Customer id") });
 
-module.exports = { createCustomer, updateCustomer, listCustomers, idParam };
+/**
+ * The messaging page's audience resolver. Every filter is optional and
+ * independent — see customer.repository.js#findForSegment for how they
+ * combine. `minOrders`/`sinceDays` are a pair: one without the other is
+ * ignored by the repo rather than rejected here, since a half-filled
+ * "frequent buyers" toggle in the UI is a normal in-progress state, not
+ * a request error.
+ */
+const segmentCustomers = z.object({
+  depotId: numberLike("Depot id").optional(),
+  minOrders: numberLike("Minimum orders").optional(),
+  sinceDays: numberLike("Since days").optional(),
+  inactiveSinceDays: numberLike("Inactive since days").optional(),
+  limit: numberLike("Limit").optional(),
+});
+
+module.exports = { createCustomer, updateCustomer, listCustomers, idParam, segmentCustomers };

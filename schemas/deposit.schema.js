@@ -48,6 +48,10 @@ const listDeposits = pagination.extend({
   search: searchTerm,
   type: enumOf("Type", ["credit", "debit"]).optional(),
   customer: id("Customer").optional(),
+  // For the My Report "Total Inflow" auto-fill — deposits unambiguously
+  // attributed to one PFI (see the depositRepo.findAll comment on why most
+  // rows are null here).
+  pfiId: id("PFI").optional(),
 });
 
 const idParam = z.object({ id: id("Deposit id") });

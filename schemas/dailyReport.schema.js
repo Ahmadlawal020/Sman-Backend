@@ -42,8 +42,21 @@ const submitDailyReportSchema = z.object({
   amountPaid: z.coerce.number().nonnegative().optional(),
   differentials: z.coerce.number().optional(),
   truckCount: z.coerce.number().int().nonnegative().optional(),
+  // Settling yesterday's gap, and the running bank total for this PFI — both
+  // distinct from today's own amountPaid/differentials above.
+  yesterdayDeficitPayment: z.coerce.number().nonnegative().optional(),
+  yesterdaySurplusPayment: z.coerce.number().nonnegative().optional(),
+  totalInflow: z.coerce.number().nonnegative().optional(),
+  // security_gate's other truck count — truckCount above is "exited" for
+  // this role, this is "entered".
+  trucksEntered: z.coerce.number().int().nonnegative().optional(),
   bankName: z.string().max(255).optional(),
   accountNumber: z.string().max(50).optional(),
+  topCustomers: z.array(z.object({
+    name: z.string().max(255),
+    phone: z.string().max(30).optional().default(""),
+    litres: z.coerce.number().nonnegative().optional(),
+  })).max(5).optional(),
   remarks: z.string().max(5000).optional(),
 });
 

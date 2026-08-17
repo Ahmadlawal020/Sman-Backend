@@ -1450,6 +1450,25 @@ const CATALOG = {
     data: (d) => ({ screen: "Announcement", ...(d.link ? { link: d.link } : {}) }),
     actionUrl: (d) => d.actionUrl || null,
     imageUrl: (d) => d.imageUrl || null,
+    // Only reached when a caller overrides `channels` to include email/sms
+    // (e.g. the messaging page) — the default APP_ONLY set above never
+    // touches either of these.
+    // proseEmail, not simpleEmail: the messaging composer's body can be
+    // multi-line (e.g. an inserted price list), and simpleEmail's `intro` is
+    // one <p> that would collapse every line break into a single paragraph.
+    email: (d) =>
+      proseEmail({
+        subject: d.title || "Announcement",
+        subtitle: "Announcement",
+        heading: d.title || "Announcement",
+        paragraphs: String(d.body || "").split("\n"),
+        cta: d.actionUrl ? { url: d.actionUrl, label: "Learn more" } : undefined,
+      }),
+    // Without this, the engine's defaultSmsText fallback sends
+    // "Soroman: {title}. {body}" — doubling up the title (composed for the
+    // email subject/in-app heading, not for a 160-char text) ahead of the
+    // body the sender actually wrote. Just the brand prefix + body instead.
+    sms: (d) => `${smsPrefix()}${String(d.body || d.title || "").trim()}`,
   },
 
   // ═══ Ported from Django's raw-HTML templates ══════════════════════════════
