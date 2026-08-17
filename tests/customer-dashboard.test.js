@@ -4,10 +4,11 @@ require("dotenv").config();
 const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
+const { eq } = require("drizzle-orm");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis } = require("../db/schema");
+const { depots, products, depotProductPrices, pfis, orders } = require("../db/schema");
 const { customerRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
@@ -130,6 +131,30 @@ describe("customer portal — dashboard", () => {
     assert.equal(month.spent, 0, "but nothing is 'spent' until payment confirms");
     assert.equal(orders.length, 1, "it appears in recent orders");
     assert.equal(orders[0].productCategory, "PMS", "the trade code the portal badges the order with");
+  });
+
+  test("an expired order does not count toward month orders or litres", async () => {
+    const { accessToken } = await registerActiveCustomer("7");
+    const placed = await placeOrder(accessToken);
+    assert.equal(placed.status, 201, JSON.stringify(placed.body));
+    const orderId = placed.body.data.order.id;
+
+    // Push the order past the payment window, then sweep it to Expired.
+    await db
+      .update(orders)
+      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
+      .where(eq(orders.id, orderId));
+    const expired = await orderService.expireStaleOrders();
+    assert.ok(expired >= 1, "the sweep expired at least this order");
+
+    const res = await request(app).get(DASHBOARD).set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const { month, orders: recent } = res.body.data;
+    assert.equal(month.orders, 0, "lapsed orders are not counted as orders");
+    assert.equal(month.litres, 0, "nor do their litres count");
+    assert.equal(month.spent, 0, "and nothing was paid");
+    assert.equal(recent.length, 1, "the order still appears in recent history");
+    assert.equal(recent[0].status, "Expired");
   });
 
   test("a wallet-paid order lands in month spent and the day's trend point", async () => {
