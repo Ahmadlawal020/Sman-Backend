@@ -2,12 +2,25 @@ const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm"
 const { db } = require("../config/db");
 const {
   lpgOrderRequests,
-  customers,
-  staff,
-  lpgStations,
-  lpgStationCylinders,
+  consumerCustomer: customers,
+  administrationUser: staff,
+  consumerLpgplant: lpgStations,
+  lpgStationExtras,
+  customerCredits,
+  walletHolds,
 } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+
+// consumer_customer has no `.name`/`.phone`/`.balance`; consumer_lpgplant has
+// no `.state`/`.city` (those live on sman.lpg_station_extras); administration_user
+// has one `.fullName`, not separate first/surname. See customer.repository.js
+// and lpgStation.repository.js for the established patterns.
+const CUSTOMER_NAME = sql`CONCAT(${customers.firstName}, ' ', ${customers.lastName})`;
+const CUSTOMER_BALANCE = sql`(
+  COALESCE((SELECT SUM(${customerCredits.amount}::numeric) FROM ${customerCredits} WHERE ${customerCredits.customerId} = ${customers.id}), 0)
+  -
+  COALESCE((SELECT SUM(${walletHolds.amount}::numeric) FROM ${walletHolds} WHERE ${walletHolds.customerId} = ${customers.id} AND ${walletHolds.status} = 'active'), 0)
+)`;
 
 const formatLpgOrderRow = (row) => {
   if (!row) return null;
@@ -31,15 +44,15 @@ const findByIdFull = async (id) => {
       id: lpgOrderRequests.id,
       requestNumber: lpgOrderRequests.requestNumber,
       customerId: lpgOrderRequests.customerId,
-      customerName: customers.name,
+      customerName: CUSTOMER_NAME,
       customerEmail: customers.email,
-      customerPhone: customers.phone,
+      customerPhone: customers.phoneNumber,
       companyName: customers.companyName,
       lpgStationId: lpgOrderRequests.lpgStationId,
       stationName: lpgStations.name,
       stationCode: lpgStations.code,
-      stationState: lpgStations.state,
-      stationCity: lpgStations.city,
+      stationState: lpgStationExtras.state,
+      stationCity: lpgStationExtras.city,
       cylinderSizeKg: lpgOrderRequests.cylinderSizeKg,
       cylinderQuantity: lpgOrderRequests.cylinderQuantity,
       deliveryAddress: lpgOrderRequests.deliveryAddress,
@@ -58,8 +71,8 @@ const findByIdFull = async (id) => {
       virtualAccountBank: lpgOrderRequests.virtualAccountBank,
       virtualAccountName: lpgOrderRequests.virtualAccountName,
       reviewedBy: lpgOrderRequests.reviewedBy,
-      reviewerFirstName: staff.firstName,
-      reviewerSurname: staff.surname,
+      reviewerFirstName: staff.fullName,
+      reviewerSurname: sql`''`,
       reviewedAt: lpgOrderRequests.reviewedAt,
       createdAt: lpgOrderRequests.createdAt,
       updatedAt: lpgOrderRequests.updatedAt,
@@ -67,6 +80,7 @@ const findByIdFull = async (id) => {
     .from(lpgOrderRequests)
     .leftJoin(customers, eq(lpgOrderRequests.customerId, customers.id))
     .leftJoin(lpgStations, eq(lpgOrderRequests.lpgStationId, lpgStations.id))
+    .leftJoin(lpgStationExtras, eq(lpgStations.id, lpgStationExtras.lpgStationId))
     .leftJoin(staff, eq(lpgOrderRequests.reviewedBy, staff.id))
     .where(eq(lpgOrderRequests.id, id))
     .limit(1);
@@ -97,7 +111,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
       conditions.push(
         or(
           ilike(lpgOrderRequests.requestNumber, pattern),
-          ilike(customers.name, pattern),
+          ilike(CUSTOMER_NAME, pattern),
           ilike(lpgStations.name, pattern),
           eq(lpgOrderRequests.id, possibleId)
         )
@@ -106,7 +120,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
       conditions.push(
         or(
           ilike(lpgOrderRequests.requestNumber, pattern),
-          ilike(customers.name, pattern),
+          ilike(CUSTOMER_NAME, pattern),
           ilike(lpgStations.name, pattern)
         )
       );
@@ -121,13 +135,13 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
         id: lpgOrderRequests.id,
         requestNumber: lpgOrderRequests.requestNumber,
         customerId: lpgOrderRequests.customerId,
-        customerName: customers.name,
+        customerName: CUSTOMER_NAME,
         customerEmail: customers.email,
         companyName: customers.companyName,
         customerCompanyName: customers.companyName,
         lpgStationId: lpgOrderRequests.lpgStationId,
         stationName: lpgStations.name,
-        stationState: lpgStations.state,
+        stationState: lpgStationExtras.state,
         cylinderSizeKg: lpgOrderRequests.cylinderSizeKg,
         cylinderQuantity: lpgOrderRequests.cylinderQuantity,
         deliveryAddress: lpgOrderRequests.deliveryAddress,
@@ -146,6 +160,7 @@ const findAll = async ({ search, status, customerId, page = 1, limit = 50 } = {}
       .from(lpgOrderRequests)
       .leftJoin(customers, eq(lpgOrderRequests.customerId, customers.id))
       .leftJoin(lpgStations, eq(lpgOrderRequests.lpgStationId, lpgStations.id))
+      .leftJoin(lpgStationExtras, eq(lpgStations.id, lpgStationExtras.lpgStationId))
       .where(whereClause)
       .orderBy(desc(lpgOrderRequests.createdAt))
       .limit(limitNum)
@@ -182,7 +197,7 @@ const create = async (data) => {
   let company = data.companyName || "";
   if (!company && data.customerId) {
     const [cust] = await db
-      .select({ companyName: customers.companyName, name: customers.name })
+      .select({ companyName: customers.companyName, name: CUSTOMER_NAME })
       .from(customers)
       .where(eq(customers.id, data.customerId))
       .limit(1);
@@ -220,10 +235,10 @@ const findPayableLpgOrders = async () => {
       id: lpgOrderRequests.id,
       requestNumber: lpgOrderRequests.requestNumber,
       customerId: lpgOrderRequests.customerId,
-      customerName: customers.name,
+      customerName: CUSTOMER_NAME,
       companyName: customers.companyName,
       customerCompanyName: customers.companyName,
-      customerBalance: customers.balance,
+      customerBalance: CUSTOMER_BALANCE,
       stationName: lpgStations.name,
       cylinderSizeKg: lpgOrderRequests.cylinderSizeKg,
       cylinderQuantity: lpgOrderRequests.cylinderQuantity,
@@ -243,7 +258,7 @@ const findPayableLpgOrders = async () => {
         eq(lpgOrderRequests.status, "Approved"),
         sql`${lpgOrderRequests.totalAmount} IS NOT NULL`,
         sql`${lpgOrderRequests.totalAmount} > 0`,
-        sql`${customers.balance} >= ${lpgOrderRequests.totalAmount}`
+        sql`${CUSTOMER_BALANCE} >= ${lpgOrderRequests.totalAmount}`
       )
     )
     .orderBy(lpgOrderRequests.createdAt);

@@ -9,6 +9,7 @@ const {
   consumerProduct,
   consumerProductprice,
   administrationUser,
+  consumerStates,
 } = require("../db/schema");
 
 /**
@@ -240,6 +241,23 @@ const setProductCapacities = async (depotId, capacitiesList) => {
 
 // ─── Product prices — state-scoped on the live schema, not depot-scoped ─────
 
+/**
+ * consumer_depots.location is a free-text state name (no FK at all — see
+ * this file's header comment), so pricing/stock, which live per
+ * consumer_states.id, has to resolve through it by name. Callers that used
+ * to pass a depotId into a price/stock lookup now need this first.
+ */
+const getStateIdForDepot = async (depotId) => {
+  const depot = await findById(depotId);
+  if (!depot?.location) return null;
+  const [state] = await db
+    .select({ id: consumerStates.id })
+    .from(consumerStates)
+    .where(eq(consumerStates.name, depot.location))
+    .limit(1);
+  return state?.id || null;
+};
+
 const getProductPricesByState = async (stateId) => {
   const rows = await db
     .select({
@@ -323,6 +341,7 @@ module.exports = {
   getProductCapacities,
   setProductCapacities,
   upsertProductCapacity,
+  getStateIdForDepot,
   getProductPricesByState,
   getProductPrice,
   upsertProductPrice,

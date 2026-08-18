@@ -10,7 +10,7 @@ const {
 const { isWithinScope } = require("../../lib/scopeFilter");
 const { db } = require("../../config/db");
 const { sql } = require("drizzle-orm");
-const { pfiMovements } = require("../../db/schema");
+const { consumerPfimovement: pfiMovements } = require("../../db/schema");
 const walletService = require("../../services/wallet.service");
 const { generateTicketForTruck } = require("../../services/ticket.service");
 const orderStatus = require("../../services/orderStatus.service");
@@ -840,21 +840,21 @@ const generateOrderTickets = asyncHandler(async (req, res) => {
     // several sittings while still leaving exactly one row to reverse.
     const ticketedTotal = alreadyTicketed + incoming;
     if (order.pfiId) {
+      // consumer_pfimovement has no `notes` column, and `recordedBy` is
+      // `userId` there — see repositories/pfi.repository.js.
       await tx
         .insert(pfiMovements)
         .values({
           pfiId: Number(order.pfiId),
           orderId,
           action: "RELEASE",
-          qtyLitres: ticketedTotal,
-          notes: `Ticket generation — ${created.length} truck(s)`,
-          recordedBy: req.user?.id ?? null,
+          qtyLitres: String(ticketedTotal),
+          timestamp: new Date().toISOString(),
+          userId: req.user?.id ?? null,
         })
         .onConflictDoUpdate({
-          target: [pfiMovements.orderId, pfiMovements.action],
-          // Only the quantity moves; the original note records when the batch
-          // first left.
-          set: { qtyLitres: ticketedTotal },
+          target: [pfiMovements.action, pfiMovements.orderId],
+          set: { qtyLitres: String(ticketedTotal) },
         });
     }
 

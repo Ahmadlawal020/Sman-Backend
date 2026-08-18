@@ -14,6 +14,8 @@ const driverSchema = require("./driver");
 const driverTruckHistorySchema = require("./driverTruckHistory");
 const truckExtrasSchema = require("./truckExtras");
 const dailyReportExtrasSchema = require("./dailyReportExtras");
+const sessionSchema = require("./session");
+const deliveryNoteSchema = require("./deliveryNote");
 
 // System-wide audit trail (no live Django counterpart — see sman/auditLog.js)
 const auditLogSchema = require("./auditLog");
@@ -54,6 +56,7 @@ const lpgStationExtrasSchema = require("./lpgStationExtras");
 const customerLicenseSchema = require("./customerLicense");
 const dangoteProductSchema = require("./dangoteProduct");
 const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
+const lpgOrderRequestSchema = require("./lpgOrderRequest");
 
 // Staff UI customisation + password reset
 const staffPageOverrideSchema = require("./staffPageOverride");
@@ -79,6 +82,8 @@ module.exports = {
   ...driverTruckHistorySchema,
   ...truckExtrasSchema,
   ...dailyReportExtrasSchema,
+  ...sessionSchema,
+  ...deliveryNoteSchema,
   ...auditLogSchema,
   ...auditEventSchema,
   ...depotStaffSchema,
@@ -105,6 +110,7 @@ module.exports = {
   ...customerLicenseSchema,
   ...dangoteProductSchema,
   ...dangoteOrderRequestSchema,
+  ...lpgOrderRequestSchema,
   ...staffPageOverrideSchema,
   ...staffPasswordResetSchema,
   ...deviceTokenSchema,

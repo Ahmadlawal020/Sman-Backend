@@ -1,7 +1,24 @@
 const { eq, and, or, ilike, desc, count, sql, lte, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { dangoteOrderRequests, customers, staff, customerLicenses } = require("../db/schema");
+const {
+  dangoteOrderRequests,
+  consumerCustomer: customers,
+  administrationUser: staff,
+  customerLicenses,
+  customerCredits,
+  walletHolds,
+} = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+
+// consumer_customer has no `.name`/`.balance` columns — name is split
+// first/last, and balance is computed from the sman wallet ledger (see
+// customer.repository.js's getBalance) rather than stored.
+const CUSTOMER_NAME = sql`CONCAT(${customers.firstName}, ' ', ${customers.lastName})`;
+const CUSTOMER_BALANCE = sql`(
+  COALESCE((SELECT SUM(${customerCredits.amount}::numeric) FROM ${customerCredits} WHERE ${customerCredits.customerId} = ${customers.id}), 0)
+  -
+  COALESCE((SELECT SUM(${walletHolds.amount}::numeric) FROM ${walletHolds} WHERE ${walletHolds.customerId} = ${customers.id} AND ${walletHolds.status} = 'active'), 0)
+)`;
 
 const formatDangoteOrderRow = (row) => {
   if (!row) return null;
@@ -28,10 +45,10 @@ const findByIdFull = async (id) => {
       id: dangoteOrderRequests.id,
       requestNumber: dangoteOrderRequests.requestNumber,
       customerId: dangoteOrderRequests.customerId,
-      customerName: customers.name,
+      customerName: CUSTOMER_NAME,
       customerEmail: customers.email,
-      customerPhone: customers.phone,
-      customerBalance: customers.balance,
+      customerPhone: customers.phoneNumber,
+      customerBalance: CUSTOMER_BALANCE,
       companyName: customers.companyName,
       licenseId: dangoteOrderRequests.licenseId,
       licenseCompanyName: dangoteOrderRequests.companyName,
@@ -56,8 +73,8 @@ const findByIdFull = async (id) => {
       virtualAccountBank: dangoteOrderRequests.virtualAccountBank,
       virtualAccountName: dangoteOrderRequests.virtualAccountName,
       reviewedBy: dangoteOrderRequests.reviewedBy,
-      reviewerFirstName: staff.firstName,
-      reviewerSurname: staff.surname,
+      reviewerFirstName: staff.fullName,
+      reviewerSurname: sql`''`,
       reviewedAt: dangoteOrderRequests.reviewedAt,
       createdAt: dangoteOrderRequests.createdAt,
       updatedAt: dangoteOrderRequests.updatedAt,
@@ -103,7 +120,7 @@ const findAll = async ({
     conditions.push(eq(dangoteOrderRequests.paymentStatus, "Unpaid"));
     conditions.push(eq(dangoteOrderRequests.status, "Approved"));
     conditions.push(
-      sql`${dangoteOrderRequests.totalAmount} IS NOT NULL AND ${dangoteOrderRequests.totalAmount} > 0 AND ${dangoteOrderRequests.totalAmount} <= (SELECT c.balance FROM customers c WHERE c.id = ${dangoteOrderRequests.customerId})`
+      sql`${dangoteOrderRequests.totalAmount} IS NOT NULL AND ${dangoteOrderRequests.totalAmount} > 0 AND ${dangoteOrderRequests.totalAmount} <= (SELECT COALESCE(SUM(cc.amount::numeric),0) - COALESCE((SELECT SUM(wh.amount::numeric) FROM sman.wallet_holds wh WHERE wh.customer_id = c.id AND wh.status = 'active'),0) FROM sman.customer_credits cc, consumer_customer c WHERE c.id = ${dangoteOrderRequests.customerId} AND cc.customer_id = c.id)`
     );
   }
 
@@ -116,7 +133,7 @@ const findAll = async ({
         or(
           ilike(dangoteOrderRequests.requestNumber, pattern),
           ilike(dangoteOrderRequests.product, pattern),
-          ilike(customers.name, pattern),
+          ilike(CUSTOMER_NAME, pattern),
           eq(dangoteOrderRequests.id, possibleId)
         )
       );
@@ -125,7 +142,7 @@ const findAll = async ({
         or(
           ilike(dangoteOrderRequests.requestNumber, pattern),
           ilike(dangoteOrderRequests.product, pattern),
-          ilike(customers.name, pattern)
+          ilike(CUSTOMER_NAME, pattern)
         )
       );
     }
@@ -139,10 +156,10 @@ const findAll = async ({
         id: dangoteOrderRequests.id,
         requestNumber: dangoteOrderRequests.requestNumber,
         customerId: dangoteOrderRequests.customerId,
-        customerName: customers.name,
+        customerName: CUSTOMER_NAME,
         customerEmail: customers.email,
-        customerPhone: customers.phone,
-        customerBalance: customers.balance,
+        customerPhone: customers.phoneNumber,
+        customerBalance: CUSTOMER_BALANCE,
         companyName: dangoteOrderRequests.companyName,
         customerCompanyName: customers.companyName,
         product: dangoteOrderRequests.product,
@@ -264,10 +281,10 @@ const findPayableDangoteOrders = async () => {
       id: dangoteOrderRequests.id,
       requestNumber: dangoteOrderRequests.requestNumber,
       customerId: dangoteOrderRequests.customerId,
-      customerName: customers.name,
+      customerName: CUSTOMER_NAME,
       companyName: dangoteOrderRequests.companyName,
       customerCompanyName: customers.companyName,
-      customerBalance: customers.balance,
+      customerBalance: CUSTOMER_BALANCE,
       product: dangoteOrderRequests.product,
       quantity: dangoteOrderRequests.quantity,
       quantityUnit: dangoteOrderRequests.quantityUnit,
@@ -286,7 +303,7 @@ const findPayableDangoteOrders = async () => {
         eq(dangoteOrderRequests.status, "Approved"),
         sql`${dangoteOrderRequests.totalAmount} IS NOT NULL`,
         sql`${dangoteOrderRequests.totalAmount} > 0`,
-        sql`${customers.balance} >= ${dangoteOrderRequests.totalAmount}`
+        sql`${CUSTOMER_BALANCE} >= ${dangoteOrderRequests.totalAmount}`
       )
     )
     .orderBy(dangoteOrderRequests.createdAt);

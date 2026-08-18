@@ -1,6 +1,11 @@
 const { eq, and, ilike, desc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { customerLicenses, customers } = require("../db/schema");
+const { customerLicenses, consumerCustomer: customers } = require("../db/schema");
+const { sql } = require("drizzle-orm");
+
+// consumer_customer has no `.name` (split first/last) or `.phone` (it's
+// `.phoneNumber`).
+const CUSTOMER_NAME = sql`CONCAT(${customers.firstName}, ' ', ${customers.lastName})`;
 
 const findByCustomerId = async (customerId, tx = db) => {
   return tx
@@ -35,9 +40,9 @@ const findByIdWithCustomer = async (id, tx = db) => {
       verificationComment: customerLicenses.verificationComment,
       createdAt: customerLicenses.createdAt,
       updatedAt: customerLicenses.updatedAt,
-      customerName: customers.name,
+      customerName: CUSTOMER_NAME,
       customerEmail: customers.email,
-      customerPhone: customers.phone,
+      customerPhone: customers.phoneNumber,
       customerCompanyName: customers.companyName,
     })
     .from(customerLicenses)
@@ -81,7 +86,7 @@ const findAll = async ({
         verificationComment: customerLicenses.verificationComment,
         createdAt: customerLicenses.createdAt,
         updatedAt: customerLicenses.updatedAt,
-        customerName: customers.name,
+        customerName: CUSTOMER_NAME,
       })
       .from(customerLicenses)
       .leftJoin(customers, eq(customerLicenses.customerId, customers.id))

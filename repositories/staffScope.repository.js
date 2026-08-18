@@ -1,10 +1,10 @@
 const { eq, inArray } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
-  staff,
-  depots,
-  lpgStations,
-  pfis,
+  administrationUser: staff,
+  consumerDepots: depots,
+  consumerLpgplant: lpgStations,
+  consumerPfi: pfis,
   depotStaff,
   lpgStationStaff,
   pfiStaff,

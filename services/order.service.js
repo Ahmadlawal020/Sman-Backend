@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
+const { consumerOrder: orders } = require("../db/schema");
 const {
   orderRepo,
   customerRepo,
@@ -268,16 +268,24 @@ async function placeOrder({
   }
   const productUnit = product.unit || "Liters";
 
-  // Server-side pricing — the client never supplies price/total.
-  const priceEntry = await depotRepo.getProductPrice(depotId, productId);
-  if (!priceEntry || Number(priceEntry.currentPrice) <= 0) {
+  // Server-side pricing — the client never supplies price/total. Pricing is
+  // state-scoped live (consumer_productprice keys on state, not depot — see
+  // depot.repository.js's header comment), so resolve the depot's own state
+  // first (where the product is priced/dispensed from), not the customer's
+  // declared delivery state.
+  const depotStateId = await depotRepo.getStateIdForDepot(depotId);
+  const priceEntry = depotStateId ? await depotRepo.getProductPrice(depotStateId, productId) : null;
+  if (!priceEntry || Number(priceEntry.price) <= 0) {
     throw httpError(400, "No price configured for this product at this depot");
   }
-  const serverPrice = Number(priceEntry.currentPrice);
+  const serverPrice = Number(priceEntry.price);
   const totalAmount = serverPrice * Number(quantity);
 
+  // consumer_pfi.locationId is a state id, not a depot id (see
+  // pfi.repository.js) — PFI stock is pooled per state, same resolution as
+  // the price lookup above.
   const { allocations, totalAvailableStock } = await findPfiForOrder(
-    depotId,
+    depotStateId,
     productId,
     quantity
   );
@@ -317,6 +325,55 @@ async function placeOrder({
   }
 
   const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
+
+  /* --- NOT YET MIGRATED — DO NOT TRUST THIS BLOCK AGAINST THE LIVE SCHEMA ---
+   * Everything below this comment down to the transaction's closing `}))`
+   * still assumes the pre-cutover clean-room schema and WILL misbehave
+   * against consumer_order/consumer_pfimovement. Specifically, in order of
+   * how badly each breaks things:
+   *
+   * 1. pfiRepo.reserveStock(pfiId, quantity, tx) has a new signature —
+   *    (pfiId, quantity, orderId, tx) — consumer_pfimovement.order_id is
+   *    NOT NULL now (see pfi.repository.js), but this loop runs BEFORE the
+   *    order row exists, so there is no orderId yet to pass. The order
+   *    needs creating first (pfiId can be null — Order.pfi is nullable in
+   *    Django), stock reserved against its real id second, then the
+   *    order's pfiId backfilled — not the create-after-reserve order
+   *    below.
+   * 2. reserveStock's return value also changed shape: it's the
+   *    consumer_pfimovement row now, not the PFI row — `updatedPfi.id`
+   *    below is a movement id, not a PFI id, so markFinishedIfComplete is
+   *    called with the wrong argument.
+   * 3. releaseStock(pfiId, orderId, tx) similarly now takes an orderId as
+   *    its 2nd argument, not a quantity — every call site below (here and
+   *    in cancelOrder/expireOrder's releaseOrderResources) passes quantity.
+   * 4. orderRepo.create()'s payload further down uses field names with no
+   *    live equivalent at all: orderNumber (dropped — the reference is
+   *    always computed, see order.repository.js), customerId (-> userId),
+   *    state (-> stateId, a real FK — resolve via consumerStates, not the
+   *    depotStateId already resolved above for pricing, which is the
+   *    depot's state, not necessarily the order's), depotId (dropped — no
+   *    live column at all, already flagged as an open gap by
+   *    order.repository.js's own header comment), companyName (dropped),
+   *    paymentStatus (dropped — Django has no separate payment-status
+   *    axis, just status), virtualAccountNumber/Bank/Name (->
+   *    paidToAccountNumber/paidToBankName/paidToAccountName).
+   * 5. status: "Pending" needs to become status: "pending" — Django's
+   *    OrderStatus choices (soroman_backend-2/consumer/models.py) are
+   *    pending/paid/released/loaded/sold/canceled, a SINGLE lifecycle axis
+   *    replacing Sman's separate status+paymentStatus fields entirely.
+   *    That collapse ripples into every `order.paymentStatus`/`order.status`
+   *    check in this file (isOrderExpired, computeExpiresAt, replayResult,
+   *    payOrder, cancelOrder, expireOrder) and into orderStatus.service.js's
+   *    whole state machine — a deliberate, careful rework, not a
+   *    find-and-replace, since "Expired" and a distinct "Loading-in-progress"
+   *    state have no Django equivalent at all (flag for a human decision,
+   *    per order.repository.js's own note — don't invent one here).
+   *
+   * None of this was safe to rush — it's the core money-moving path. Treat
+   * placeOrder/payOrder/cancelOrder/expireOrder and orderStatus.service.js
+   * as a single unit of work for whoever picks this up next.
+   * --------------------------------------------------------------------- */
 
   // --- Atomic order creation -------------------------------------------------
   // Stock reservation, the order row and the declared pickup loads are ONE

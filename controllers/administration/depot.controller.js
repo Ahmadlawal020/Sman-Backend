@@ -215,16 +215,20 @@ const deleteDepot = asyncHandler(async (req, res) => {
   }
 
   const references = [];
-  // Check for referencing PFIs and orders
+  // Check for referencing PFIs. consumer_pfi.locationId is actually a state
+  // id, not a depot id (see repositories/pfi.repository.js), so this is a
+  // proxy check against the depot's own state, not an exact one. There is no
+  // live order->depot link at all (no depotId column on consumer_order —
+  // see order.repository.js's header comment), so the equivalent order
+  // check that used to run here has nowhere to query and is dropped rather
+  // than silently returning 0 and pretending it checked something.
   const { db } = require("../../config/db");
-  const { pfis, orders } = require("../../db/schema");
+  const { consumerPfi } = require("../../db/schema");
   const { eq, count } = require("drizzle-orm");
 
-  const [{ pfiCount }] = await db.select({ pfiCount: count() }).from(pfis).where(eq(pfis.locationId, depot.id));
-  const [{ orderCount }] = await db.select({ orderCount: count() }).from(orders).where(eq(orders.depotId, depot.id));
+  const [{ pfiCount }] = await db.select({ pfiCount: count() }).from(consumerPfi).where(eq(consumerPfi.locationId, depot.id));
 
   if (pfiCount > 0) references.push(`${pfiCount} PFI(s)`);
-  if (orderCount > 0) references.push(`${orderCount} order(s)`);
 
   if (references.length > 0) {
     return res.status(400).json({
