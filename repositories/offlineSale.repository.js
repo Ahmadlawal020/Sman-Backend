@@ -1,12 +1,24 @@
 const { eq, and, or, ilike, asc, desc, count, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { offlineSales, offlineSaleItems, products } = require("../db/schema");
+const {
+  administrationOfflinesales: offlineSales,
+  administrationOfflinesalesproduct: offlineSaleItems,
+  consumerProduct: products,
+} = require("../db/schema");
+
+/**
+ * administration_offlinesales (live, canonical) is much sparser than the old
+ * clean-room offline_sales: no sale_number, customer_name, location, or
+ * reconciled column, and `total_amount` -> `total_price`. Its line-item
+ * table (administration_offlinesalesproduct) tracks quantity only — no
+ * per-line unit_price/line_total, so findByIdWithItems can no longer report
+ * those; the sale's own total_price is the only money figure left.
+ */
 
 // Whitelist, not passthrough: sort input never reaches SQL unvalidated.
 const SORTABLE = {
   createdAt: offlineSales.createdAt,
-  totalAmount: offlineSales.totalAmount,
-  saleNumber: offlineSales.saleNumber,
+  totalPrice: offlineSales.totalPrice,
   status: offlineSales.status,
 };
 
@@ -25,12 +37,10 @@ const findByIdWithItems = async (id) => {
       productName: products.name,
       productSku: products.sku,
       quantity: offlineSaleItems.quantity,
-      unitPrice: offlineSaleItems.unitPrice,
-      lineTotal: offlineSaleItems.lineTotal,
     })
     .from(offlineSaleItems)
     .leftJoin(products, eq(offlineSaleItems.productId, products.id))
-    .where(eq(offlineSaleItems.offlineSaleId, id));
+    .where(eq(offlineSaleItems.offlineId, id));
   return { ...sale, items };
 };
 
@@ -41,16 +51,11 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, ord
 
   const conditions = [];
   if (status) conditions.push(eq(offlineSales.status, status));
-  if (reconciled !== undefined) conditions.push(eq(offlineSales.reconciled, reconciled));
+  // No reconciled column on the live table — silently ignored rather than
+  // erroring, same treatment as the other dropped clean-room-only fields.
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(
-      or(
-        ilike(offlineSales.saleNumber, pattern),
-        ilike(offlineSales.customerName, pattern),
-        ilike(offlineSales.location, pattern)
-      )
-    );
+    conditions.push(or(ilike(offlineSales.staff, pattern), ilike(offlineSales.notes, pattern)));
   }
   if (dateFrom) conditions.push(gte(offlineSales.createdAt, new Date(dateFrom)));
   if (dateTo) conditions.push(lte(offlineSales.createdAt, new Date(dateTo)));

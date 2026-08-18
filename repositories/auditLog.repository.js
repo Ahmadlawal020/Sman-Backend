@@ -1,6 +1,8 @@
 const { eq, and, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
 const { auditLogs } = require("../db/schema");
+// auditLogs now lives in the sman schema (db/schema/sman/auditLog.js) — no
+// live Django counterpart, see that file's comment for why.
 
 const ACTOR_TYPES = Object.freeze(["staff", "customer", "system"]);
 

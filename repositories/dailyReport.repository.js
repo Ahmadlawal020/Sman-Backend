@@ -1,19 +1,52 @@
 const { eq, and, ilike, asc, desc, count, gte, lte, inArray, or, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { dailyReports, depots, lpgStations, pfis } = require("../db/schema");
+const {
+  administrationStaffdailysalesreport,
+  dailyReportExtras,
+  consumerDepots,
+  consumerLpgplant,
+  consumerPfi,
+} = require("../db/schema");
+
+/**
+ * administration_staffdailysalesreport (the live row, canonical) has no
+ * review workflow or report_type — see sman/dailyReportExtras.js for the
+ * 1:1 side table restoring those, and its caveat about the live table's
+ * unique key not including report_type. Column renames: `reportDate` ->
+ * `date`, `litresSold` -> `litresSoldToday`, `carriedOverLoading` ->
+ * `yesterdayCarriedOverLoading`, `truckCount` -> `numTrucksSold`.
+ */
+const dailyReports = administrationStaffdailysalesreport;
+
+const withExtras = (row) =>
+  row && {
+    ...row.administration_staffdailysalesreport,
+    ...row.daily_report_extras,
+    id: row.administration_staffdailysalesreport.id,
+    reportDate: row.administration_staffdailysalesreport.date,
+    litresSold: row.administration_staffdailysalesreport.litresSoldToday,
+    carriedOverLoading: row.administration_staffdailysalesreport.yesterdayCarriedOverLoading,
+    truckCount: row.administration_staffdailysalesreport.numTrucksSold,
+  };
+
+const baseQuery = () =>
+  db
+    .select()
+    .from(administrationStaffdailysalesreport)
+    .leftJoin(dailyReportExtras, eq(administrationStaffdailysalesreport.id, dailyReportExtras.reportId));
 
 // Whitelist, not passthrough: sort input never reaches SQL unvalidated.
 const SORTABLE = {
-  reportDate: dailyReports.reportDate,
+  reportDate: dailyReports.date,
   location: dailyReports.location,
   createdAt: dailyReports.createdAt,
   totalSalesAmount: dailyReports.totalSalesAmount,
-  litresSold: dailyReports.litresSold,
+  litresSold: dailyReports.litresSoldToday,
 };
 
 const findById = async (id) => {
-  const [row] = await db.select().from(dailyReports).where(eq(dailyReports.id, id)).limit(1);
-  return row || null;
+  const [row] = await baseQuery().where(eq(dailyReports.id, id)).limit(1);
+  return withExtras(row);
 };
 
 /**
@@ -25,22 +58,17 @@ const findById = async (id) => {
  */
 const scopedNames = async ({ depotIds = [], lpgStationIds = [], pfiIds = [] } = {}) => {
   const [depotRows, stationRows, pfiRows] = await Promise.all([
-    depotIds.length ? db.select({ name: depots.name }).from(depots).where(inArray(depots.id, depotIds)) : [],
+    depotIds.length
+      ? db.select({ name: consumerDepots.name }).from(consumerDepots).where(inArray(consumerDepots.id, depotIds))
+      : [],
     lpgStationIds.length
-      ? db.select({ name: lpgStations.name }).from(lpgStations).where(inArray(lpgStations.id, lpgStationIds))
+      ? db.select({ name: consumerLpgplant.name }).from(consumerLpgplant).where(inArray(consumerLpgplant.id, lpgStationIds))
       : [],
-    pfiIds.length || depotIds.length || lpgStationIds.length
-      ? db
-          .select({ number: pfis.pfiNumber })
-          .from(pfis)
-          .where(
-            or(
-              pfiIds.length ? inArray(pfis.id, pfiIds) : sql`false`,
-              depotIds.length ? inArray(pfis.locationId, depotIds) : sql`false`,
-              lpgStationIds.length ? inArray(pfis.lpgStationId, lpgStationIds) : sql`false`,
-            ),
-          )
-      : [],
+    // consumer_pfi has no depot/lpg-station FK at all (it's state-scoped, see
+    // depot.repository.js's comment on per-state pricing) — only a directly
+    // given pfiId can be resolved to its number now, not "every PFI at this
+    // depot/station" the way the old model could.
+    pfiIds.length ? db.select({ number: consumerPfi.pfiNumber }).from(consumerPfi).where(inArray(consumerPfi.id, pfiIds)) : [],
   ]);
   return {
     locationNames: [...depotRows.map((r) => r.name), ...stationRows.map((r) => r.name)],
@@ -76,13 +104,13 @@ const findAll = async ({
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-  if (reportType) conditions.push(eq(dailyReports.reportType, reportType));
+  if (reportType) conditions.push(eq(dailyReportExtras.reportType, reportType));
   if (location) conditions.push(ilike(dailyReports.location, `%${location}%`));
-  if (status) conditions.push(eq(dailyReports.status, status));
+  if (status) conditions.push(eq(dailyReportExtras.status, status));
   if (pfiNumber) conditions.push(eq(dailyReports.pfiNumber, pfiNumber));
-  if (submittedBy) conditions.push(eq(dailyReports.submittedBy, submittedBy));
-  if (dateFrom) conditions.push(gte(dailyReports.reportDate, dateFrom));
-  if (dateTo) conditions.push(lte(dailyReports.reportDate, dateTo));
+  if (submittedBy) conditions.push(eq(dailyReports.submittedById, submittedBy));
+  if (dateFrom) conditions.push(gte(dailyReports.date, dateFrom));
+  if (dateTo) conditions.push(lte(dailyReports.date, dateTo));
 
   if (scopeUser && !scopeUser.canViewAllLocations) {
     const { locationNames, pfiNumbers } = await scopedNames(scopeUser.scope);
@@ -97,37 +125,155 @@ const findAll = async ({
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
-    db
-      .select()
-      .from(dailyReports)
+    baseQuery()
       .where(whereClause)
-      .orderBy(
-        (order === "asc" ? asc : desc)(SORTABLE[sort] || dailyReports.reportDate),
-        desc(dailyReports.id)
-      )
+      .orderBy((order === "asc" ? asc : desc)(SORTABLE[sort] || dailyReports.date), desc(dailyReports.id))
       .limit(limitNum)
       .offset(offset),
-    db.select({ total: count() }).from(dailyReports).where(whereClause),
+    db.select({ total: count() }).from(dailyReports).leftJoin(dailyReportExtras, eq(dailyReports.id, dailyReportExtras.reportId)).where(whereClause),
   ]);
 
   return {
-    reports: rows,
+    reports: rows.map(withExtras),
     pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(dailyReports).values(data).returning();
-  return row;
+const create = async (data, tx = db) => {
+  const {
+    reportType,
+    productName,
+    openingStock,
+    receivedStock,
+    avgPrice,
+    yesterdayDeficitPayment,
+    yesterdaySurplusPayment,
+    totalInflow,
+    trucksEntered,
+    customerCount,
+    orderCount,
+    rates,
+    topCustomers,
+    status,
+    reviewedBy,
+    reviewedByName,
+    reviewedAt,
+    reviewComment,
+    reportDate,
+    litresSold,
+    carriedOverLoading,
+    truckCount,
+    submittedBy,
+    ...rest
+  } = data;
+  const liveData = { ...rest };
+  if (reportDate !== undefined) liveData.date = reportDate;
+  if (litresSold !== undefined) liveData.litresSoldToday = litresSold;
+  if (carriedOverLoading !== undefined) liveData.yesterdayCarriedOverLoading = carriedOverLoading;
+  if (truckCount !== undefined) liveData.numTrucksSold = truckCount;
+  if (submittedBy !== undefined) liveData.submittedById = submittedBy;
+
+  const [reportRow] = await tx.insert(dailyReports).values(liveData).returning();
+  const extrasData = {
+    reportType,
+    productName,
+    openingStock,
+    receivedStock,
+    avgPrice,
+    yesterdayDeficitPayment,
+    yesterdaySurplusPayment,
+    totalInflow,
+    trucksEntered,
+    customerCount,
+    orderCount,
+    rates,
+    topCustomers,
+    status,
+    reviewedBy,
+    reviewedByName,
+    reviewedAt,
+    reviewComment,
+  };
+  for (const key of Object.keys(extrasData)) {
+    if (extrasData[key] === undefined) delete extrasData[key];
+  }
+  const [extrasRow] = await tx.insert(dailyReportExtras).values({ reportId: reportRow.id, ...extrasData }).returning();
+  return withExtras({ administration_staffdailysalesreport: reportRow, daily_report_extras: extrasRow });
 };
 
-const update = async (id, data) => {
-  const [row] = await db
-    .update(dailyReports)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(dailyReports.id, id))
-    .returning();
-  return row || null;
+const update = async (id, data, tx = db) => {
+  const {
+    reportType,
+    productName,
+    openingStock,
+    receivedStock,
+    avgPrice,
+    yesterdayDeficitPayment,
+    yesterdaySurplusPayment,
+    totalInflow,
+    trucksEntered,
+    customerCount,
+    orderCount,
+    rates,
+    topCustomers,
+    status,
+    reviewedBy,
+    reviewedByName,
+    reviewedAt,
+    reviewComment,
+    reportDate,
+    litresSold,
+    carriedOverLoading,
+    truckCount,
+    submittedBy,
+    ...rest
+  } = data;
+  const liveData = { ...rest };
+  if (reportDate !== undefined) liveData.date = reportDate;
+  if (litresSold !== undefined) liveData.litresSoldToday = litresSold;
+  if (carriedOverLoading !== undefined) liveData.yesterdayCarriedOverLoading = carriedOverLoading;
+  if (truckCount !== undefined) liveData.numTrucksSold = truckCount;
+  if (submittedBy !== undefined) liveData.submittedById = submittedBy;
+
+  const extrasData = {
+    reportType,
+    productName,
+    openingStock,
+    receivedStock,
+    avgPrice,
+    yesterdayDeficitPayment,
+    yesterdaySurplusPayment,
+    totalInflow,
+    trucksEntered,
+    customerCount,
+    orderCount,
+    rates,
+    topCustomers,
+    status,
+    reviewedBy,
+    reviewedByName,
+    reviewedAt,
+    reviewComment,
+  };
+  for (const key of Object.keys(extrasData)) {
+    if (extrasData[key] === undefined) delete extrasData[key];
+  }
+
+  if (Object.keys(liveData).length > 0) {
+    await tx.update(dailyReports).set(liveData).where(eq(dailyReports.id, id));
+  }
+  if (Object.keys(extrasData).length > 0) {
+    // upsert: a report predating daily_report_extras has no row there yet —
+    // a plain UPDATE would silently affect 0 rows.
+    await tx
+      .insert(dailyReportExtras)
+      .values({ reportId: id, ...extrasData })
+      .onConflictDoUpdate({
+        target: dailyReportExtras.reportId,
+        set: { ...extrasData, updatedAt: new Date() },
+      });
+  }
+  return findById(id);
 };
 
 /** Hard delete — a report is a submission, not a ledger entry. */

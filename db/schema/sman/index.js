@@ -12,7 +12,15 @@ const customerOtpSchema = require("./customerOtp");
 // Fleet / depot
 const driverSchema = require("./driver");
 const driverTruckHistorySchema = require("./driverTruckHistory");
+const truckExtrasSchema = require("./truckExtras");
+const dailyReportExtrasSchema = require("./dailyReportExtras");
+
+// System-wide audit trail (no live Django counterpart — see sman/auditLog.js)
+const auditLogSchema = require("./auditLog");
+const auditEventSchema = require("./auditEvent");
 const depotStaffSchema = require("./depotStaff");
+const lpgStationStaffSchema = require("./lpgStationStaff");
+const pfiStaffSchema = require("./pfiStaff");
 const depotPriceHistorySchema = require("./depotPriceHistory");
 const depotProductCapacitiesSchema = require("./depotProductCapacities");
 const depotProductCommissionSchema = require("./depotProductCommission");
@@ -69,7 +77,13 @@ module.exports = {
   ...customerOtpSchema,
   ...driverSchema,
   ...driverTruckHistorySchema,
+  ...truckExtrasSchema,
+  ...dailyReportExtrasSchema,
+  ...auditLogSchema,
+  ...auditEventSchema,
   ...depotStaffSchema,
+  ...lpgStationStaffSchema,
+  ...pfiStaffSchema,
   ...depotPriceHistorySchema,
   ...depotProductCapacitiesSchema,
   ...depotProductCommissionSchema,

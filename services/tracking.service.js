@@ -1,6 +1,15 @@
-const { eq, or, asc } = require("drizzle-orm");
+const { eq, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders, depots, products, orderTrucks } = require("../db/schema");
+const {
+  consumerOrder: orders,
+  consumerDepots: depots,
+  depotExtras,
+  consumerProduct: products,
+  consumerTruckallocation: orderTrucks,
+  consumerCustomer: customers,
+  consumerOrderproduct,
+} = require("../db/schema");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 
 /**
  * Public order tracking — what anyone holding the reference may see.
@@ -87,59 +96,58 @@ const buildReached = (row) => {
 /** One-line situation report for the current stage. Needs `depotName` + `trucks`. */
 const stageNote = (stage, row) => (NOTE[stage] ? NOTE[stage](row) : null);
 
-const { customers } = require("../db/schema/customer");
-const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
-
 const trackByRef = async (ref) => {
   const normalized = String(ref || "").trim().toUpperCase();
   if (!normalized) return null;
 
-  // Accepts "SO600", the legacy "SO/600", and the raw ORD-… column value, so a
-  // reference printed on any invoice or SMS ever sent still tracks.
+  // No stored order_number live — every reference resolves through the id
+  // (see repositories/order.repository.js). Accepts "SO600", the legacy
+  // "SO/600", and a bare id, so a reference printed on any invoice or SMS
+  // ever sent still tracks; anything that isn't reference-shaped 404s.
   const possibleId = parseOrderReference(normalized);
+  if (!possibleId) return null;
 
-  let whereCond;
-  if (possibleId) {
-    whereCond = or(eq(orders.id, possibleId), eq(orders.orderNumber, normalized));
-  } else {
-    whereCond = eq(orders.orderNumber, normalized);
-  }
-
+  // consumer_order (live, canonical) has no depotId at all — only pfiId, and
+  // a PFI's own locationId points at a STATE, not a depot (see
+  // order.repository.js's header comment; that repo flags the same gap
+  // rather than inventing a resolution). depotName is dropped here for the
+  // same reason, not guessed. Column renames: deliveryType -> releaseType,
+  // no completedAt/loadingStartedAt (nearest proxies: security_exited_at /
+  // loading_datetime), status uses "canceled" (Django's spelling).
   const [row] = await db
     .select({
       id: orders.id,
-      orderNumber: orders.orderNumber,
-      companyName: orders.companyName,
       customerCompanyName: customers.companyName,
       status: orders.status,
-      quantity: orders.quantity,
-      deliveryType: orders.deliveryType,
+      quantity: consumerOrderproduct.quantity,
+      deliveryType: orders.releaseType,
       deliveryAddress: orders.deliveryAddress,
-      state: orders.state,
+      state: orders.destinationState,
       createdAt: orders.createdAt,
       paymentConfirmedAt: orders.paymentConfirmedAt,
       releasedAt: orders.releasedAt,
-      loadingStartedAt: orders.loadingStartedAt,
-      completedAt: orders.completedAt,
-      cancelledAt: orders.cancelledAt,
-      depotName: depots.name,
-      depotState: depots.state,
+      loadingStartedAt: orders.loadingDatetime,
+      completedAt: orders.securityExitedAt,
       productName: products.name,
-      productCategory: products.category,
       productUnit: products.unit,
     })
     .from(orders)
-    .leftJoin(customers, eq(orders.customerId, customers.id))
-    .leftJoin(depots, eq(orders.depotId, depots.id))
-    .leftJoin(products, eq(orders.productId, products.id))
-    .where(whereCond)
+    .leftJoin(customers, eq(orders.userId, customers.id))
+    .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, orders.id))
+    .leftJoin(products, eq(consumerOrderproduct.productId, products.id))
+    .where(eq(orders.id, possibleId))
     .limit(1);
 
   if (!row) return null;
+  row.depotName = "";
+  row.depotState = row.state;
 
-  const displayRef = generateOrderReference(row.companyName || row.customerCompanyName, row.id);
+  const displayRef = generateOrderReference(row.customerCompanyName, row.id);
 
-  if (row.status === "Cancelled") {
+  // Django's spelling: status = 'canceled', not a separate cancelledAt
+  // column (see order.repository.js's header comment) — createdAt stands in
+  // for the cancellation timestamp since there's nowhere live to read one.
+  if (row.status === "canceled") {
     return {
       ref: displayRef,
       placedAt: row.createdAt,
@@ -154,7 +162,7 @@ const trackByRef = async (ref) => {
         },
       ],
       stage: "cancelled",
-      reached: { received: row.createdAt, cancelled: row.cancelledAt || row.updatedAt || row.createdAt },
+      reached: { received: row.createdAt, cancelled: row.createdAt },
       note: "This order has been cancelled.",
       trucks: [],
     };
@@ -162,15 +170,18 @@ const trackByRef = async (ref) => {
 
   // Every allocated truck and where it is, once trucks have been assigned at
   // release. Plate + status only — never the driver's name or phone.
+  // consumer_truckallocation's `truck_number` is a sequence int (the old
+  // model's truckIndex); the plate lives in `plate_number`, and status is
+  // `ticket_status`.
   const truckRows = await db
     .select({
-      truckIndex: orderTrucks.truckIndex,
-      truckNumber: orderTrucks.truckNumber,
-      status: orderTrucks.status,
+      truckIndex: orderTrucks.truckNumber,
+      truckNumber: orderTrucks.plateNumber,
+      status: orderTrucks.ticketStatus,
     })
     .from(orderTrucks)
     .where(eq(orderTrucks.orderId, row.id))
-    .orderBy(asc(orderTrucks.truckIndex));
+    .orderBy(asc(orderTrucks.truckNumber));
   row.trucks = truckRows.map((t) => ({
     index: t.truckIndex,
     plate: t.truckNumber || null,
