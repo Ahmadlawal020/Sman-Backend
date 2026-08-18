@@ -275,6 +275,9 @@ const listExpenses = asyncHandler(async (req, res) => {
   // Outside the oversight roles you see only what you raised. Applied here so
   // every count, total, page and the bank list all inherit it.
   const oversight = chain.canOversee(req.user);
+  // The "My Requests" page asks for this explicitly, so even an oversight
+  // role — who can otherwise see everyone's spend — gets just their own.
+  const mine = req.query.mine === "true" || req.query.mine === "1";
 
   const result = await pfiExpenseRepo.listExpenses({
     search: req.query.search,
@@ -290,7 +293,7 @@ const listExpenses = asyncHandler(async (req, res) => {
     dateTo: parseDate(req.query.dateTo),
     page: req.query.page,
     limit: req.query.limit,
-    onlySubmitterId: oversight ? null : req.user?.id ?? -1,
+    onlySubmitterId: oversight && !mine ? null : req.user?.id ?? -1,
     scopeUser: req.user,
   });
 
@@ -301,7 +304,7 @@ const listExpenses = asyncHandler(async (req, res) => {
       expenses: decorate(result.expenses, req.user),
       // Tells the page whose entries are on screen, rather than leaving someone
       // wondering why a colleague's row is missing.
-      scope: oversight ? "all" : "own",
+      scope: oversight && !mine ? "all" : "own",
       can_review: oversight,
       statuses: Object.entries(chain.STATUS_LABELS).map(([value, label]) => ({ value, label })),
     },
@@ -508,11 +511,29 @@ const updateExpense = asyncHandler(async (req, res) => {
   });
 });
 
+// Deletable up to "with CFO" — past that the chain has already spent effort
+// approving it, and a reject/send-back is the honest way to unwind it so the
+// paperwork remembers why, rather than the row just vanishing.
+const DELETABLE_STATUSES = new Set([chain.STATUS.PENDING, chain.STATUS.CHANGES_REQUESTED, chain.STATUS.VERIFIED]);
+
 const deleteExpense = asyncHandler(async (req, res) => {
   const existing = await pfiExpenseRepo.findExpenseById(req.params.id);
   if (!existing) throw httpErr(404, "Expense not found");
   if (existing.deleted_at) {
     return res.json({ success: true, message: "Expense already deleted" });
+  }
+
+  const isOwner =
+    req.user?.id != null &&
+    Number(existing.added_by ?? existing.recorded_by) === Number(req.user.id);
+  if (!isOwner && !chain.canOversee(req.user)) {
+    throw httpErr(403, "You can only delete a request you raised");
+  }
+  if (!DELETABLE_STATUSES.has(existing.status)) {
+    throw httpErr(
+      400,
+      `${chain.STATUS_LABELS[existing.status] || existing.status} requests can no longer be deleted — reject or send it back instead`,
+    );
   }
 
   const deleted = await pfiExpenseRepo.softDeleteExpense(existing.id);
@@ -542,6 +563,9 @@ const decorate = (rows, user) =>
     );
     return {
       ...e,
+      // Whoever raised it — a clean id the client can compare against its own
+      // user without duplicating the added_by/recorded_by fallback rule.
+      submitted_by_id: e.added_by ?? e.recorded_by ?? null,
       status_label: chain.STATUS_LABELS[e.status] || e.status,
       status_step: chain.STATUS_STEP[e.status] ?? 0,
       total_steps: chain.TOTAL_STEPS,

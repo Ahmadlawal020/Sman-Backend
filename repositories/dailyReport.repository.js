@@ -1,6 +1,6 @@
-const { eq, and, ilike, asc, desc, count, gte, lte } = require("drizzle-orm");
+const { eq, and, ilike, asc, desc, count, gte, lte, inArray, or, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { dailyReports } = require("../db/schema");
+const { dailyReports, depots, lpgStations, pfis } = require("../db/schema");
 
 // Whitelist, not passthrough: sort input never reaches SQL unvalidated.
 const SORTABLE = {
@@ -14,6 +14,38 @@ const SORTABLE = {
 const findById = async (id) => {
   const [row] = await db.select().from(dailyReports).where(eq(dailyReports.id, id)).limit(1);
   return row || null;
+};
+
+/**
+ * A location/PFI-scoped viewer's reports are matched by name, not id —
+ * `daily_reports.location`/`pfi_number` are free text typed on the filing
+ * form, not foreign keys. Resolves the scope's depot/LPG-station ids to the
+ * names filers would have typed, plus every PFI number that scope reaches
+ * (held directly, or sitting at one of the scoped depots/stations).
+ */
+const scopedNames = async ({ depotIds = [], lpgStationIds = [], pfiIds = [] } = {}) => {
+  const [depotRows, stationRows, pfiRows] = await Promise.all([
+    depotIds.length ? db.select({ name: depots.name }).from(depots).where(inArray(depots.id, depotIds)) : [],
+    lpgStationIds.length
+      ? db.select({ name: lpgStations.name }).from(lpgStations).where(inArray(lpgStations.id, lpgStationIds))
+      : [],
+    pfiIds.length || depotIds.length || lpgStationIds.length
+      ? db
+          .select({ number: pfis.pfiNumber })
+          .from(pfis)
+          .where(
+            or(
+              pfiIds.length ? inArray(pfis.id, pfiIds) : sql`false`,
+              depotIds.length ? inArray(pfis.locationId, depotIds) : sql`false`,
+              lpgStationIds.length ? inArray(pfis.lpgStationId, lpgStationIds) : sql`false`,
+            ),
+          )
+      : [],
+  ]);
+  return {
+    locationNames: [...depotRows.map((r) => r.name), ...stationRows.map((r) => r.name)],
+    pfiNumbers: pfiRows.map((r) => r.number),
+  };
 };
 
 const findAll = async ({
@@ -33,6 +65,9 @@ const findAll = async ({
   dateTo,
   sort,
   order,
+  /** The authenticated caller — only set for a location/PFI-scoped viewer
+   * who otherwise has oversight of every report (see the controller). */
+  scopeUser,
   page = 1,
   limit = 50,
 } = {}) => {
@@ -48,6 +83,16 @@ const findAll = async ({
   if (submittedBy) conditions.push(eq(dailyReports.submittedBy, submittedBy));
   if (dateFrom) conditions.push(gte(dailyReports.reportDate, dateFrom));
   if (dateTo) conditions.push(lte(dailyReports.reportDate, dateTo));
+
+  if (scopeUser && !scopeUser.canViewAllLocations) {
+    const { locationNames, pfiNumbers } = await scopedNames(scopeUser.scope);
+    const clauses = [];
+    if (locationNames.length) clauses.push(inArray(dailyReports.location, locationNames));
+    if (pfiNumbers.length) clauses.push(inArray(dailyReports.pfiNumber, pfiNumbers));
+    // Scoped but assigned nothing reachable: fail closed, same rule as
+    // everywhere else this scope system is enforced.
+    conditions.push(clauses.length ? or(...clauses) : sql`false`);
+  }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

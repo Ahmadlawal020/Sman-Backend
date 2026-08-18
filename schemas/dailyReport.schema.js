@@ -82,10 +82,26 @@ const dailyReportQuerySchema = z.object({
   order: z.enum(["asc", "desc"]).optional(),
 });
 
+// The Hub's own "Email report" action: whatever workbook the browser just
+// built for the current filters, sent to whoever the user types in — not the
+// static REPORT_RECIPIENTS list the scheduled script uses.
+const emailReportsHubSchema = z.object({
+  recipients: z.array(z.string().email()).min(1).max(25),
+  reportDate: z.string().date(),
+  filename: z.string().min(1).max(255),
+  // base64 xlsx — Resend's attachment cap is generous, but nobody is
+  // building a single day's report anywhere near it.
+  attachmentBase64: z.string().min(1),
+  reportCount: z.coerce.number().int().nonnegative().optional(),
+  location: z.string().max(255).optional(),
+  pfi: z.string().max(50).optional(),
+});
+
 module.exports = {
   idParamSchema,
   submitDailyReportSchema,
   amendDailyReportSchema,
   reviewDailyReportSchema,
   dailyReportQuerySchema,
+  emailReportsHubSchema,
 };

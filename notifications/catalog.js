@@ -1635,6 +1635,33 @@ const CATALOG = {
       }),
   },
 
+  // Sent on demand from the Reports Hub's "Email report" button — the
+  // workbook is whatever the browser just built for the admin's current
+  // date/location/PFI filters, not a fixed daily job.
+  //
+  // data: reportDate, filename, attachmentBase64, reportCount, location, pfi
+  "reports.hub_email": {
+    audience: "staff",
+    category: "reports",
+    priority: "normal",
+    channels: EMAIL_ONLY,
+    title: (d) => `Reports Hub - ${formatDate(d.reportDate)}`,
+    body: (d) => `${d.reportCount ?? 0} report(s) for ${formatDate(d.reportDate)}.`,
+    entity: (d) => ({ type: "report", id: String(d.reportDate || "") }),
+    email: (d) =>
+      reportEmail({
+        subject: `Soroman Reports Hub - ${formatDate(d.reportDate)}`,
+        heading: `Reports Hub — ${formatDate(d.reportDate)}`,
+        rows: [
+          { label: "Reports", value: String(d.reportCount ?? 0) },
+          ...(d.location && d.location !== "all" ? [{ label: "Location", value: d.location }] : []),
+          ...(d.pfi && d.pfi !== "all" ? [{ label: "PFI", value: d.pfi }] : []),
+        ],
+        emptyNote: !d.reportCount ? "No reports filed for this date/filter." : null,
+        d,
+      }),
+  },
+
   // ═══ Delivery / truck flow (SMS) ══════════════════════════════════════════
   // Recipients are drivers, customers and payers who often have no account, so
   // these are addressed by phone and are SMS-only. Every message opens with the
