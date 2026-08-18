@@ -1,133 +1,86 @@
-const enums = require("./enums");
-const staffSchema = require("./staff");
-const customerSchema = require("./customer");
-const driverSchema = require("./driver");
-// Before its dependents: orderTruck, driverTruckHistory and deliveryInventory
-// all destructure `fleetTrucks` at load time.
-const fleetTruckSchema = require("./fleetTruck");
-const depotSchema = require("./depot");
-const productSchema = require("./product");
-const depotStaffSchema = require("./depotStaff");
-const lpgStationSchema = require("./lpgStation");
-const lpgStationStaffSchema = require("./lpgStationStaff");
-const lpgStationCylinderSchema = require("./lpgStationCylinder");
-const lpgPriceHistorySchema = require("./lpgPriceHistory");
-const depotProductCapacitiesSchema = require("./depotProductCapacities");
-const depotProductPricesSchema = require("./depotProductPrices");
-const depotPriceHistorySchema = require("./depotPriceHistory");
-const driverTruckHistorySchema = require("./driverTruckHistory");
-const pfiSchema = require("./pfi");
-// After ./pfi and ./staff — pfiStaff destructures both at load time.
-const pfiStaffSchema = require("./pfiStaff");
-const orderSchema = require("./order");
-const vendorSchema = require("./vendor");
-// After ./order and ./vendor — pfiExpense destructures `orders` and `vendors`
-// at load time.
-const pfiExpenseSchema = require("./pfiExpense");
-const orderPfiAllocationSchema = require("./orderPfiAllocation");
-const ticketSchema = require("./ticket");
-const depositSchema = require("./deposit");
-// After ./order and ./deposit — orderDepositAllocation destructures both at
-// load time.
-const orderDepositAllocationSchema = require("./orderDepositAllocation");
-// After ./customer, ./order, ./deposit, ./staff — expectedPayment
-// destructures all four at load time.
-const expectedPaymentSchema = require("./expectedPayment");
-const walletHoldSchema = require("./walletHold");
-const deliveryCustomerSchema = require("./deliveryCustomer");
-const deliveryNoteSchema = require("./deliveryNote");
-const deliveryInventorySchema = require("./deliveryInventory");
-const deliverySaleSchema = require("./deliverySale");
-const webhookEventSchema = require("./webhookEvent");
-const sessionSchema = require("./session");
-const customerOtpSchema = require("./customerOtp");
-const auditLogSchema = require("./auditLog");
-const orderTruckSchema = require("./orderTruck");
-const customerIdentitySchema = require("./customerIdentity");
-const auditEventSchema = require("./auditEvent");
-const fleetLedgerSchema = require("./fleetLedgerEntry");
-const dailyReportSchema = require("./dailyReport");
-const incidentRecordSchema = require("./incidentRecord");
-const offlineSaleSchema = require("./offlineSale");
-const dangoteProductSchema = require("./dangoteProduct");
-const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
-const lpgOrderRequestSchema = require("./lpgOrderRequest");
-const waSessionSchema = require("./waSession");
-const waMessageSchema = require("./waMessage");
-const waTemplateSchema = require("./waTemplate");
-const bankAccountSchema = require("./bankAccount");
-const bankStatementSchema = require("./bankStatement");
-const depotProductCommissionSchema = require("./depotProductCommission");
-const commissionSchema = require("./commission");
-const customerLicenseSchema = require("./companyLicense");
-const notificationSchema = require("./notification");
-// After ./notification — notificationDelivery destructures `notifications` at
-// load time for its foreign key.
-const notificationDeliverySchema = require("./notificationDelivery");
-const notificationPreferenceSchema = require("./notificationPreference");
-const deviceTokenSchema = require("./deviceToken");
-const staffPageOverrideSchema = require("./staffPageOverride");
-// After ./staff — messageTemplate destructures it at load time.
-const messageTemplateSchema = require("./messageTemplate");
-
 module.exports = {
-  ...enums,
-  ...staffSchema,
-  ...customerSchema,
-  ...driverSchema,
-  ...depotSchema,
-  ...productSchema,
-  ...depotStaffSchema,
-  ...lpgStationSchema,
-  ...lpgStationStaffSchema,
-  ...lpgStationCylinderSchema,
-  ...lpgPriceHistorySchema,
-  ...depotProductCapacitiesSchema,
-  ...depotProductPricesSchema,
-  ...depotPriceHistorySchema,
-  ...driverTruckHistorySchema,
-  ...pfiSchema,
-  ...pfiStaffSchema,
-  ...orderSchema,
-  ...vendorSchema,
-  ...pfiExpenseSchema,
-  ...orderPfiAllocationSchema,
-  ...ticketSchema,
-  ...depositSchema,
-  ...orderDepositAllocationSchema,
-  ...expectedPaymentSchema,
-  ...walletHoldSchema,
-  ...deliveryCustomerSchema,
-  ...deliveryNoteSchema,
-  ...deliveryInventorySchema,
-  ...deliverySaleSchema,
-  ...webhookEventSchema,
-  ...sessionSchema,
-  ...customerOtpSchema,
-  ...auditLogSchema,
-  ...orderTruckSchema,
-  ...customerIdentitySchema,
-  ...auditEventSchema,
-  ...fleetTruckSchema,
-  ...fleetLedgerSchema,
-  ...dailyReportSchema,
-  ...incidentRecordSchema,
-  ...offlineSaleSchema,
-  ...dangoteProductSchema,
-  ...dangoteOrderRequestSchema,
-  ...lpgOrderRequestSchema,
-  ...waSessionSchema,
-  ...waMessageSchema,
-  ...waTemplateSchema,
-  ...bankAccountSchema,
-  ...bankStatementSchema,
-  ...depotProductCommissionSchema,
-  ...commissionSchema,
-  ...customerLicenseSchema,
-  ...notificationSchema,
-  ...notificationDeliverySchema,
-  ...notificationPreferenceSchema,
-  ...deviceTokenSchema,
-  ...staffPageOverrideSchema,
-  ...messageTemplateSchema,
+  // Tables with no live counterpart in soroman_db — a separate `sman`
+  // Postgres schema this app owns (docs/LIVE_DB_CUTOVER.md §4).
+  ...require("./sman"),
+  ...require("./administrationCategory"),
+  ...require("./administrationConfirmrelease"),
+  ...require("./administrationDailyreportapproval"),
+  ...require("./administrationDeliverycustomer"),
+  ...require("./administrationDeliveryinventory"),
+  ...require("./administrationDeliveryinventoryTrucks"),
+  ...require("./administrationDeliveryledgersettingsaudit"),
+  ...require("./administrationDeliverysale"),
+  ...require("./administrationFeedback"),
+  ...require("./administrationOfflinesales"),
+  ...require("./administrationOfflinesalesTrucks"),
+  ...require("./administrationOfflinesalesproduct"),
+  ...require("./administrationRecord"),
+  ...require("./administrationReportrecipient"),
+  ...require("./administrationStaffdailysalesreport"),
+  ...require("./administrationUser"),
+  ...require("./administrationUserFillingStations"),
+  ...require("./administrationUserGroups"),
+  ...require("./administrationUserLocations"),
+  ...require("./administrationUserLpgPlants"),
+  ...require("./administrationUserPfis"),
+  ...require("./administrationUserUserPermissions"),
+  ...require("./administrationUsertoken"),
+  ...require("./authGroup"),
+  ...require("./authGroupPermissions"),
+  ...require("./authPermission"),
+  ...require("./authUser"),
+  ...require("./authUserGroups"),
+  ...require("./authUserUserPermissions"),
+  ...require("./authtokenToken"),
+  ...require("./consumerAgent"),
+  ...require("./consumerAuditlog"),
+  ...require("./consumerBankacct"),
+  ...require("./consumerBankstatement"),
+  ...require("./consumerBankstatementcolumnmapping"),
+  ...require("./consumerBankstatementline"),
+  ...require("./consumerCustomer"),
+  ...require("./consumerDeliveryorders"),
+  ...require("./consumerDepots"),
+  ...require("./consumerExpensecategory"),
+  ...require("./consumerFleetledgerentry"),
+  ...require("./consumerFleettruck"),
+  ...require("./consumerLocationcommissionrate"),
+  ...require("./consumerLpgplant"),
+  ...require("./consumerLpgsale"),
+  ...require("./consumerLpgstockentry"),
+  ...require("./consumerOrder"),
+  ...require("./consumerOrderauditevent"),
+  ...require("./consumerOrderpaymentinfo"),
+  ...require("./consumerOrderpaymentrecord"),
+  ...require("./consumerOrderproduct"),
+  ...require("./consumerOverpaymenttransferrequest"),
+  ...require("./consumerPaymentchannels"),
+  ...require("./consumerPaymentfile"),
+  ...require("./consumerPaymentsplit"),
+  ...require("./consumerPfi"),
+  ...require("./consumerPfiAllowedLocations"),
+  ...require("./consumerPfiexpense"),
+  ...require("./consumerPfiexpenseattachment"),
+  ...require("./consumerPfiexpenseaudit"),
+  ...require("./consumerPfimovement"),
+  ...require("./consumerPickuporders"),
+  ...require("./consumerPickuptruck"),
+  ...require("./consumerProduct"),
+  ...require("./consumerProductprice"),
+  ...require("./consumerStates"),
+  ...require("./consumerTruck"),
+  ...require("./consumerTruckallocation"),
+  ...require("./consumerTruckbreakdown"),
+  ...require("./consumerTruckticket"),
+  ...require("./deliveryLedgerSettings"),
+  ...require("./djangoAdminLog"),
+  ...require("./djangoCeleryBeatClockedschedule"),
+  ...require("./djangoCeleryBeatCrontabschedule"),
+  ...require("./djangoCeleryBeatIntervalschedule"),
+  ...require("./djangoCeleryBeatPeriodictask"),
+  ...require("./djangoCeleryBeatPeriodictasks"),
+  ...require("./djangoCeleryBeatSolarschedule"),
+  ...require("./djangoContentType"),
+  ...require("./djangoMigrations"),
+  ...require("./djangoSession"),
 };

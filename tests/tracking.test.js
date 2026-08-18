@@ -9,7 +9,7 @@ const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis, orders, orderTrucks } = require("../db/schema");
 const { eq } = require("drizzle-orm");
-const { customerRepo } = require("../repositories");
+const { customerRepo, bankAccountRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
 const PORTAL_AUTH = "/api/customer/auth";
@@ -55,6 +55,18 @@ describe("public order tracking", () => {
       })
       .returning();
     depotId = depot.id;
+
+    // placeOrder pays into the depot's own bank account (manual deposit
+    // only — no Paystack DVA), so every order-placing test depot needs one.
+    await bankAccountRepo.create({
+      bankName: "Test Bank",
+      accountName: "Track Depot Account",
+      accountNumber: `TRKACC${String(RUN).slice(-6)}`,
+      depotIds: [depotId],
+      status: "Active",
+      isDefault: true,
+    });
+
     const [product] = await db
       .insert(products)
       .values({ name: "Track PMS", sku: `TRK-PMS-${String(RUN).slice(-5)}`, category: "PMS" })

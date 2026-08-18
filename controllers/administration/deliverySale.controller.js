@@ -1,6 +1,8 @@
 const asyncHandler = require("express-async-handler");
 const { deliverySaleRepo, deliveryCustomerRepo } = require("../../repositories");
-const { generateDeliveryCustomerDva } = require("../../services/deliveryCustomerDva.service");
+// Paystack DVA auto-generation is disabled — see createDeliverySale below.
+// Re-add this import if reinstating:
+// const { generateDeliveryCustomerDva } = require("../../services/deliveryCustomerDva.service");
 
 const getDeliverySales = asyncHandler(async (req, res) => {
   const { search, customer, truck_number, date_from, date_to, page = 1, limit = 500 } = req.query;
@@ -27,22 +29,28 @@ const getDeliverySaleById = asyncHandler(async (req, res) => {
 });
 
 const createDeliverySale = asyncHandler(async (req, res) => {
-  // Auto-generate DVA for the customer on first truck assignment (non-blocking)
-  if (req.body.customer) {
-    try {
-      const customer = await deliveryCustomerRepo.findById(req.body.customer);
-      if (customer && !customer.virtualAccountNumber) {
-        const dvaResult = await generateDeliveryCustomerDva(customer);
-        if (dvaResult.success) {
-          console.log(`DVA generated for customer ${customer.name}: ${dvaResult.data.accountNumber}`);
-        } else {
-          console.warn(`DVA generation failed for customer ${customer.name}: ${dvaResult.message}`);
-        }
-      }
-    } catch (dvaErr) {
-      console.warn("DVA auto-generation error (non-blocking):", dvaErr.message);
-    }
-  }
+  // Paystack DVA auto-generation (disabled — manual deposit only): delivery
+  // customers used to get a personal DVA on first truck assignment so a bank
+  // transfer could auto-credit their wallet. Wallet funding is
+  // manual-deposit-only now (staff record deposits from the admin
+  // dashboard), so there's nothing to auto-generate. Kept for
+  // reinstatement — restore this block and the import above.
+  //
+  // if (req.body.customer) {
+  //   try {
+  //     const customer = await deliveryCustomerRepo.findById(req.body.customer);
+  //     if (customer && !customer.virtualAccountNumber) {
+  //       const dvaResult = await generateDeliveryCustomerDva(customer);
+  //       if (dvaResult.success) {
+  //         console.log(`DVA generated for customer ${customer.name}: ${dvaResult.data.accountNumber}`);
+  //       } else {
+  //         console.warn(`DVA generation failed for customer ${customer.name}: ${dvaResult.message}`);
+  //       }
+  //     }
+  //   } catch (dvaErr) {
+  //     console.warn("DVA auto-generation error (non-blocking):", dvaErr.message);
+  //   }
+  // }
 
   const sale = await deliverySaleRepo.create(req.body);
   res.status(201).json({

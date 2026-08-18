@@ -1,176 +1,178 @@
-const { eq, and, or, ilike, desc, count, gte, lte, sql } = require("drizzle-orm");
+const { eq, and, desc, count, gte, lte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { deposits, customers, staff } = require("../db/schema");
-const { scopeCondition } = require("../lib/scopeFilter");
+const { consumerOrderpaymentrecord, consumerOrder, consumerCustomer, administrationUser, customerCredits } = require("../db/schema");
+
+/**
+ * The old `deposits` table conflated two things that the live schema keeps
+ * separate — see db/schema/sman/customerCredit.js and
+ * customer.repository.js's balance functions:
+ *
+ *  - "debit" rows (money applied to a specific order) → consumer_orderpaymentrecord,
+ *    Django's real per-order payment ledger (order_id NOT NULL). THIS
+ *    repository wraps that table.
+ *  - "credit" rows (pre-order deposits, wallet top-ups) → sman.customer_credits,
+ *    which has no order yet. Use customer.repository.js's recordCreditEntry
+ *    for those, not this file.
+ *
+ * No depotId/pfiId/type/balanceAfter/remainingAmount columns live — a
+ * payment record is inherently attributed to its order's own pfi/state, and
+ * "remaining unapplied" doesn't apply to a row that's always order-scoped.
+ */
 
 const findById = async (id) => {
-  const [row] = await db.select().from(deposits).where(eq(deposits.id, id)).limit(1);
+  const [row] = await db.select().from(consumerOrderpaymentrecord).where(eq(consumerOrderpaymentrecord.id, id)).limit(1);
   return row || null;
 };
 
 const findByIdFull = async (id) => {
   const [row] = await db
     .select({
-      id: deposits.id,
-      customerId: deposits.customerId,
-      amount: deposits.amount,
-      type: deposits.type,
-      description: deposits.description,
-      reference: deposits.reference,
-      recordedBy: deposits.recordedBy,
-      balanceAfter: deposits.balanceAfter,
-      paystackDetails: deposits.paystackDetails,
-      createdAt: deposits.createdAt,
-      updatedAt: deposits.updatedAt,
-      customerName: customers.name,
-      customerPhone: customers.phone,
-      customerCompanyName: customers.companyName,
-      recorderFirstName: staff.firstName,
-      recorderSurname: staff.surname,
-      recorderEmail: staff.email,
+      ...consumerOrderpaymentrecord,
+      customerId: consumerOrder.userId,
+      customerName: consumerCustomer.firstName,
+      customerLastName: consumerCustomer.lastName,
+      customerPhone: consumerCustomer.phoneNumber,
+      customerCompanyName: consumerCustomer.companyName,
+      recorderFullName: administrationUser.fullName,
+      recorderEmail: administrationUser.email,
     })
-    .from(deposits)
-    .leftJoin(customers, eq(deposits.customerId, customers.id))
-    .leftJoin(staff, eq(deposits.recordedBy, staff.id))
-    .where(eq(deposits.id, id))
+    .from(consumerOrderpaymentrecord)
+    .leftJoin(consumerOrder, eq(consumerOrderpaymentrecord.orderId, consumerOrder.id))
+    .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+    .leftJoin(administrationUser, eq(consumerOrderpaymentrecord.createdById, administrationUser.id))
+    .where(eq(consumerOrderpaymentrecord.id, id))
     .limit(1);
   return row || null;
 };
 
 const findByReference = async (reference) => {
-  const [row] = await db
-    .select()
-    .from(deposits)
-    .where(eq(deposits.reference, reference))
-    .limit(1);
+  const [row] = await db.select().from(consumerOrderpaymentrecord).where(eq(consumerOrderpaymentrecord.transactionReference, reference)).limit(1);
   return row || null;
 };
 
-const findAll = async ({ customer, pfiId, page = 1, limit = 50, type = "credit", scopeUser } = {}) => {
+const findByOrder = async (orderId, tx = db) => {
+  return tx.select().from(consumerOrderpaymentrecord).where(eq(consumerOrderpaymentrecord.orderId, orderId)).orderBy(desc(consumerOrderpaymentrecord.createdAt));
+};
+
+const findAll = async ({ customer, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-  // depotId/pfiId are only set where a deposit is unambiguously attributable
-  // (see db/schema/deposit.js) — a deposit split across several orders via
-  // order_deposit_allocations can't be pinned to one depot/PFI, so most rows
-  // stay null and are invisible to a scoped user until attributed some other
-  // way. Known v1 gap, not a bug.
-  const scope = scopeCondition(scopeUser, { depotColumn: deposits.depotId, pfiColumn: deposits.pfiId });
-  if (scope) conditions.push(scope);
-  if (customer) conditions.push(eq(deposits.customerId, customer));
-  if (pfiId) conditions.push(eq(deposits.pfiId, pfiId));
-  if (type) conditions.push(eq(deposits.type, type));
+  if (customer) conditions.push(eq(consumerOrder.userId, customer));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select({
-        id: deposits.id,
-        customerId: deposits.customerId,
-        amount: deposits.amount,
-        type: deposits.type,
-        description: deposits.description,
-        reference: deposits.reference,
-        recordedBy: deposits.recordedBy,
-        balanceAfter: deposits.balanceAfter,
-        paystackDetails: deposits.paystackDetails,
-        createdAt: deposits.createdAt,
-        updatedAt: deposits.updatedAt,
-        customerName: customers.name,
-        customerPhone: customers.phone,
-        customerCompanyName: customers.companyName,
-        recorderFirstName: staff.firstName,
-        recorderSurname: staff.surname,
+        ...consumerOrderpaymentrecord,
+        customerId: consumerOrder.userId,
+        customerName: consumerCustomer.firstName,
+        customerLastName: consumerCustomer.lastName,
+        customerPhone: consumerCustomer.phoneNumber,
+        customerCompanyName: consumerCustomer.companyName,
+        recorderFullName: administrationUser.fullName,
       })
-      .from(deposits)
-      .leftJoin(customers, eq(deposits.customerId, customers.id))
-      .leftJoin(staff, eq(deposits.recordedBy, staff.id))
+      .from(consumerOrderpaymentrecord)
+      .leftJoin(consumerOrder, eq(consumerOrderpaymentrecord.orderId, consumerOrder.id))
+      .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+      .leftJoin(administrationUser, eq(consumerOrderpaymentrecord.createdById, administrationUser.id))
       .where(whereClause)
-      .orderBy(desc(deposits.createdAt))
+      .orderBy(desc(consumerOrderpaymentrecord.createdAt))
       .limit(limitNum)
       .offset(offset),
     db
       .select({ total: count() })
-      .from(deposits)
+      .from(consumerOrderpaymentrecord)
+      .leftJoin(consumerOrder, eq(consumerOrderpaymentrecord.orderId, consumerOrder.id))
       .where(whereClause),
   ]);
 
   return {
     deposits: rows,
-    pagination: {
-      total,
-      page: pageNum,
-      pages: Math.ceil(total / limitNum),
-    },
+    pagination: { total: Number(total), page: pageNum, pages: Math.ceil(Number(total) / limitNum) },
   };
 };
 
 /**
- * One customer's wallet ledger — both credits and debits, newest first, with an
- * optional created-at window. Powers the portal's transaction-history screen.
- * Scoped to the caller by customerId; only the columns the app renders are
- * projected (no staff recorder, no paystack payload).
+ * One customer's full money history — real per-order payments AND pre-order
+ * credit-ledger entries, merged newest-first. Two sources because the live
+ * schema keeps them in separate tables (see the file header); this is the
+ * merge the old single `deposits` table gave for free.
  */
 const findCustomerHistory = async ({ customerId, page = 1, limit = 50, dateFrom, dateTo } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
-  const offset = (pageNum - 1) * limitNum;
 
-  const conditions = [eq(deposits.customerId, customerId)];
-  if (dateFrom) conditions.push(gte(deposits.createdAt, dateFrom));
-  if (dateTo) conditions.push(lte(deposits.createdAt, dateTo));
-  const whereClause = and(...conditions);
+  const paymentConditions = [eq(consumerOrder.userId, customerId)];
+  if (dateFrom) paymentConditions.push(gte(consumerOrderpaymentrecord.createdAt, dateFrom));
+  if (dateTo) paymentConditions.push(lte(consumerOrderpaymentrecord.createdAt, dateTo));
 
-  const [rows, [{ total }]] = await Promise.all([
+  const creditConditions = [eq(customerCredits.customerId, customerId)];
+  if (dateFrom) creditConditions.push(gte(customerCredits.createdAt, dateFrom));
+  if (dateTo) creditConditions.push(lte(customerCredits.createdAt, dateTo));
+
+  const [payments, credits] = await Promise.all([
     db
       .select({
-        id: deposits.id,
-        type: deposits.type,
-        amount: deposits.amount,
-        reference: deposits.reference,
-        description: deposits.description,
-        balanceAfter: deposits.balanceAfter,
-        createdAt: deposits.createdAt,
+        id: consumerOrderpaymentrecord.id,
+        source: sql`'payment_record'`.as("source"),
+        type: sql`'debit'`.as("type"),
+        amount: consumerOrderpaymentrecord.amount,
+        reference: consumerOrderpaymentrecord.transactionReference,
+        description: consumerOrderpaymentrecord.notes,
+        orderId: consumerOrderpaymentrecord.orderId,
+        createdAt: consumerOrderpaymentrecord.createdAt,
       })
-      .from(deposits)
-      .where(whereClause)
-      .orderBy(desc(deposits.createdAt))
-      .limit(limitNum)
-      .offset(offset),
-    db.select({ total: count() }).from(deposits).where(whereClause),
+      .from(consumerOrderpaymentrecord)
+      .innerJoin(consumerOrder, eq(consumerOrderpaymentrecord.orderId, consumerOrder.id))
+      .where(and(...paymentConditions)),
+    db
+      .select({
+        id: customerCredits.id,
+        source: sql`'credit_ledger'`.as("source"),
+        type: sql`CASE WHEN ${customerCredits.amount}::numeric >= 0 THEN 'credit' ELSE 'debit' END`.as("type"),
+        amount: customerCredits.amount,
+        reference: customerCredits.reference,
+        description: customerCredits.description,
+        orderId: customerCredits.orderId,
+        createdAt: customerCredits.createdAt,
+      })
+      .from(customerCredits)
+      .where(and(...creditConditions)),
   ]);
 
+  const merged = [...payments, ...credits].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const total = merged.length;
+  const offset = (pageNum - 1) * limitNum;
+
   return {
-    rows,
-    pagination: {
-      total,
-      page: pageNum,
-      limit: limitNum,
-      pages: Math.ceil(total / limitNum),
-    },
+    rows: merged.slice(offset, offset + limitNum),
+    pagination: { total, page: pageNum, limit: limitNum, pages: Math.ceil(total / limitNum) },
   };
 };
 
 const create = async (data, tx = db) => {
-  const [row] = await tx.insert(deposits).values(data).returning();
+  const [row] = await tx.insert(consumerOrderpaymentrecord).values(data).returning();
   return row;
 };
 
 const countByCustomer = async (customerId) => {
   const [{ total }] = await db
     .select({ total: count() })
-    .from(deposits)
-    .where(eq(deposits.customerId, customerId));
-  return total;
+    .from(consumerOrderpaymentrecord)
+    .innerJoin(consumerOrder, eq(consumerOrderpaymentrecord.orderId, consumerOrder.id))
+    .where(eq(consumerOrder.userId, customerId));
+  return Number(total);
 };
 
 module.exports = {
   findById,
   findByIdFull,
   findByReference,
+  findByOrder,
   findAll,
   findCustomerHistory,
   create,

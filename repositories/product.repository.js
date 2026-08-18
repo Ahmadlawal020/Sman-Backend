@@ -1,41 +1,38 @@
-const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { products } = require("../db/schema");
+const { consumerProduct } = require("../db/schema");
 
-const findById = async (id) => {
-  const [row] = await db.select().from(products).where(eq(products.id, id)).limit(1);
-  return row || null;
-};
+/**
+ * consumer_product is Django's real product table (10 columns) — see
+ * docs/LIVE_DB_CUTOVER.md §3. Gaps from the old clean-room `products` table:
+ * no sku, category, product_type, grade_class, density, flash_point,
+ * un_number, hazard_class, or supplier — the hazmat/SKU classification
+ * fields have no live backing at all. Live adds `is_deleted` (soft delete)
+ * and `initial_stock_quantity`, which the old table didn't have.
+ */
 
-const findBySku = async (sku) => {
+const findById = async (id, { includeDeleted = false } = {}) => {
+  const conditions = [eq(consumerProduct.id, id)];
+  if (!includeDeleted) conditions.push(eq(consumerProduct.isDeleted, false));
   const [row] = await db
     .select()
-    .from(products)
-    .where(eq(products.sku, sku.toUpperCase()))
+    .from(consumerProduct)
+    .where(and(...conditions))
     .limit(1);
   return row || null;
 };
 
-const findAll = async ({ search, productType, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ search, page = 1, limit = 50, includeDeleted = false } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-
-  if (productType) {
-    conditions.push(eq(products.productType, productType));
-  }
+  if (!includeDeleted) conditions.push(eq(consumerProduct.isDeleted, false));
 
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(
-      or(
-        ilike(products.name, pattern),
-        ilike(products.sku, pattern),
-        ilike(products.category, pattern)
-      )
-    );
+    conditions.push(or(ilike(consumerProduct.name, pattern), ilike(consumerProduct.abbreviation, pattern)));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -43,63 +40,50 @@ const findAll = async ({ search, productType, page = 1, limit = 50 } = {}) => {
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(products)
+      .from(consumerProduct)
       .where(whereClause)
-      .orderBy(desc(products.createdAt))
+      .orderBy(desc(consumerProduct.createdAt))
       .limit(limitNum)
       .offset(offset),
-    db
-      .select({ total: count() })
-      .from(products)
-      .where(whereClause),
+    db.select({ total: count() }).from(consumerProduct).where(whereClause),
   ]);
 
   return {
     products: rows,
     pagination: {
-      total,
+      total: Number(total),
       page: pageNum,
-      pages: Math.ceil(total / limitNum),
+      pages: Math.ceil(Number(total) / limitNum),
     },
   };
 };
 
 const create = async (data) => {
-  const insertData = { ...data };
-  if (insertData.sku) insertData.sku = insertData.sku.toUpperCase();
-  const [row] = await db.insert(products).values(insertData).returning();
+  const [row] = await db.insert(consumerProduct).values(data).returning();
   return row;
 };
 
 const update = async (id, data) => {
-  const updateData = { ...data, updatedAt: new Date() };
-  if (updateData.sku) updateData.sku = updateData.sku.toUpperCase();
+  const [row] = await db.update(consumerProduct).set(data).where(eq(consumerProduct.id, id)).returning();
+  return row || null;
+};
+
+// Django models this as is_deleted, not a row removal — matches that instead
+// of hard-deleting a row other systems (Django, order history) still expect
+// to find by id.
+const softDelete = async (id) => {
   const [row] = await db
-    .update(products)
-    .set(updateData)
-    .where(eq(products.id, id))
+    .update(consumerProduct)
+    .set({ isDeleted: true })
+    .where(eq(consumerProduct.id, id))
     .returning();
   return row || null;
 };
 
-const deleteById = async (id) => {
-  const [row] = await db.delete(products).where(eq(products.id, id)).returning();
-  return row || null;
-};
-
-const countCategories = async () => {
-  const [{ count: total }] = await db
-    .select({ count: sql`COUNT(DISTINCT ${products.category})` })
-    .from(products);
-  return total;
-};
-
 module.exports = {
   findById,
-  findBySku,
   findAll,
   create,
   update,
-  deleteById,
-  countCategories,
+  softDelete,
 };

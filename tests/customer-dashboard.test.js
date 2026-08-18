@@ -9,7 +9,7 @@ const { eq } = require("drizzle-orm");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis, orders } = require("../db/schema");
-const { customerRepo } = require("../repositories");
+const { customerRepo, bankAccountRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
@@ -61,6 +61,17 @@ describe("customer portal — dashboard", () => {
       })
       .returning();
     depotId = depot.id;
+
+    // placeOrder pays into the depot's own bank account (manual deposit
+    // only — no Paystack DVA), so every order-placing test depot needs one.
+    await bankAccountRepo.create({
+      bankName: "Test Bank",
+      accountName: "Dash Depot Account",
+      accountNumber: `DASHACC${String(RUN).slice(-6)}`,
+      depotIds: [depotId],
+      status: "Active",
+      isDefault: true,
+    });
 
     const [product] = await db
       .insert(products)

@@ -7,7 +7,7 @@ const assert = require("node:assert/strict");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis, waSessions } = require("../db/schema");
 const { eq } = require("drizzle-orm");
-const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
+const { customerRepo, orderRepo, waMessageRepo, waSessionRepo, bankAccountRepo } = require("../repositories");
 const { normalizeInbound } = require("../whatsapp/normalize");
 const { processInbound, processSend, processEvent, performEffect } = require("../whatsapp/pipeline");
 const { INBOUND } = require("../whatsapp/constants");
@@ -60,6 +60,17 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
         establishedYear: "2020",
       })
       .returning();
+
+    // placeOrder pays into the depot's own bank account (manual deposit
+    // only — no Paystack DVA), so every order-placing test depot needs one.
+    await bankAccountRepo.create({
+      bankName: "Test Bank",
+      accountName: "Pipe Depot Account",
+      accountNumber: `PIPACC${String(RUN).slice(-6)}`,
+      depotIds: [depot.id],
+      status: "Active",
+      isDefault: true,
+    });
 
     const [product] = await db
       .insert(products)
