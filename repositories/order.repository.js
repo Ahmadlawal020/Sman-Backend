@@ -1,261 +1,142 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const {
-  orders, customers, depots, products, pfis, orderTrucks,
-  deposits, orderDepositAllocations, staff,
-} = require("../db/schema");
+const { consumerOrder, consumerOrderproduct, consumerCustomer, consumerProduct, consumerPfi, consumerStates, customerCredits, walletHolds } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
-const { scopeCondition } = require("../lib/scopeFilter");
+
+/**
+ * consumer_order is Django's real order table (74 columns) — see
+ * docs/LIVE_DB_CUTOVER.md §3 and soroman_backend-2/consumer/models.py:1230
+ * (the actual Order model — read directly, not inferred). Structural
+ * differences from the old clean-room `orders` table this replaces:
+ *
+ *  - customerId is `user_id` (FK to consumer_customer despite the name —
+ *    confirmed from the live FK constraint, not a guess).
+ *  - No depotId column anywhere on the order. A depot isn't tracked
+ *    directly — only pfiId, and a PFI's own locationId points at a STATE,
+ *    not a depot. Order.state (below) is the order's own direct state_id FK,
+ *    independent of the PFI's. Any caller filtering "orders for this depot"
+ *    needs rethinking around state/PFI, not a depotId condition.
+ *  - Line items live in consumer_orderproduct (order_id, product_id,
+ *    quantity, price) — but every order in production has exactly one row
+ *    there, exactly matching the order's own top-level quantity/total_price
+ *    (verified against live data). create()/update() below write both,
+ *    kept in sync, rather than switching the read path to a join.
+ *  - deliveryType maps to `release_type` (delivery|pickup), not order_type
+ *    (order_type is regular|in_house — a different, new axis).
+ *  - idempotencyKey maps to `order_fingerprint` — same purpose (Django's own
+ *    docstring: "SHA-256 fingerprint... checked within a short window to
+ *    block accidental double-submits"), different column name.
+ *  - No cancelledAt/cancelledBy/cancellationReason columns — Django expresses
+ *    cancellation as status='canceled' (OrderStatus.CANCELED), not a separate
+ *    timestamp. No expiredAt column either, and no "expired" status choice
+ *    exists in OrderStatus at all — the expiry sweep (findStalePending) has
+ *    nowhere on the live schema to record that an order lapsed. Flagged for
+ *    the gap report, not invented here.
+ *  - virtualAccountNumber/Bank/Name (customer's DVA) have no order-level
+ *    equivalent — paidToAccountName/Number/BankName exist instead, but
+ *    they're where WE tell the customer to pay, not the customer's own DVA.
+ *  - customerBalance is computed (sman.customer_credits - active
+ *    sman.wallet_holds), same as customer.repository.js's getBalance —
+ *    see the BALANCE_SQL fragment below, inlined so findAll/findPayableOrders
+ *    stay single queries instead of N+1ing a JS balance check per row.
+ */
+
+// Correlated subquery mirroring customer.repository.js's getBalance() math,
+// for use inside a SELECT/WHERE against orders joined to consumer_customer.
+const BALANCE_SQL = sql`(
+  COALESCE((SELECT SUM(${customerCredits.amount}::numeric) FROM ${customerCredits} WHERE ${customerCredits.customerId} = ${consumerCustomer.id}), 0)
+  -
+  COALESCE((SELECT SUM(${walletHolds.amount}::numeric) FROM ${walletHolds} WHERE ${walletHolds.customerId} = ${consumerCustomer.id} AND ${walletHolds.status} = 'active'), 0)
+)`;
 
 const formatOrderRow = (row) => {
   if (!row) return null;
   const company = row.companyName || row.customerCompanyName || "";
   const ref = generateOrderReference(company, row.id);
-  return {
-    ...row,
-    orderNumber: ref,
-    reference: ref,
-  };
+  return { ...row, orderNumber: ref, reference: ref };
 };
 
 const findById = async (id, tx = db) => {
-  const [row] = await tx.select().from(orders).where(eq(orders.id, id)).limit(1);
+  const [row] = await tx.select().from(consumerOrder).where(eq(consumerOrder.id, id)).limit(1);
   return formatOrderRow(row);
 };
 
-/**
- * Row-lock an order for the caller's transaction. The gate flow uses this to
- * serialise concurrent truck actions on one order: two trucks gating in (or
- * out) at the same moment each take this lock in turn, so exactly one observes
- * the "first in" / "last out" edge and drives the Released→Loading / Loading→
- * Completed transition — the other sees the already-moved status and skips it.
- */
+/** Row-lock an order for the caller's transaction — see the old file's note on the gate flow; unchanged in intent. */
 const lockById = async (id, tx = db) => {
-  const [row] = await tx.select().from(orders).where(eq(orders.id, id)).for("update").limit(1);
+  const [row] = await tx.select().from(consumerOrder).where(eq(consumerOrder.id, id)).for("update").limit(1);
   return formatOrderRow(row);
 };
 
-/**
- * The idempotent-replay lookup: a caller retrying with the same key (e.g. a
- * redelivered WhatsApp webhook re-running CONFIRM) finds the order the first
- * attempt created.
- */
 const findByIdempotencyKey = async (idempotencyKey, tx = db) => {
-  const [row] = await tx
-    .select()
-    .from(orders)
-    .where(eq(orders.idempotencyKey, idempotencyKey))
-    .limit(1);
+  const [row] = await tx.select().from(consumerOrder).where(eq(consumerOrder.orderFingerprint, idempotencyKey)).limit(1);
   return formatOrderRow(row);
 };
 
+/** No stored order_number live — every reference resolves through the id. */
 const findByNumber = async (orderNumber) => {
   const normalized = String(orderNumber || "").trim().toUpperCase();
   if (!normalized) return null;
-
-  // Resolves "SO600" and the legacy "SO/600" alike — see parseOrderReference.
   const possibleId = parseOrderReference(normalized);
-
-  let row = null;
-  if (possibleId) {
-    [row] = await db.select().from(orders).where(eq(orders.id, possibleId)).limit(1);
-  }
-  if (!row) {
-    [row] = await db.select().from(orders).where(eq(orders.orderNumber, normalized)).limit(1);
-  }
+  if (!possibleId) return null;
+  const [row] = await db.select().from(consumerOrder).where(eq(consumerOrder.id, possibleId)).limit(1);
   return formatOrderRow(row);
 };
 
-// The joined columns a full order detail carries. Includes the per-stage
-// lifecycle timestamps and cancellation reason so callers can render the
-// order's own timeline without the public tracking endpoint — those columns
-// (order.js) are the source of truth for tracking, reused here behind auth.
 const FULL_ORDER_COLUMNS = {
-  id: orders.id,
-  orderNumber: orders.orderNumber,
-  customerId: orders.customerId,
-  state: orders.state,
-  depotId: orders.depotId,
-  productId: orders.productId,
-  quantity: orders.quantity,
-  price: orders.price,
-  totalAmount: orders.totalAmount,
-  deliveryType: orders.deliveryType,
-  deliveryAddress: orders.deliveryAddress,
-  companyName: orders.companyName,
-  pfiId: orders.pfiId,
-  virtualAccountNumber: orders.virtualAccountNumber,
-  virtualAccountBank: orders.virtualAccountBank,
-  virtualAccountName: orders.virtualAccountName,
-  paymentStatus: orders.paymentStatus,
-  status: orders.status,
-  // Per-stage lifecycle stamps — one timestamp per stage, reached at most once.
-  paymentConfirmedAt: orders.paymentConfirmedAt,
-  releasedAt: orders.releasedAt,
-  loadingStartedAt: orders.loadingStartedAt,
-  completedAt: orders.completedAt,
-  cancelledAt: orders.cancelledAt,
-  cancellationReason: orders.cancellationReason,
-  expiredAt: orders.expiredAt,
-  createdAt: orders.createdAt,
-  updatedAt: orders.updatedAt,
-  // Customer fields
-  customerName: customers.name,
-  customerEmail: customers.email,
-  customerPhone: customers.phone,
-  customerCompanyName: customers.companyName,
-  customerBalance: customers.balance,
-  customerVirtualAccountName: customers.virtualAccountName,
-  // Depot fields
-  depotName: depots.name,
-  depotCode: depots.code,
-  depotAddress: depots.address,
-  // Product fields
-  productName: products.name,
-  productSku: products.sku,
-  productUnit: products.unit,
-  productCategory: products.category,
-  // PFI fields
-  pfiNumber: pfis.pfiNumber,
+  ...consumerOrder,
+  customerName: consumerCustomer.firstName,
+  customerLastName: consumerCustomer.lastName,
+  customerEmail: consumerCustomer.email,
+  customerPhone: consumerCustomer.phoneNumber,
+  customerCompanyName: consumerCustomer.companyName,
+  customerBalance: BALANCE_SQL,
+  productName: consumerProduct.name,
+  productUnit: consumerProduct.unit,
+  pfiNumber: consumerPfi.pfiNumber,
+  stateName: consumerStates.name,
 };
 
 const fullOrderQuery = (tx = db) =>
   tx
     .select(FULL_ORDER_COLUMNS)
-    .from(orders)
-    .leftJoin(customers, eq(orders.customerId, customers.id))
-    .leftJoin(depots, eq(orders.depotId, depots.id))
-    .leftJoin(products, eq(orders.productId, products.id))
-    .leftJoin(pfis, eq(orders.pfiId, pfis.id));
+    .from(consumerOrder)
+    .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+    .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, consumerOrder.id))
+    .leftJoin(consumerProduct, eq(consumerOrderproduct.productId, consumerProduct.id))
+    .leftJoin(consumerPfi, eq(consumerOrder.pfiId, consumerPfi.id))
+    .leftJoin(consumerStates, eq(consumerOrder.stateId, consumerStates.id));
 
 const findByIdFull = async (id, tx = db) => {
-  const [row] = await fullOrderQuery(tx).where(eq(orders.id, id)).limit(1);
+  const [row] = await fullOrderQuery(tx).where(eq(consumerOrder.id, id)).limit(1);
   return formatOrderRow(row);
 };
 
-/**
- * The same full detail keyed by order number rather than numeric id. Serves
- * the customer portal's by-reference lookup: the reference (order number) is
- * the id every screen and SMS shows, so the customer can open an order by the
- * value they hold without first resolving it to a database id. Normalised the
- * same way tracking does — trimmed and upper-cased.
- */
 const findByNumberFull = async (orderNumber, tx = db) => {
   const normalized = String(orderNumber || "").trim().toUpperCase();
   if (!normalized) return null;
-
   const possibleId = parseOrderReference(normalized);
-
-  let row = null;
-  if (possibleId) {
-    [row] = await fullOrderQuery(tx).where(eq(orders.id, possibleId)).limit(1);
-  }
-  if (!row) {
-    [row] = await fullOrderQuery(tx)
-      .where(eq(orders.orderNumber, normalized))
-      .limit(1);
-  }
+  if (!possibleId) return null;
+  const [row] = await fullOrderQuery(tx).where(eq(consumerOrder.id, possibleId)).limit(1);
   return formatOrderRow(row);
 };
 
-/**
- * The truck loads on an order, oldest ordinal first. Carries the plate, the
- * per-load quantity, movement status and gate stamps, plus driver contact —
- * safe here because this is the order owner's own view behind auth (unlike the
- * public tracking feed, which withholds driver details).
- */
-const findTrucksByOrderId = async (orderId, tx = db) => {
-  return tx
-    .select({
-      truckIndex: orderTrucks.truckIndex,
-      truckNumber: orderTrucks.truckNumber,
-      quantity: orderTrucks.quantity,
-      status: orderTrucks.status,
-      driverName: orderTrucks.driverName,
-      driverPhone: orderTrucks.driverPhone,
-      securityEnteredAt: orderTrucks.securityEnteredAt,
-      loadedAt: orderTrucks.loadedAt,
-      securityExitedAt: orderTrucks.securityExitedAt,
-    })
-    .from(orderTrucks)
-    .where(eq(orderTrucks.orderId, orderId))
-    .orderBy(asc(orderTrucks.truckIndex));
-};
-
-const findAll = async ({
-  search,
-  status,
-  customer,
-  depot,
-  dateFrom,
-  dateTo,
-  /** Same rule findPayableOrders uses — see the condition below. */
-  payable,
-  /** The authenticated caller, for location/PFI scoping. Omitted = unfiltered (internal callers). */
-  scopeUser,
-  page = 1,
-  limit = 50,
-} = {}) => {
+const findAll = async ({ search, status, customer, dateFrom, dateTo, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
 
-  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
-  if (scope) conditions.push(scope);
-
   if (search) {
-    // A reference-shaped search ("SO600", or the legacy "SO/600") also matches
-    // on id, since the reference is computed and not a column to search.
     const possibleId = parseOrderReference(search);
-    if (possibleId) {
-      conditions.push(or(ilike(orders.orderNumber, `%${search}%`), eq(orders.id, possibleId)));
-    } else {
-      conditions.push(ilike(orders.orderNumber, `%${search}%`));
-    }
+    if (possibleId) conditions.push(eq(consumerOrder.id, possibleId));
   }
-
-  if (status) {
-    conditions.push(eq(orders.status, status));
-  }
-
-  if (customer) {
-    conditions.push(eq(orders.customerId, Number(customer)));
-  }
-
-  if (depot) {
-    conditions.push(eq(orders.depotId, Number(depot)));
-  }
-
-  if (dateFrom) {
-    conditions.push(gte(orders.createdAt, new Date(dateFrom)));
-  }
-
-  // "Payable" is not a status — it is an unpaid pending order whose customer
-  // already holds enough wallet balance to cover it. Expressed here so the
-  // main list can show them alongside everything else rather than needing a
-  // separate page.
-  if (payable === true || payable === "true" || payable === "1") {
-    conditions.push(eq(orders.paymentStatus, "Unpaid"));
-    conditions.push(eq(orders.status, "Pending"));
-    // A correlated subquery rather than customers.balance directly: the
-    // count query alongside this one selects from orders with no join, so a
-    // bare column reference breaks it.
-    conditions.push(
-      sql`${orders.totalAmount} <= (SELECT c.balance FROM customers c WHERE c.id = ${orders.customerId})`
-    );
-  }
-
+  if (status) conditions.push(eq(consumerOrder.status, status));
+  if (customer) conditions.push(eq(consumerOrder.userId, Number(customer)));
+  if (dateFrom) conditions.push(gte(consumerOrder.createdAt, new Date(dateFrom).toISOString()));
   if (dateTo) {
-    // Inclusive of the whole day: a bare "2026-08-06" parses as that date's
-    // UTC midnight, so comparing createdAt against it as-is excluded every
-    // order placed later that same day — a caller asking for "today" got
-    // nothing. Built as an explicit UTC string, same as dateFrom above, so
-    // the two boundaries don't drift against each other by the server's
-    // local timezone.
     const end = /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? `${dateTo}T23:59:59.999Z` : dateTo;
-    conditions.push(lte(orders.createdAt, new Date(end)));
+    conditions.push(lte(consumerOrder.createdAt, new Date(end).toISOString()));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -263,323 +144,163 @@ const findAll = async ({
   const [rows, [{ total }]] = await Promise.all([
     db
       .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        state: orders.state,
-        depotId: orders.depotId,
-        productId: orders.productId,
-        quantity: orders.quantity,
-        price: orders.price,
-        totalAmount: orders.totalAmount,
-        deliveryType: orders.deliveryType,
-        deliveryAddress: orders.deliveryAddress,
-        companyName: orders.companyName,
-        pfiId: orders.pfiId,
-        virtualAccountNumber: orders.virtualAccountNumber,
-        virtualAccountBank: orders.virtualAccountBank,
-        virtualAccountName: orders.virtualAccountName,
-        paymentStatus: orders.paymentStatus,
-        status: orders.status,
-        expiredAt: orders.expiredAt,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customerName: customers.name,
-        customerCompanyName: customers.companyName,
-        customerEmail: customers.email,
-        customerPhone: customers.phone,
-        customerBalance: customers.balance,
-        depotName: depots.name,
-        depotCode: depots.code,
-        productName: products.name,
-        productSku: products.sku,
-        productCategory: products.category,
-        productUnit: products.unit,
-        pfiNumber: pfis.pfiNumber,
+        id: consumerOrder.id,
+        quantity: consumerOrder.quantity,
+        totalPrice: consumerOrder.totalPrice,
+        status: consumerOrder.status,
+        releaseStatus: consumerOrder.releaseStatus,
+        releaseType: consumerOrder.releaseType,
+        orderType: consumerOrder.orderType,
+        pfiId: consumerOrder.pfiId,
+        stateId: consumerOrder.stateId,
+        createdAt: consumerOrder.createdAt,
+        updatedAt: consumerOrder.updatedAt,
+        customerName: consumerCustomer.firstName,
+        customerLastName: consumerCustomer.lastName,
+        customerCompanyName: consumerCustomer.companyName,
+        customerPhone: consumerCustomer.phoneNumber,
+        pfiNumber: consumerPfi.pfiNumber,
+        stateName: consumerStates.name,
       })
-      .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(depots, eq(orders.depotId, depots.id))
-      .leftJoin(products, eq(orders.productId, products.id))
-      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
+      .from(consumerOrder)
+      .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+      .leftJoin(consumerPfi, eq(consumerOrder.pfiId, consumerPfi.id))
+      .leftJoin(consumerStates, eq(consumerOrder.stateId, consumerStates.id))
       .where(whereClause)
-      .orderBy(desc(orders.createdAt))
+      .orderBy(desc(consumerOrder.createdAt))
       .limit(limitNum)
       .offset(offset),
-    db
-      .select({ total: count() })
-      .from(orders)
-      .where(whereClause),
+    db.select({ total: count() }).from(consumerOrder).where(whereClause),
   ]);
 
   return {
     orders: rows.map(formatOrderRow),
-    pagination: {
-      total,
-      page: pageNum,
-      limit: limitNum,
-      pages: Math.ceil(total / limitNum),
-    },
+    pagination: { total: Number(total), page: pageNum, limit: limitNum, pages: Math.ceil(Number(total) / limitNum) },
   };
 };
 
 /**
- * Every confirmed payment, order by order, with exactly where the money for
- * each one is understood to have come from.
- *
- * `funding` is built from a second, batched query rather than a join on the
- * main select — a LEFT JOIN against order_deposit_allocations would multiply
- * order rows by however many deposits funded them, breaking pagination counts.
- * An order with zero funding rows genuinely predates the allocation ledger
- * (see wallet.service.js) — that's surfaced as fundingTracked: false, not an
- * error.
+ * Creates the order row AND its single consumer_orderproduct line item in
+ * one call, keeping the two in sync per the note at the top of this file.
+ * `data` takes the same product/quantity/price fields the old orders table
+ * did; they're split between the two live tables internally.
  */
-const findFinanceReport = async ({
-  search,
-  paymentStatus = "Paid",
-  dateFrom,
-  dateTo,
-  scopeUser,
-  page = 1,
-  limit = 50,
-} = {}) => {
-  const pageNum = Math.max(1, parseInt(page));
-  const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
-  const offset = (pageNum - 1) * limitNum;
-
-  const conditions = [];
-  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
-  if (scope) conditions.push(scope);
-  if (paymentStatus && paymentStatus !== "all") {
-    conditions.push(eq(orders.paymentStatus, paymentStatus));
-  }
-  if (search) {
-    const possibleId = parseOrderReference(search);
-    const term = `%${search}%`;
-    conditions.push(
-      possibleId
-        ? or(ilike(orders.orderNumber, term), eq(orders.id, possibleId), ilike(customers.name, term), ilike(customers.phone, term))
-        : or(ilike(orders.orderNumber, term), ilike(customers.name, term), ilike(customers.phone, term))
-    );
-  }
-  if (dateFrom) conditions.push(gte(orders.paymentConfirmedAt, new Date(dateFrom)));
-  if (dateTo) conditions.push(lte(orders.paymentConfirmedAt, new Date(dateTo)));
-
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const columns = {
-    ...FULL_ORDER_COLUMNS,
-    customerVirtualAccountNumber: customers.virtualAccountNumber,
-    customerVirtualAccountBank: customers.virtualAccountBank,
-  };
-
-  const [rows, [{ total, totalAmount }], [{ trackedCount }]] = await Promise.all([
-    db
-      .select(columns)
-      .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(depots, eq(orders.depotId, depots.id))
-      .leftJoin(products, eq(orders.productId, products.id))
-      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
-      .where(whereClause)
-      .orderBy(asc(orders.paymentConfirmedAt), asc(orders.id))
-      .limit(limitNum)
-      .offset(offset),
-    // Independent of pagination, over the same filtered set — so the stat
-    // cards can never disagree with the rows a filter/search actually shows.
-    db
-      .select({ total: count(), totalAmount: sql`COALESCE(SUM(${orders.totalAmount}), 0)` })
-      .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .where(whereClause),
-    db
-      .select({ trackedCount: sql`COUNT(DISTINCT ${orders.id})` })
-      .from(orders)
-      .innerJoin(orderDepositAllocations, eq(orders.id, orderDepositAllocations.orderId))
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .where(whereClause),
-  ]);
-
-  const orderIds = rows.map((r) => r.id);
-  const funding = orderIds.length
-    ? await db
-        .select({
-          orderId: orderDepositAllocations.orderId,
-          depositId: orderDepositAllocations.depositId,
-          amount: orderDepositAllocations.amount,
-          depositReference: deposits.reference,
-          depositCreatedAt: deposits.createdAt,
-          paystackDetails: deposits.paystackDetails,
-          recorderFirstName: staff.firstName,
-          recorderSurname: staff.surname,
-        })
-        .from(orderDepositAllocations)
-        .innerJoin(deposits, eq(orderDepositAllocations.depositId, deposits.id))
-        .leftJoin(staff, eq(deposits.recordedBy, staff.id))
-        .where(inArray(orderDepositAllocations.orderId, orderIds))
-        .orderBy(asc(orderDepositAllocations.createdAt))
-    : [];
-
-  const fundingByOrder = new Map();
-  for (const f of funding) {
-    if (!fundingByOrder.has(f.orderId)) fundingByOrder.set(f.orderId, []);
-    fundingByOrder.get(f.orderId).push(f);
-  }
-
-  const decorated = rows.map((row) => {
-    const orderFunding = fundingByOrder.get(row.id) || [];
-    const allocated = orderFunding.reduce((sum, f) => sum + Number(f.amount || 0), 0);
-    const fundingTracked = orderFunding.length > 0;
-    return {
-      ...row,
-      funding: orderFunding,
-      fundingTracked,
-      unattributedAmount: fundingTracked ? Math.max(0, Number(row.totalAmount || 0) - allocated) : 0,
-    };
-  });
-
-  return {
-    orders: decorated.map(formatOrderRow),
-    totals: {
-      count: total,
-      totalAmount: Number(totalAmount),
-      trackedCount: Number(trackedCount),
-      notTrackedCount: total - Number(trackedCount),
-    },
-    pagination: {
-      total,
-      page: pageNum,
-      limit: limitNum,
-      pages: Math.ceil(total / limitNum),
-    },
-  };
-};
-
 const create = async (data, tx = db) => {
-  const [row] = await tx.insert(orders).values(data).returning();
+  const { productId, quantity, price, ...orderData } = data;
+  const totalPrice = orderData.totalPrice ?? (quantity != null && price != null ? Number(quantity) * Number(price) : undefined);
+
+  const [row] = await tx
+    .insert(consumerOrder)
+    .values({ ...orderData, quantity, totalPrice: totalPrice != null ? String(totalPrice) : undefined })
+    .returning();
+
+  if (productId != null) {
+    await tx.insert(consumerOrderproduct).values({
+      orderId: row.id,
+      productId,
+      quantity,
+      price: String(price ?? 0),
+    });
+  }
+
   return formatOrderRow(row);
 };
 
 const update = async (id, data, tx = db) => {
-  const [row] = await tx
-    .update(orders)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(orders.id, id))
-    .returning();
+  const { productId, price, ...orderData } = data;
+  const [row] = await tx.update(consumerOrder).set(orderData).where(eq(consumerOrder.id, id)).returning();
+
+  if (productId != null || price != null) {
+    const setData = {};
+    if (productId != null) setData.productId = productId;
+    if (price != null) setData.price = String(price);
+    if (orderData.quantity != null) setData.quantity = orderData.quantity;
+    await tx.update(consumerOrderproduct).set(setData).where(eq(consumerOrderproduct.orderId, id));
+  }
+
   return formatOrderRow(row);
 };
 
 const findUnpaidByCustomer = async (customerId) => {
-  // Pending only: a cancelled order must never be auto-paid, and a completed
-  // one can't legally be unpaid.
   const rows = await db
     .select()
-    .from(orders)
-    .where(
-      and(
-        eq(orders.customerId, customerId),
-        eq(orders.paymentStatus, "Unpaid"),
-        eq(orders.status, "Pending")
-      )
-    )
-    .orderBy(asc(orders.createdAt));
+    .from(consumerOrder)
+    .where(and(eq(consumerOrder.userId, customerId), eq(consumerOrder.status, "pending")))
+    .orderBy(asc(consumerOrder.createdAt));
   return rows.map(formatOrderRow);
 };
 
-// Everything before Completed/Cancelled — what a customer can still track.
-const OPEN_STATUSES = ["Pending", "Paid", "Released", "Loading"];
+const OPEN_STATUSES = ["pending", "paid", "released", "loaded"];
 
-/**
- * The customer's in-flight orders with the display names joined in, newest
- * first. Capped for the WhatsApp list (9 rows + reserve); the portal is the
- * home of unbounded history.
- */
 const findOpenByCustomer = async (customerId, limit = 9) => {
   const rows = await db
     .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      companyName: orders.companyName,
-      customerCompanyName: customers.companyName,
-      status: orders.status,
-      quantity: orders.quantity,
-      totalAmount: orders.totalAmount,
-      deliveryType: orders.deliveryType,
-      virtualAccountBank: orders.virtualAccountBank,
-      virtualAccountNumber: orders.virtualAccountNumber,
-      productName: products.name,
-      depotName: depots.name,
+      id: consumerOrder.id,
+      status: consumerOrder.status,
+      quantity: consumerOrder.quantity,
+      totalPrice: consumerOrder.totalPrice,
+      releaseType: consumerOrder.releaseType,
+      paidToBankName: consumerOrder.paidToBankName,
+      paidToAccountNumber: consumerOrder.paidToAccountNumber,
+      productName: consumerProduct.name,
+      stateName: consumerStates.name,
     })
-    .from(orders)
-    .leftJoin(customers, eq(orders.customerId, customers.id))
-    .leftJoin(depots, eq(orders.depotId, depots.id))
-    .leftJoin(products, eq(orders.productId, products.id))
-    .where(and(eq(orders.customerId, customerId), inArray(orders.status, OPEN_STATUSES)))
-    .orderBy(desc(orders.createdAt))
+    .from(consumerOrder)
+    .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, consumerOrder.id))
+    .leftJoin(consumerProduct, eq(consumerOrderproduct.productId, consumerProduct.id))
+    .leftJoin(consumerStates, eq(consumerOrder.stateId, consumerStates.id))
+    .where(and(eq(consumerOrder.userId, customerId), inArray(consumerOrder.status, OPEN_STATUSES)))
+    .orderBy(desc(consumerOrder.createdAt))
     .limit(limit);
   return rows.map(formatOrderRow);
 };
 
 const countByPfi = async (pfiId) => {
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(orders)
-    .where(eq(orders.pfiId, pfiId));
-  return total;
+  const [{ total }] = await db.select({ total: count() }).from(consumerOrder).where(eq(consumerOrder.pfiId, pfiId));
+  return Number(total);
 };
 
-const findPayableOrders = async (scopeUser) => {
-  const conditions = [
-    eq(orders.paymentStatus, "Unpaid"),
-    eq(orders.status, "Pending"),
-    sql`${customers.balance} >= ${orders.totalAmount}`,
-  ];
-  const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
-  if (scope) conditions.push(scope);
-
+/**
+ * "Payable": unpaid pending order whose customer already holds enough
+ * credit-ledger balance to cover it — same definition as before, computed
+ * balance instead of a column.
+ */
+const findPayableOrders = async () => {
   const rows = await db
     .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      customerId: orders.customerId,
-      customerName: customers.name,
-      companyName: orders.companyName,
-      customerCompanyName: customers.companyName,
-      customerBalance: customers.balance,
-      status: orders.status,
-      paymentStatus: orders.paymentStatus,
-      quantity: orders.quantity,
-      totalAmount: orders.totalAmount,
-      deliveryType: orders.deliveryType,
-      createdAt: orders.createdAt,
-      depotName: depots.name,
-      productName: products.name,
+      id: consumerOrder.id,
+      userId: consumerOrder.userId,
+      customerName: consumerCustomer.firstName,
+      customerLastName: consumerCustomer.lastName,
+      customerCompanyName: consumerCustomer.companyName,
+      customerBalance: BALANCE_SQL,
+      status: consumerOrder.status,
+      quantity: consumerOrder.quantity,
+      totalPrice: consumerOrder.totalPrice,
+      releaseType: consumerOrder.releaseType,
+      createdAt: consumerOrder.createdAt,
     })
-    .from(orders)
-    .innerJoin(customers, eq(orders.customerId, customers.id))
-    .leftJoin(depots, eq(orders.depotId, depots.id))
-    .leftJoin(products, eq(orders.productId, products.id))
-    .where(and(...conditions))
-    .orderBy(asc(orders.createdAt));
+    .from(consumerOrder)
+    .innerJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+    .where(and(eq(consumerOrder.status, "pending"), sql`${BALANCE_SQL} >= ${consumerOrder.totalPrice}::numeric`))
+    .orderBy(asc(consumerOrder.createdAt));
   return rows.map(formatOrderRow);
 };
 
 /**
- * Pending, unpaid orders created on or before `cutoff` — the expiry sweep's
- * work list. Oldest first, so the log reads in the order they lapsed.
+ * Pending orders created on or before `cutoff` — the expiry sweep's work
+ * list. NOTE: consumer_order has no expiredAt column and OrderStatus has no
+ * "expired" choice, so there is nowhere live to record that a sweep lapsed
+ * one — this returns the candidates only. What the sweep DOES with them
+ * needs a decision (see the Phase 4 gap report), not a silent status write
+ * to a value Django doesn't define.
  */
 const findStalePending = async (cutoff) => {
   return db
-    .select({ id: orders.id, orderNumber: orders.orderNumber, createdAt: orders.createdAt })
-    .from(orders)
-    .where(
-      and(
-        eq(orders.status, "Pending"),
-        eq(orders.paymentStatus, "Unpaid"),
-        lte(orders.createdAt, cutoff)
-      )
-    )
-    .orderBy(asc(orders.createdAt));
+    .select({ id: consumerOrder.id, createdAt: consumerOrder.createdAt })
+    .from(consumerOrder)
+    .where(and(eq(consumerOrder.status, "pending"), lte(consumerOrder.createdAt, cutoff.toISOString ? cutoff.toISOString() : cutoff)))
+    .orderBy(asc(consumerOrder.createdAt));
 };
 
 module.exports = {
@@ -589,9 +310,7 @@ module.exports = {
   findByIdempotencyKey,
   findByIdFull,
   findByNumberFull,
-  findTrucksByOrderId,
   findAll,
-  findFinanceReport,
   create,
   update,
   findUnpaidByCustomer,

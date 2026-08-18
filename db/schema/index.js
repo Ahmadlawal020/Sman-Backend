@@ -1,4 +1,7 @@
 module.exports = {
+  // Tables with no live counterpart in soroman_db — a separate `sman`
+  // Postgres schema this app owns (docs/LIVE_DB_CUTOVER.md §4).
+  ...require("./sman"),
   ...require("./administrationCategory"),
   ...require("./administrationConfirmrelease"),
   ...require("./administrationDailyreportapproval"),

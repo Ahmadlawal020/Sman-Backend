@@ -1,56 +1,74 @@
 const { eq, and, or, ilike, desc, asc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
-  depots,
+  consumerDepots,
+  depotExtras,
   depotStaff,
   depotProductCapacities,
-  depotProductPrices,
   depotPriceHistory,
-  products,
-  staff,
+  consumerProduct,
+  consumerProductprice,
+  administrationUser,
 } = require("../db/schema");
-const { scopeCondition } = require("../lib/scopeFilter");
+
+/**
+ * consumer_depots is Django's real depot table — just id/name/location, see
+ * docs/LIVE_DB_CUTOVER.md §3. Everything else the old `depots` table had
+ * (code, address, capacity, status, Paystack subaccount fields) lives in
+ * sman.depot_extras, 1:1 keyed to the live depot — findById/findAll below
+ * join it in automatically.
+ *
+ * Product PRICING is a bigger mismatch than a missing column: Django prices
+ * (and tracks stock for) a product per STATE via consumer_productprice
+ * (unique on product_id+state_id), not per depot — consumer_depots has no
+ * state/location FK at all, so there is no live per-depot price. The old
+ * getProductPrices(depotId)/upsertProductPrice(depotId, ...) API is dropped;
+ * the state-scoped replacements are below. Product CAPACITY (how much of a
+ * product a depot can physically hold) is unrelated to price and still maps
+ * cleanly to sman.depot_product_capacities.
+ */
+
+const withExtras = (row) =>
+  row && {
+    ...row.consumer_depots,
+    ...row.depot_extras,
+    id: row.consumer_depots.id, // depotExtras.depotId would otherwise win the spread
+  };
 
 const findById = async (id, tx = db) => {
-  const [row] = await tx.select().from(depots).where(eq(depots.id, id)).limit(1);
-  return row || null;
+  const [row] = await tx
+    .select()
+    .from(consumerDepots)
+    .leftJoin(depotExtras, eq(depotExtras.depotId, consumerDepots.id))
+    .where(eq(consumerDepots.id, id))
+    .limit(1);
+  return withExtras(row) || null;
 };
 
 const findByCode = async (code) => {
   const [row] = await db
     .select()
-    .from(depots)
-    .where(eq(depots.code, code))
+    .from(consumerDepots)
+    .innerJoin(depotExtras, eq(depotExtras.depotId, consumerDepots.id))
+    .where(eq(depotExtras.code, code))
     .limit(1);
-  return row || null;
+  return withExtras(row) || null;
 };
 
-const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {}) => {
+const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
 
-  // A location-scoped user only sees the depots they're assigned to — same
-  // fail-closed rule already applied to /pfis.
-  const scope = scopeCondition(scopeUser, { depotColumn: depots.id });
-  if (scope) conditions.push(scope);
-
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(
-      or(
-        ilike(depots.name, pattern),
-        ilike(depots.code, pattern),
-        ilike(depots.city, pattern),
-        ilike(depots.state, pattern)
-      )
-    );
+    conditions.push(or(ilike(consumerDepots.name, pattern), ilike(consumerDepots.location, pattern)));
   }
 
   if (status && status !== "all") {
-    conditions.push(eq(depots.status, status));
+    conditions.push(eq(depotExtras.status, status));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -58,47 +76,66 @@ const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {})
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(depots)
+      .from(consumerDepots)
+      .leftJoin(depotExtras, eq(depotExtras.depotId, consumerDepots.id))
       .where(whereClause)
-      // createdAt alone ties for depots seeded/created at the same instant,
-      // and Postgres doesn't preserve tie order across queries — especially
-      // after an UPDATE rewrites a row. id is a strictly increasing tiebreaker
-      // that keeps the list order stable regardless of what gets edited.
-      .orderBy(desc(depots.createdAt), asc(depots.id))
+      .orderBy(desc(consumerDepots.id), asc(consumerDepots.id))
       .limit(limitNum)
       .offset(offset),
     db
       .select({ total: count() })
-      .from(depots)
+      .from(consumerDepots)
+      .leftJoin(depotExtras, eq(depotExtras.depotId, consumerDepots.id))
       .where(whereClause),
   ]);
 
   return {
-    depots: rows,
+    depots: rows.map(withExtras),
     pagination: {
-      total,
+      total: Number(total),
       page: pageNum,
-      pages: Math.ceil(total / limitNum),
+      pages: Math.ceil(Number(total) / limitNum),
     },
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(depots).values(data).returning();
-  return row;
+const create = async (data, tx = db) => {
+  const { code, address, city, state, country, postcode, maxCapacity, status, establishedYear, ...liveData } = data;
+  const [depotRow] = await tx.insert(consumerDepots).values(liveData).returning();
+  const [extrasRow] = await tx
+    .insert(depotExtras)
+    .values({ depotId: depotRow.id, code, address, city, state, country, postcode, maxCapacity, status, establishedYear })
+    .returning();
+  return { ...depotRow, ...extrasRow, id: depotRow.id };
 };
 
-const update = async (id, data) => {
-  const [row] = await db
-    .update(depots)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(depots.id, id))
-    .returning();
-  return row || null;
+const update = async (id, data, tx = db) => {
+  const { name, location, ...extrasData } = data;
+  const liveData = {};
+  if (name !== undefined) liveData.name = name;
+  if (location !== undefined) liveData.location = location;
+
+  if (Object.keys(liveData).length > 0) {
+    await tx.update(consumerDepots).set(liveData).where(eq(consumerDepots.id, id));
+  }
+  if (Object.keys(extrasData).length > 0) {
+    // upsert: most depots predate depot_extras and have no row there yet —
+    // a plain UPDATE would silently affect 0 rows for every one of them.
+    await tx
+      .insert(depotExtras)
+      .values({ depotId: id, ...extrasData })
+      .onConflictDoUpdate({
+        target: depotExtras.depotId,
+        set: { ...extrasData, updatedAt: new Date() },
+      });
+  }
+  return findById(id, tx);
 };
+
+const updateSubaccountFields = (id, data) => update(id, data);
 
 const deleteById = async (id) => {
-  const [row] = await db.delete(depots).where(eq(depots.id, id)).returning();
+  const [row] = await db.delete(consumerDepots).where(eq(consumerDepots.id, id)).returning();
   return row || null;
 };
 
@@ -110,33 +147,27 @@ const getStaff = async (depotId) => {
     .select({
       id: depotStaff.id,
       adminId: depotStaff.staffId,
-      firstName: staff.firstName,
-      surname: staff.surname,
-      email: staff.email,
+      fullName: administrationUser.fullName,
+      email: administrationUser.email,
     })
     .from(depotStaff)
-    .leftJoin(staff, eq(depotStaff.staffId, staff.id))
+    .leftJoin(administrationUser, eq(depotStaff.staffId, administrationUser.id))
     .where(eq(depotStaff.depotId, numericDepotId));
 
-  return rows.map((r) => ({
-    ...r,
-    _id: String(r.adminId),
-  }));
+  return rows.map((r) => ({ ...r, _id: String(r.adminId) }));
 };
 
 const setStaff = async (depotId, adminIds) => {
   const numericDepotId = parseInt(depotId, 10) || depotId;
   await db.delete(depotStaff).where(eq(depotStaff.depotId, numericDepotId));
   if (adminIds && adminIds.length > 0) {
-    // Column is `staffId`, not `adminId`: an `adminId` key is silently dropped
-    // by Drizzle, leaving the NOT NULL `staff_id` unset and the insert failing.
     await db
       .insert(depotStaff)
       .values(adminIds.map((adminId) => ({ depotId: numericDepotId, staffId: parseInt(adminId, 10) || adminId })));
   }
 };
 
-// ─── Product Capacities ──────────────────────────────────────────────────────
+// ─── Product capacities ──────────────────────────────────────────────────────
 
 const getProductCapacities = async (depotId) => {
   const numericDepotId = parseInt(depotId, 10) || depotId;
@@ -145,13 +176,11 @@ const getProductCapacities = async (depotId) => {
       id: depotProductCapacities.id,
       productId: depotProductCapacities.productId,
       capacity: depotProductCapacities.capacity,
-      productName: products.name,
-      productSku: products.sku,
-      productCategory: products.category,
-      productUnit: products.unit,
+      productName: consumerProduct.name,
+      productUnit: consumerProduct.unit,
     })
     .from(depotProductCapacities)
-    .leftJoin(products, eq(depotProductCapacities.productId, products.id))
+    .leftJoin(consumerProduct, eq(depotProductCapacities.productId, consumerProduct.id))
     .where(eq(depotProductCapacities.depotId, numericDepotId));
 
   return rows.map((r) => ({
@@ -159,30 +188,21 @@ const getProductCapacities = async (depotId) => {
     productId: r.productId,
     capacity: r.capacity,
     productName: r.productName,
-    productSku: r.productSku,
-    productCategory: r.productCategory,
     product: {
-      _id: String(r.productId),
       id: String(r.productId),
       name: r.productName || "Unknown Product",
-      sku: r.productSku || "",
-      category: r.productCategory || "",
       unit: r.productUnit || "Liters",
     },
   }));
 };
 
 const upsertProductCapacity = async (depotId, productId, capacity) => {
+  const numericDepotId = parseInt(depotId, 10) || depotId;
   const numericProductId = parseInt(productId, 10) || productId;
   const [existing] = await db
     .select()
     .from(depotProductCapacities)
-    .where(
-      and(
-        eq(depotProductCapacities.depotId, depotId),
-        eq(depotProductCapacities.productId, numericProductId)
-      )
-    )
+    .where(and(eq(depotProductCapacities.depotId, numericDepotId), eq(depotProductCapacities.productId, numericProductId)))
     .limit(1);
 
   if (existing) {
@@ -196,7 +216,7 @@ const upsertProductCapacity = async (depotId, productId, capacity) => {
 
   const [row] = await db
     .insert(depotProductCapacities)
-    .values({ depotId, productId: numericProductId, capacity })
+    .values({ depotId: numericDepotId, productId: numericProductId, capacity })
     .returning();
   return row;
 };
@@ -206,109 +226,79 @@ const setProductCapacities = async (depotId, capacitiesList) => {
   if (!Array.isArray(capacitiesList)) return;
 
   const validProductIds = capacitiesList.map((pc) => parseInt(pc.product, 10) || pc.product);
-
-  const existingCapacities = await db
-    .select()
-    .from(depotProductCapacities)
-    .where(eq(depotProductCapacities.depotId, numericDepotId));
+  const existingCapacities = await db.select().from(depotProductCapacities).where(eq(depotProductCapacities.depotId, numericDepotId));
 
   for (const existing of existingCapacities) {
-    if (!validProductIds.includes(existing.productId) && !validProductIds.includes(String(existing.productId))) {
-      await db
-        .delete(depotProductCapacities)
-        .where(eq(depotProductCapacities.id, existing.id));
+    if (!validProductIds.includes(existing.productId)) {
+      await db.delete(depotProductCapacities).where(eq(depotProductCapacities.id, existing.id));
     }
   }
-
   for (const pc of capacitiesList) {
     await upsertProductCapacity(numericDepotId, pc.product, pc.capacity);
   }
 };
 
-// ─── Product Prices ──────────────────────────────────────────────────────────
+// ─── Product prices — state-scoped on the live schema, not depot-scoped ─────
 
-const getProductPrices = async (depotId) => {
+const getProductPricesByState = async (stateId) => {
   const rows = await db
     .select({
-      id: depotProductPrices.id,
-      productId: depotProductPrices.productId,
-      currentPrice: depotProductPrices.currentPrice,
-      productName: products.name,
-      productSku: products.sku,
-      productCategory: products.category,
-      productUnit: products.unit,
+      id: consumerProductprice.id,
+      productId: consumerProductprice.productId,
+      price: consumerProductprice.price,
+      stockQuantity: consumerProductprice.stockQuantity,
+      productName: consumerProduct.name,
+      productUnit: consumerProduct.unit,
     })
-    .from(depotProductPrices)
-    .leftJoin(products, eq(depotProductPrices.productId, products.id))
-    .where(eq(depotProductPrices.depotId, depotId));
+    .from(consumerProductprice)
+    .leftJoin(consumerProduct, eq(consumerProductprice.productId, consumerProduct.id))
+    .where(eq(consumerProductprice.stateId, stateId));
 
   return rows.map((r) => ({
     id: r.id,
     productId: r.productId,
-    currentPrice: parseFloat(r.currentPrice),
+    currentPrice: parseFloat(r.price),
+    stockQuantity: r.stockQuantity,
     productName: r.productName,
-    productSku: r.productSku,
-    productCategory: r.productCategory,
-    product: {
-      _id: String(r.productId),
-      id: String(r.productId),
-      name: r.productName || "Unknown Product",
-      sku: r.productSku || "",
-      category: r.productCategory || "",
-      unit: r.productUnit || "Liters",
-    },
+    product: { id: String(r.productId), name: r.productName || "Unknown Product", unit: r.productUnit || "Liters" },
   }));
 };
 
-const getProductPrice = async (depotId, productId, tx = db) => {
+const getProductPrice = async (stateId, productId, tx = db) => {
   const [row] = await tx
     .select()
-    .from(depotProductPrices)
-    .where(
-      and(
-        eq(depotProductPrices.depotId, depotId),
-        eq(depotProductPrices.productId, productId)
-      )
-    )
+    .from(consumerProductprice)
+    .where(and(eq(consumerProductprice.stateId, stateId), eq(consumerProductprice.productId, productId)))
     .limit(1);
   return row || null;
 };
 
-const upsertProductPrice = async (depotId, productId, price) => {
-  const [existing] = await db
-    .select()
-    .from(depotProductPrices)
-    .where(
-      and(
-        eq(depotProductPrices.depotId, depotId),
-        eq(depotProductPrices.productId, productId)
-      )
-    )
-    .limit(1);
+const upsertProductPrice = async (stateId, productId, price) => {
+  const existing = await getProductPrice(stateId, productId);
 
   if (existing) {
     const [row] = await db
-      .update(depotProductPrices)
-      .set({ currentPrice: price, updatedAt: new Date() })
-      .where(eq(depotProductPrices.id, existing.id))
+      .update(consumerProductprice)
+      .set({ price: String(price), updatedAt: new Date().toISOString() })
+      .where(eq(consumerProductprice.id, existing.id))
       .returning();
-    // Add price history
-    await db.insert(depotPriceHistory).values({
-      depotProductPriceId: existing.id,
-      price,
-    });
+    await db.insert(depotPriceHistory).values({ depotProductPriceId: existing.id, price: String(price) });
     return row;
   }
 
   const [row] = await db
-    .insert(depotProductPrices)
-    .values({ depotId, productId, currentPrice: price })
+    .insert(consumerProductprice)
+    .values({
+      stateId,
+      productId,
+      price: String(price),
+      initialStockQuantity: 0,
+      stockQuantity: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
     .returning();
-  // Add price history
-  await db.insert(depotPriceHistory).values({
-    depotProductPriceId: row.id,
-    price,
-  });
+  await db.insert(depotPriceHistory).values({ depotProductPriceId: row.id, price: String(price) });
   return row;
 };
 
@@ -320,33 +310,21 @@ const getPriceHistory = async (depotProductPriceId) => {
     .orderBy(desc(depotPriceHistory.setAt));
 };
 
-const updateSubaccountFields = async (id, data) => {
-  const [row] = await db
-    .update(depots)
-    .set({
-      ...data,
-      updatedAt: new Date(),
-    })
-    .where(eq(depots.id, id))
-    .returning();
-  return row || null;
-};
-
 module.exports = {
   findById,
   findByCode,
   findAll,
   create,
   update,
+  updateSubaccountFields,
   deleteById,
   getStaff,
   setStaff,
   getProductCapacities,
   setProductCapacities,
   upsertProductCapacity,
-  getProductPrices,
+  getProductPricesByState,
   getProductPrice,
   upsertProductPrice,
   getPriceHistory,
-  updateSubaccountFields,
 };

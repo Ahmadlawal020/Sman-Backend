@@ -8,7 +8,10 @@ logs/
 # balances) and run to tens of megabytes — they belong on disk, not in git.
 *.dump
 *.sql
-!db/migrations/*.sql
+!db/migrations.legacy-neon/*.sql
+# Schema-only (no rows) ground truth for the live DB cutover — small and
+# meant to be committed and reviewed, unlike the data dumps above.
+!docs/live_schema.sql
 
 # Scratch output from `drizzle-kit introspect`. Regenerable, never imported.
 .drizzle-introspect/

@@ -16,7 +16,7 @@ const path = require("path");
 // to stop NEW collisions, not to rewrite history.
 const GRANDFATHERED = new Set(["0012", "0013"]);
 
-const dir = path.join(__dirname, "..", "db", "migrations");
+const dir = path.join(__dirname, "..", "db", "migrations.legacy-neon");
 const files = fs
   .readdirSync(dir)
   .filter((f) => /^\d{4}_.*\.sql$/.test(f))

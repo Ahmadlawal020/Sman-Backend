@@ -1,80 +1,67 @@
 const { eq, and, asc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orderTrucks } = require("../db/schema");
+const { consumerTruckallocation } = require("../db/schema");
 
 /**
- * order_trucks — one row per truck LOAD on an order (distinct from the fleet
- * `trucks` vehicle master). Every function threads an optional `tx` so a load
- * can be created/updated inside the same transaction as the order transition
- * that owns it (release, gate-in, gate-out).
+ * consumer_truckallocation is Django's real per-truck-load table — see
+ * soroman_backend-2/consumer/models.py:1732 ("a single truck load within a
+ * bulk order... created at order time"), the direct equivalent of the old
+ * `order_trucks` table. Column differences:
+ *
+ *  - truckIndex doesn't exist — truckNumber IS the ordinal (1, 2, 3…) per
+ *    the unique constraint on (truck_number, order_product_id).
+ *  - No status/securityEnteredAt/loadedAt/securityExitedAt — gate tracking
+ *    lives on consumer_truckticket instead (ticket.repository.js), which is
+ *    a separate row created later via Django's generate-tickets endpoint,
+ *    not at order/allocation time. ticketStatus here is the allocation's own
+ *    lifecycle (pending/ticketed/…), not a gate state.
+ *  - Keyed to order_product_id, not just order_id (matches
+ *    consumer_orderproduct's 1:1-with-order shape noted in
+ *    order.repository.js).
  */
 
 const create = async (data, tx = db) => {
-  const [row] = await tx.insert(orderTrucks).values(data).returning();
+  const [row] = await tx.insert(consumerTruckallocation).values(data).returning();
   return row;
 };
 
 const findById = async (id, tx = db) => {
-  const [row] = await tx.select().from(orderTrucks).where(eq(orderTrucks.id, id)).limit(1);
+  const [row] = await tx.select().from(consumerTruckallocation).where(eq(consumerTruckallocation.id, id)).limit(1);
   return row || null;
 };
 
-/** All loads on an order, in allocation order (truck 1, 2, 3 …). */
 const findByOrder = async (orderId, tx = db) => {
   return tx
     .select()
-    .from(orderTrucks)
-    .where(eq(orderTrucks.orderId, orderId))
-    .orderBy(asc(orderTrucks.truckIndex));
+    .from(consumerTruckallocation)
+    .where(eq(consumerTruckallocation.orderId, orderId))
+    .orderBy(asc(consumerTruckallocation.truckNumber));
 };
 
 const update = async (id, data, tx = db) => {
   const [row] = await tx
-    .update(orderTrucks)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(orderTrucks.id, id))
+    .update(consumerTruckallocation)
+    .set({ ...data, updatedAt: new Date().toISOString() })
+    .where(eq(consumerTruckallocation.id, id))
     .returning();
   return row || null;
 };
 
-/** How many loads on an order sit in a given status — drives the gate transitions. */
-const countByOrderAndStatus = async (orderId, status, tx = db) => {
+const countByOrderAndStatus = async (orderId, ticketStatus, tx = db) => {
   const [row] = await tx
     .select({ n: count() })
-    .from(orderTrucks)
-    .where(and(eq(orderTrucks.orderId, orderId), eq(orderTrucks.status, status)));
+    .from(consumerTruckallocation)
+    .where(and(eq(consumerTruckallocation.orderId, orderId), eq(consumerTruckallocation.ticketStatus, ticketStatus)));
   return Number(row?.n || 0);
 };
 
 const countByOrder = async (orderId, tx = db) => {
-  const [row] = await tx
-    .select({ n: count() })
-    .from(orderTrucks)
-    .where(eq(orderTrucks.orderId, orderId));
-  return Number(row?.n || 0);
-};
-
-/**
- * How many loads on an order are still in the depot — i.e. have NOT gated out.
- * The order completes only when this hits zero (the last truck has physically
- * left). A `loaded` truck still counts: it is loaded but has not departed, so a
- * multi-truck order must not complete the moment the first truck exits.
- */
-const countRemainingByOrder = async (orderId, tx = db) => {
-  const [row] = await tx
-    .select({ n: count() })
-    .from(orderTrucks)
-    .where(
-      and(
-        eq(orderTrucks.orderId, orderId),
-        sql`${orderTrucks.status} <> 'gated_out'`
-      )
-    );
+  const [row] = await tx.select({ n: count() }).from(consumerTruckallocation).where(eq(consumerTruckallocation.orderId, orderId));
   return Number(row?.n || 0);
 };
 
 const deleteByOrder = async (orderId, tx = db) => {
-  await tx.delete(orderTrucks).where(eq(orderTrucks.orderId, orderId));
+  await tx.delete(consumerTruckallocation).where(eq(consumerTruckallocation.orderId, orderId));
 };
 
 module.exports = {
@@ -85,5 +72,4 @@ module.exports = {
   deleteByOrder,
   countByOrderAndStatus,
   countByOrder,
-  countRemainingByOrder,
 };
