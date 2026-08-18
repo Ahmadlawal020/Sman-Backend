@@ -11,16 +11,19 @@ const {
   orderTruckRepo,
   orderPfiAllocationRepo,
   auditLogRepo,
+  bankAccountRepo,
 } = require("../repositories");
 const walletService = require("./wallet.service");
-const { createDedicatedAccount, transferToDepotSubaccount, switchCustomerDvaToSubaccount } = require("./payment.service");
+// Paystack DVA creation/subaccount-switch and the auto-split transfer are
+// disabled — see the "Paystack DVA funding (disabled...)" block below and
+// runPostPaymentEffects(). Re-add this import if reinstating either:
+// const { createDedicatedAccount, transferToDepotSubaccount, switchCustomerDvaToSubaccount } = require("./payment.service");
 const { sendOrderInvoiceEmail } = require("./email.service");
 const { sendOrderSummarySMS, sendOrderExpiredSMS } = require("./sms.service");
 const { notify } = require("../notifications");
 const { findPfiForOrder } = require("./pfi.service");
 const { generateTicketForOrder } = require("./ticket.service");
 const orderStatus = require("./orderStatus.service");
-const { virtualAccountName: formatVirtualAccountName } = require("../utils/helpers");
 const commissionService = require("./commission.service");
 const { QUEUES, enqueue } = require("../config/queue");
 
@@ -105,15 +108,15 @@ async function expireAndAttach(order) {
  *
  * The only thing that differs between the two callers is WHO the customer is:
  * the desk passes a body customer id, the portal passes the authenticated
- * customer's own id. Everything else — server-side pricing, the dedicated
- * virtual account, the single atomic reserve→debit→create→ledger
+ * customer's own id. Everything else — server-side pricing, the depot's
+ * payment account, the single atomic reserve→debit→create→ledger
  * transaction, the wallet-pays Pending→Paid transition, and the best-effort
  * invoice email/SMS — is identical, so it lives here once.
  *
  * Throws httpError(4xx) for a bad request (unknown depot, no price, no stock,
  * no payment account); the caller's asyncHandler renders it. External work
- * (DVA creation, email, SMS) stays OUTSIDE the DB transaction — a transaction
- * must never be held open across an HTTP call to Paystack/Termii.
+ * (email, SMS) stays OUTSIDE the DB transaction — a transaction must never be
+ * held open across an HTTP call to a third party.
  *
  * @param {object} input
  * @param {number} input.customerId
@@ -187,52 +190,77 @@ async function placeOrder({
     throw httpError(404, "Customer not found");
   }
 
-  // Ensure the customer has a dedicated virtual account to be paid into.
-  let virtualAccountNumber = customer.virtualAccountNumber || "";
-  let virtualAccountBank = customer.virtualAccountBank || "";
-  let virtualAccountName = customer.virtualAccountName || "";
-
-  if (!virtualAccountNumber) {
-    const accountResult = await createDedicatedAccount(customer);
-    if (accountResult.success) {
-      virtualAccountNumber = accountResult.data.accountNumber;
-      virtualAccountBank = accountResult.data.bankName;
-      virtualAccountName =
-        accountResult.data.accountName || formatVirtualAccountName(customer.name);
-      const updateData = { virtualAccountNumber, virtualAccountBank, virtualAccountName };
-      if (accountResult.data.paystackCustomerId) {
-        updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
-      }
-      await customerRepo.update(customerId, updateData);
-    } else {
-      throw httpError(
-        400,
-        "Customer has no dedicated payment account and one could not be generated. Please try again or contact support."
-      );
-    }
-  } else if (!virtualAccountName) {
-    virtualAccountName = formatVirtualAccountName(customer.name);
-    await customerRepo.update(customerId, { virtualAccountName });
-  }
-
   const depot = await depotRepo.findById(depotId);
   if (!depot) {
     throw httpError(404, "Depot not found");
   }
 
-  // Automatically switch customer DVA to depot Paystack Subaccount
-  const depotSubaccountCode = depot.paystackSubaccountCode || depot.paystack_subaccount_code;
-  if (virtualAccountNumber && depotSubaccountCode) {
-    try {
-      await switchCustomerDvaToSubaccount({
-        accountNumber: virtualAccountNumber,
-        subaccountCode: depotSubaccountCode,
-      });
-      await customerRepo.update(customerId, { dvaSubaccountCode: depotSubaccountCode });
-    } catch (dvaErr) {
-      console.error(`[placeOrder] Failed to switch DVA to subaccount for depot ${depotId}:`, dvaErr.message);
-    }
+  /* --- Paystack DVA funding (disabled — manual deposit only) ---------------
+   * Every customer used to get a personal Dedicated Virtual Account (DVA) on
+   * first order, immediately split to the depot's Paystack subaccount so
+   * funds settled straight there. Wallet funding is manual-deposit-only now
+   * (staff record deposits from the admin dashboard against the depot's own
+   * bank account, looked up below) — this whole path is parked, not deleted.
+   * To reinstate: restore this block, drop the depot-bank-account lookup
+   * beneath it, and uncomment the payment.service.js import above.
+   *
+   * let virtualAccountNumber = customer.virtualAccountNumber || "";
+   * let virtualAccountBank = customer.virtualAccountBank || "";
+   * let virtualAccountName = customer.virtualAccountName || "";
+   *
+   * if (!virtualAccountNumber) {
+   *   const accountResult = await createDedicatedAccount(customer);
+   *   if (accountResult.success) {
+   *     virtualAccountNumber = accountResult.data.accountNumber;
+   *     virtualAccountBank = accountResult.data.bankName;
+   *     virtualAccountName =
+   *       accountResult.data.accountName || formatVirtualAccountName(customer.name);
+   *     const updateData = { virtualAccountNumber, virtualAccountBank, virtualAccountName };
+   *     if (accountResult.data.paystackCustomerId) {
+   *       updateData.paystackCustomerId = accountResult.data.paystackCustomerId;
+   *     }
+   *     await customerRepo.update(customerId, updateData);
+   *   } else {
+   *     throw httpError(
+   *       400,
+   *       "Customer has no dedicated payment account and one could not be generated. Please try again or contact support."
+   *     );
+   *   }
+   * } else if (!virtualAccountName) {
+   *   virtualAccountName = formatVirtualAccountName(customer.name);
+   *   await customerRepo.update(customerId, { virtualAccountName });
+   * }
+   *
+   * // Automatically switch customer DVA to depot Paystack Subaccount
+   * const depotSubaccountCode = depot.paystackSubaccountCode || depot.paystack_subaccount_code;
+   * if (virtualAccountNumber && depotSubaccountCode) {
+   *   try {
+   *     await switchCustomerDvaToSubaccount({
+   *       accountNumber: virtualAccountNumber,
+   *       subaccountCode: depotSubaccountCode,
+   *     });
+   *     await customerRepo.update(customerId, { dvaSubaccountCode: depotSubaccountCode });
+   *   } catch (dvaErr) {
+   *     console.error(`[placeOrder] Failed to switch DVA to subaccount for depot ${depotId}:`, dvaErr.message);
+   *   }
+   * }
+   * --------------------------------------------------------------------- */
+
+  // The account the customer pays into is the depot's own bank account, set
+  // up by an admin on the dashboard (Bank Accounts, linked to this depot) —
+  // not a per-customer virtual account. Every order at this depot shows the
+  // same account; the default one wins when more than one is linked.
+  const depotBankAccounts = await bankAccountRepo.findAll({ depotId: depot.id, status: "Active" });
+  const depotBankAccount = depotBankAccounts.find((a) => a.isDefault) || depotBankAccounts[0];
+  if (!depotBankAccount) {
+    throw httpError(
+      400,
+      "No payment account has been set up for this depot yet. Please contact support."
+    );
   }
+  const virtualAccountNumber = depotBankAccount.accountNumber;
+  const virtualAccountBank = depotBankAccount.bankName;
+  const virtualAccountName = depotBankAccount.accountName;
 
   const product = await productRepo.findById(productId);
   if (!product) {
@@ -834,15 +862,18 @@ async function runPostPaymentEffects(orderId, { notifyWhatsApp = true } = {}) {
     console.error(`[post-payment] commission failed for order ${orderId}:`, err.message);
   }
 
-  // Transfer depot share to subaccount (best-effort)
-  try {
-    const orderForTransfer = await orderRepo.findByIdFull(orderId);
-    if (orderForTransfer) {
-      subaccountTransfer = await transferToDepotSubaccount(orderForTransfer);
-    }
-  } catch (err) {
-    console.error(`[post-payment] subaccount transfer failed for order ${orderId}:`, err.message);
-  }
+  // Paystack auto-split transfer (disabled — manual deposit only): the
+  // customer now pays straight into the depot's own bank account, so there
+  // is no merchant-balance share left to push out. Re-add the import at the
+  // top of this file to reinstate:
+  // try {
+  //   const orderForTransfer = await orderRepo.findByIdFull(orderId);
+  //   if (orderForTransfer) {
+  //     subaccountTransfer = await transferToDepotSubaccount(orderForTransfer);
+  //   }
+  // } catch (err) {
+  //   console.error(`[post-payment] subaccount transfer failed for order ${orderId}:`, err.message);
+  // }
 
   // Skipped when the caller already delivers the confirmation itself — the
   // WhatsApp engine replies "Payment received" synchronously in the same turn,

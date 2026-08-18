@@ -14,6 +14,7 @@ const {
   orderTruckRepo,
   ticketRepo,
   auditLogRepo,
+  bankAccountRepo,
 } = require("../repositories");
 const { staffTokenWithRoles, NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
@@ -72,6 +73,17 @@ describe("integration — customer register → order → release → gates → 
       })
       .returning();
     depotId = depot.id;
+
+    // placeOrder pays into the depot's own bank account (manual deposit
+    // only — no Paystack DVA), so every order-placing test depot needs one.
+    await bankAccountRepo.create({
+      bankName: "Test Bank",
+      accountName: "Journey Depot Account",
+      accountNumber: `JRNACC${String(RUN).slice(-6)}`,
+      depotIds: [depotId],
+      status: "Active",
+      isDefault: true,
+    });
 
     const [product] = await db
       .insert(products)

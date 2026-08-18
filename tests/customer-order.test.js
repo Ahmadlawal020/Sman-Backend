@@ -8,7 +8,7 @@ const request = require("supertest");
 const app = require("../app");
 const { db } = require("../config/db");
 const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderRepo, ticketRepo } = require("../repositories");
+const { customerRepo, orderRepo, ticketRepo, bankAccountRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
 
@@ -67,6 +67,17 @@ describe("customer portal — a customer places their own order", () => {
       })
       .returning();
     depotId = depot.id;
+
+    // placeOrder pays into the depot's own bank account (manual deposit
+    // only — no Paystack DVA), so every order-placing test depot needs one.
+    await bankAccountRepo.create({
+      bankName: "Test Bank",
+      accountName: "Portal Depot Account",
+      accountNumber: `PORACC${String(RUN).slice(-6)}`,
+      depotIds: [depotId],
+      status: "Active",
+      isDefault: true,
+    });
 
     const [product] = await db
       .insert(products)
