@@ -117,6 +117,12 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
 
   test("unknown body keys are stripped, not stored", async () => {
     // This is what closes mass assignment on a validated route.
+    //
+    // A failed earlier run can leave this fixture row behind (the delete at
+    // the end never runs), and the route 409s on a duplicate phone.
+    const leftover = await customerRepo.findByPhone("+2348188000002");
+    if (leftover) await customerRepo.deleteById(leftover.id);
+
     const res = await request(app)
       .post("/api/customers")
       .set("Authorization", `Bearer ${token}`)
@@ -128,15 +134,18 @@ describe("validation — schemas as whitelists, and safe coercion", () => {
         paystackCustomerId: "CUS_hijack",
       });
 
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 201, JSON.stringify(res.body));
     const created = await customerRepo.findByPhone("+2348188000002");
 
-    // `balance` IS in the schema, so it is honoured — but the two fields that
-    // are not in the schema never reach the insert. Overwriting
-    // virtualAccountNumber would redirect another customer's payments, since
-    // the webhook matches on account number.
-    assert.equal(created.virtualAccountNumber, "", "not settable from the request");
-    assert.equal(created.paystackCustomerId, "", "not settable from the request");
+    // Post-cutover, mass assignment here is doubly closed: the schema never
+    // let virtualAccountNumber/paystackCustomerId through, and the live
+    // consumer_customer table no longer has those columns at all (Paystack
+    // DVAs are gone — see customer.repository.js's header). `balance` still
+    // passes the schema but is consciously discarded by customerRepo.create:
+    // customer money lives in sman.customer_credits, never on the row.
+    assert.equal(created.virtualAccountNumber, undefined, "no such live column");
+    assert.equal(created.paystackCustomerId, undefined, "no such live column");
+    assert.equal(created.balance, undefined, "balance is never stored on the row");
     await customerRepo.deleteById(created.id);
   });
 

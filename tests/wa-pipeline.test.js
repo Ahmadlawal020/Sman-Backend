@@ -5,9 +5,12 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis, waSessions } = require("../db/schema");
+// Live schema: the old clean-room depots/products/depotProductPrices/pfis
+// tables are gone — fixtures go through tests/liveFixtures.js (consumer_*
+// tables + repos). waSessions/waMessages are Sman-owned (sman schema).
+const { waSessions } = require("../db/schema");
 const { eq } = require("drizzle-orm");
-const { customerRepo, orderRepo, waMessageRepo, waSessionRepo, bankAccountRepo } = require("../repositories");
+const { customerRepo, orderRepo, waMessageRepo, waSessionRepo } = require("../repositories");
 const { normalizeInbound } = require("../whatsapp/normalize");
 const { processInbound, processSend, processEvent, performEffect } = require("../whatsapp/pipeline");
 const { INBOUND } = require("../whatsapp/constants");
@@ -16,10 +19,14 @@ const walletService = require("../services/wallet.service");
 const { runMaintenance } = require("../whatsapp/worker");
 const { stopQueue } = require("../config/queue");
 const { closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi } = require("./liveFixtures");
 
 const RUN = Date.now();
 const PHONE = `+234817${String(RUN).slice(-6)}0`;
 const UNIT_PRICE = 100;
+// The depot's bank account number — what placeOrder now hands the customer
+// to pay into (manual deposit; the per-customer Paystack DVA is disabled).
+const DEPOT_ACCT = `PIPACC${String(RUN).slice(-6)}`;
 
 let wamidSeq = 0;
 const nextWamid = () => `wamid.PIPE-${RUN}-${(wamidSeq += 1)}`;
@@ -42,53 +49,35 @@ const say = async (text) => {
 };
 
 describe("wa pipeline — a whole order placed over WhatsApp, no Meta required", () => {
+  // Live model: pricing and order stock are STATE-scoped (consumer_productprice
+  // + active PFIs whose locationId is a state id); a depot joins the catalog —
+  // and hence the engine's context — via location === state name, and needs an
+  // Active bank account for placeOrder.
+  let state;
+  let depot;
+  let product;
+
   before(async () => {
     // The kill switch stays OFF: sends are recorded and skipped, never wired.
     process.env.WHATSAPP_ENABLED = "false";
 
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: `Pipe Depot ${String(RUN).slice(-4)}`,
-        code: `PIP${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Warri",
-        state: "Delta",
-        country: "NG",
-        postcode: "332211",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
-
-    // placeOrder pays into the depot's own bank account (manual deposit
-    // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Pipe Depot Account",
-      accountNumber: `PIPACC${String(RUN).slice(-6)}`,
-      depotIds: [depot.id],
-      status: "Active",
-      isDefault: true,
+    state = await seedState({ name: `Pipe State ${String(RUN).slice(-6)}` });
+    depot = await seedDepot({
+      name: `Pipe Depot ${String(RUN).slice(-4)}`,
+      code: `PIP${String(RUN).slice(-5)}`,
+      location: state.name,
+      bankAccount: {
+        accountName: "Pipe Depot Account",
+        accountNumber: DEPOT_ACCT,
+      },
     });
-
-    const [product] = await db
-      .insert(products)
-      .values({ name: `Pipe PMS ${String(RUN).slice(-4)}`, sku: `PIP-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
-
-    await db.insert(depotProductPrices).values({ depotId: depot.id, productId: product.id, currentPrice: String(UNIT_PRICE) });
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-PIP-${RUN}`,
-      status: "active",
-      locationId: depot.id,
-      productId: product.id,
-      startingQtyLitres: 1000000,
-      soldQtyLitres: 0,
+    product = await seedProduct({
+      name: `Pipe PMS ${String(RUN).slice(-4)}`,
+      abbreviation: `PIP-${String(RUN).slice(-5)}`.slice(0, 10),
     });
-
-    this.depot = depot;
-    this.product = product;
+    await seedPrice(product.id, state.id, { price: String(UNIT_PRICE) });
+    // The sellable-stock source: an active PFI pooled on the state.
+    await seedPfi({ productId: product.id, locationId: state.id, status: "active" });
   });
 
   after(async () => {
@@ -132,23 +121,29 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     assert.match(after.error, /WHATSAPP_ENABLED/);
   });
 
-  test("a name creates the customer — Active, phone-verified, created_via whatsapp, no OTP", async () => {
+  test("a name creates the customer with no OTP — the channel itself is the phone proof", async () => {
     const { session, outbound } = await say("Chinedu Okeke");
     const customer = await customerRepo.findByPhone(PHONE);
     assert.ok(customer, "customer exists");
     assert.equal(customer.name, "Chinedu Okeke");
-    assert.equal(customer.status, "Active");
-    assert.equal(customer.createdVia, "whatsapp");
-    assert.ok(customer.phoneVerifiedAt, "phone verified by the channel itself");
     assert.equal(session.customerId, customer.id);
     assert.equal(session.state, "MENU");
     assert.ok(outbound.length >= 1, "welcome menu went out");
+
+    // KNOWN REGRESSIONS (live cutover): consumer_customer has no status,
+    // created_via or phone_verified_at column — customerRepo silently
+    // discards all three, so "Active, phone-verified, created via whatsapp"
+    // is no longer recorded anywhere. Asserted last so the live checks above
+    // still run; fails honestly until these get a live home.
+    assert.equal(customer.status, "Active", "KNOWN REGRESSION: no live status column");
+    assert.equal(customer.createdVia, "whatsapp", "KNOWN REGRESSION: no live created_via column");
+    assert.ok(customer.phoneVerifiedAt, "KNOWN REGRESSION: no live phone_verified_at column");
   });
 
   test("order → depot → product → quantity → company → collect → declare → plate lands on CONFIRM", async () => {
     await say("order");
-    await say(this.depot.name.toLowerCase()); // typed depot name matches
-    await say(this.product.name);
+    await say(depot.name.toLowerCase()); // typed depot name matches
+    await say(product.name);
     await say("5,000");
     await say("Acme Fuels Ltd"); // the required company this order is for
     await say("pickup");
@@ -164,31 +159,45 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
   });
 
   test("confirm places a REAL order through placeOrder, idempotency key = wamid", async () => {
-    // The engine-created customer has no DVA; give them one so the test never
-    // reaches for Paystack (live flow would create it lazily inside placeOrder).
-    const customer = await customerRepo.findByPhone(PHONE);
-    await customerRepo.update(customer.id, {
-      virtualAccountNumber: `VPIPE${String(RUN).slice(-5)}`,
-      virtualAccountBank: "Test Bank",
-      virtualAccountName: "SOROMANNIGERI/ CO",
-    });
-
     const { wamid, session, outbound } = await say("confirm");
     assert.equal(session.state, "AWAIT_PAYMENT");
     assert.ok(session.lastOrderId, "session points at the real order");
 
     const order = await orderRepo.findById(session.lastOrderId);
-    assert.equal(order.idempotencyKey, wamid, "the confirm message's wamid is the dedupe key");
+    // Live column: the full key lives in sman.order_idempotency; the order
+    // itself carries the (truncated) fingerprint copy.
+    assert.equal(order.orderFingerprint, wamid, "the confirm message's wamid is the dedupe key");
+    const replayed = await orderRepo.findByIdempotencyKey(wamid);
+    assert.equal(replayed.id, order.id, "the fingerprint resolves back to this order");
     assert.equal(order.quantity, 5000);
     assert.equal(order.deliveryType, "pickup");
-    assert.equal(order.companyName, "Acme Fuels Ltd", "the company collected in chat is stored on the order");
     assert.equal(order.status, "Pending"); // zero wallet balance — awaits transfer
+    assert.equal(order.paidToAccountNumber, DEPOT_ACCT, "pay-into account is the depot's own bank account");
 
-    // The account details now ride ON the Pay now / Cancel buttons message —
+    // The account details ride ON the Pay now / Cancel buttons message —
     // one message, not a separate text before it.
-    const paymentMsg = outbound.find((m) => /VPIPE/.test(m.payload.body || ""));
-    assert.ok(paymentMsg, "the reply carries the dedicated account number");
+    const paymentMsg = outbound.find((m) => (m.payload.body || "").includes(DEPOT_ACCT));
+    // KNOWN PRODUCTION BUG (live cutover): whatsapp/copy.js orderCreated()
+    // and engine.js's ORDER_CREATED read order.totalAmount /
+    // order.virtualAccountBank/Number/Name, but order.repository.js's
+    // formatOrderRow only exposes totalPrice / paidToAccountNumber/BankName/
+    // AccountName — so the customer-facing payment message renders
+    // "Total: ₦NaN … Bank: undefined … Account Number: *undefined*".
+    // (context.js's loadLastOrder maps these correctly at lines 60-65; the
+    // ORDER_CREATED path was missed.) Fails honestly until aliased.
+    assert.ok(paymentMsg, "the reply carries the depot's dedicated account number");
     assert.equal(paymentMsg.payload.kind, "buttons", "details ride on the Pay now / Cancel message");
+  });
+
+  test("the order-level company has nowhere to live — KNOWN REGRESSION", async () => {
+    // The engine collects a company per order (session.cart.companyName) and
+    // hands it to placeOrder, but consumer_order has no company column and
+    // placeOrder drops the argument on the floor (services/order.service.js
+    // accepts `companyName` at :194 and never writes it). Before the cutover
+    // the order row carried it.
+    const stored = await waSessionRepo.findByPhone(PHONE);
+    const order = await orderRepo.findById(stored.lastOrderId);
+    assert.equal(order.companyName, "Acme Fuels Ltd", "KNOWN REGRESSION: company collected in chat is not stored on the order");
   });
 
   test("re-running the processed confirm turn does nothing — and a NEW confirm cannot double-order", async () => {
@@ -262,21 +271,23 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     // A fresh, own order — Unpaid on creation, like every order now.
     const { order } = await placeOrder({
       customerId: customer.id,
-      state: this.depot.state,
-      depotId: this.depot.id,
-      productId: this.product.id,
+      state: state.name,
+      depotId: depot.id,
+      productId: product.id,
       quantity: 3000,
       deliveryType: "pickup",
       trucks: [],
     });
     assert.equal(order.paymentStatus, "Unpaid");
-    // Fund the wallet so "Pay now" can actually cover it.
-    await walletService.credit({
+    // Fund the wallet so "Pay now" can actually cover it. Live vocabulary:
+    // the order's amount is totalPrice (there is no totalAmount alias).
+    const credited = await walletService.credit({
       customerId: customer.id,
-      amount: Number(order.totalAmount),
+      amount: Number(order.totalPrice),
       description: "Top-up for PAY_ORDER test",
       reference: `PIPE-PAYNOW-${RUN}`,
     });
+    assert.equal(credited.success, true, credited.message);
 
     const inbound = await performEffect(
       { type: "PAY_ORDER", payload: { orderId: order.id, customerId: customer.id } },

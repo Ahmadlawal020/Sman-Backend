@@ -3,114 +3,56 @@ require("dotenv").config();
 
 const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { eq, inArray } = require("drizzle-orm");
 
-const { db } = require("../config/db");
-const {
-  customers,
-  depots,
-  products,
-  orders,
-  walletHolds,
-  deposits,
-  orderDepositAllocations,
-} = require("../db/schema");
 const walletService = require("../services/wallet.service");
+const { customerRepo } = require("../repositories");
 const { closeDb } = require("./helpers");
+const { seedState, seedProduct, seedCustomer, seedOrder } = require("./liveFixtures");
 
-// The property under test throughout:
-//   customers.balance = credits - debits - active holds
-// checked after every operation via getLedgerBalance().
+// The property under test throughout (live model — computed, never stored):
+//   balance = SUM(sman.customer_credits.amount) - SUM(active sman.wallet_holds.amount)
+// consumer_customer has no balance column at all, so the old "ledger must
+// match customers.balance" check becomes: the balance every read path uses
+// (customerRepo.getBalance) must equal the two ledgers netted by hand.
 
 const suffix = Date.now().toString(36);
 
-const currentBalance = async (customerId) => {
-  const [row] = await db.select().from(customers).where(eq(customers.id, customerId));
-  return Number(row.balance);
-};
+const currentBalance = (customerId) => walletService.getLedgerBalance(customerId);
 
-const assertLedgerMatchesBalance = async (customerId) => {
-  const ledger = await walletService.getLedgerBalance(customerId);
-  const balance = await currentBalance(customerId);
-  assert.equal(ledger, balance, "ledger-derived balance must equal customers.balance");
+const assertLedgerInvariant = async (customerId) => {
+  const [credits, holds, balance] = await Promise.all([
+    customerRepo.getCreditTotal(customerId),
+    customerRepo.getActiveHoldTotal(customerId),
+    customerRepo.getBalance(customerId),
+  ]);
+  assert.equal(balance, credits - holds, "balance must equal credit ledger minus active holds");
 };
 
 describe("wallet ledger", () => {
   let customer;
-  let depot;
+  let state;
   let product;
-  let orderSeq = 0;
 
-  const makeOrder = async (totalAmount) => {
-    orderSeq += 1;
-    const [order] = await db
-      .insert(orders)
-      .values({
-        orderNumber: `ORD-WALLETTEST-${suffix}-${orderSeq}`,
-        customerId: customer.id,
-        state: "Lagos",
-        depotId: depot.id,
-        productId: product.id,
-        quantity: 100,
-        price: "1.00",
-        totalAmount: String(totalAmount),
-        deliveryType: "pickup",
-      })
-      .returning();
-    return order;
-  };
+  // Orders live on consumer_order now: userId (not customerId), stateId (no
+  // depotId anywhere), lowercase status, totalPrice (not totalAmount).
+  const makeOrder = async (totalAmount) =>
+    seedOrder({
+      customerId: customer.id,
+      stateId: state.id,
+      productId: product.id,
+      quantity: 100,
+      price: "1.00",
+      totalPrice: String(totalAmount),
+    });
 
   before(async () => {
-    [customer] = await db
-      .insert(customers)
-      .values({
-        name: "Wallet Ledger Test",
-        phone: `+23480${String(Date.now()).slice(-8)}`,
-        balance: "0",
-      })
-      .returning();
-
-    [depot] = await db
-      .insert(depots)
-      .values({
-        name: `Wallet Test Depot ${suffix}`,
-        code: `WTD-${suffix}`,
-        address: "1 Test Road",
-        city: "Lagos",
-        state: "Lagos",
-        country: "Nigeria",
-        postcode: "100001",
-        maxCapacity: 1000000,
-        establishedYear: "2020",
-      })
-      .returning();
-
-    [product] = await db
-      .insert(products)
-      .values({
-        name: `Wallet Test Product ${suffix}`,
-        sku: `WTP-${suffix}`,
-        category: "PMS",
-      })
-      .returning();
+    customer = await seedCustomer({ name: "Wallet Ledger Test" });
+    state = await seedState();
+    product = await seedProduct();
   });
 
   after(async () => {
-    // FK order: allocations reference orders/deposits; holds reference orders.
-    const customerOrderIds = (
-      await db.select({ id: orders.id }).from(orders).where(eq(orders.customerId, customer.id))
-    ).map((row) => row.id);
-    if (customerOrderIds.length) {
-      await db
-        .delete(orderDepositAllocations)
-        .where(inArray(orderDepositAllocations.orderId, customerOrderIds));
-    }
-    await db.delete(walletHolds).where(eq(walletHolds.customerId, customer.id));
-    await db.delete(deposits).where(eq(deposits.customerId, customer.id));
-    await db.delete(orders).where(eq(orders.customerId, customer.id));
-    await db.delete(customers).where(eq(customers.id, customer.id));
-    await db.delete(products).where(eq(products.id, product.id));
-    await db.delete(depots).where(eq(depots.id, depot.id));
+    // Fixtures are append-only (unique names/phones); nothing to unwind.
     await closeDb();
   });
 
@@ -124,9 +66,10 @@ describe("wallet ledger", () => {
 
     assert.equal(result.success, true);
     assert.equal(Number(result.deposit.amount), 10000);
-    assert.equal(Number(result.deposit.balanceAfter), 10000);
+    // customer_credits stores no running balanceAfter — the balance is
+    // recomputed from the ledger, which is exactly what we assert.
     assert.equal(await currentBalance(customer.id), 10000);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
   });
 
   test("credit with a seen reference is a no-op, not a double credit", async () => {
@@ -139,36 +82,38 @@ describe("wallet ledger", () => {
     assert.equal(result.success, true);
     assert.equal(result.alreadyProcessed, true);
     assert.equal(await currentBalance(customer.id), 10000);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
   });
 
   test("concurrent credits with the same reference credit exactly once", async () => {
-    // Two webhook deliveries racing: both pass the pre-check, the partial
-    // unique index on deposits.reference stops the second insert, and the
-    // loser reports alreadyProcessed instead of crashing.
+    // Two webhook deliveries racing: both pass the pre-check; a unique index
+    // on the reference must stop the second insert so the loser reports
+    // alreadyProcessed instead of double-crediting.
+    //
+    // KNOWN REGRESSION (live cutover): sman.customer_credits has NO unique
+    // index on reference (verified against the live DB — only the pkey and
+    // two plain indexes exist), even though wallet.service.js's credit()
+    // catch-path is written against one. Two racing calls therefore BOTH
+    // insert and the customer is credited twice. Left failing honestly —
+    // this is a money bug, not a test problem. Fix: partial unique index on
+    // sman.customer_credits.reference WHERE reference <> ''.
+    //
+    // Run on a dedicated customer so the double credit cannot poison the
+    // main customer's arithmetic in the tests that follow.
+    const raceCustomer = await seedCustomer({ name: "Wallet Race Credit" });
     const reference = `wallet-test-race-credit-${suffix}`;
     const results = await Promise.all([
-      walletService.credit({ customerId: customer.id, amount: 5000, reference }),
-      walletService.credit({ customerId: customer.id, amount: 5000, reference }),
+      walletService.credit({ customerId: raceCustomer.id, amount: 5000, reference }),
+      walletService.credit({ customerId: raceCustomer.id, amount: 5000, reference }),
     ]);
 
     assert.equal(results.filter((r) => r.success).length, 2, "both calls report success");
+    assert.equal(await currentBalance(raceCustomer.id), 5000, "the duplicate reference must credit exactly once");
     assert.equal(
       results.filter((r) => r.alreadyProcessed).length,
       1,
       "exactly one call is a duplicate no-op"
     );
-    assert.equal(await currentBalance(customer.id), 15000);
-    await assertLedgerMatchesBalance(customer.id);
-
-    // Put the balance back so the later tests keep their arithmetic.
-    const undo = await walletService.debit({
-      customerId: customer.id,
-      amount: 5000,
-      description: "undo race-credit fixture",
-    });
-    assert.equal(undo.success, true);
-    assert.equal(await currentBalance(customer.id), 10000);
   });
 
   test("debit beyond the balance fails closed", async () => {
@@ -185,8 +130,8 @@ describe("wallet ledger", () => {
 
   test("concurrent debits cannot overspend the balance", async () => {
     // Two 6000 debits against a 10000 balance: exactly one may win. Without
-    // the FOR UPDATE lock both read 10000, both pass the check, and the
-    // customer ends up at -2000.
+    // the FOR UPDATE lock on the customer row both read 10000, both pass the
+    // check, and the ledger ends at -2000.
     const results = await Promise.all([
       walletService.debit({ customerId: customer.id, amount: 6000, description: "racer A" }),
       walletService.debit({ customerId: customer.id, amount: 6000, description: "racer B" }),
@@ -195,7 +140,7 @@ describe("wallet ledger", () => {
     const wins = results.filter((r) => r.success).length;
     assert.equal(wins, 1, "exactly one concurrent debit must succeed");
     assert.equal(await currentBalance(customer.id), 4000);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
   });
 
   test("hold lifecycle: place reduces balance, release restores it", async () => {
@@ -208,9 +153,9 @@ describe("wallet ledger", () => {
     });
     assert.equal(placed.success, true);
     assert.equal(await currentBalance(customer.id), 2500);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
 
-    // Second hold on the same order must fail, not stack.
+    // Second hold on the same order must fail, not stack (unique on order_id).
     const duplicate = await walletService.placeHold({
       customerId: customer.id,
       orderId: order.id,
@@ -222,7 +167,7 @@ describe("wallet ledger", () => {
     const released = await walletService.releaseHold(order.id);
     assert.equal(released.success, true);
     assert.equal(await currentBalance(customer.id), 4000);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
 
     // A released hold cannot be released (or converted) again.
     const releasedTwice = await walletService.releaseHold(order.id);
@@ -232,7 +177,7 @@ describe("wallet ledger", () => {
     assert.equal(await currentBalance(customer.id), 4000);
   });
 
-  test("converting a hold writes the debit ledger row without moving the balance", async () => {
+  test("converting a hold writes the paired ledger rows without moving the balance", async () => {
     const order = await makeOrder(3000);
 
     await walletService.placeHold({
@@ -241,16 +186,26 @@ describe("wallet ledger", () => {
       amount: 3000,
     });
     assert.equal(await currentBalance(customer.id), 1000);
+    const creditTotalBefore = await customerRepo.getCreditTotal(customer.id);
 
     const converted = await walletService.convertHold(order.id, "test conversion");
     assert.equal(converted.success, true);
     assert.equal(converted.hold.status, "converted");
+    // The spend row is a real Django payment record now
+    // (consumer_orderpaymentrecord, order_id NOT NULL) — the old
+    // deposits.type === "debit" axis has no live equivalent.
     assert.equal(Number(converted.deposit.amount), 3000);
-    assert.equal(converted.deposit.type, "debit");
+    assert.equal(converted.deposit.orderId, order.id, "the payment record is pinned to the order");
 
-    // Balance already moved at hold time; conversion is ledger-only.
+    // Balance already moved at hold time; conversion swaps the active hold
+    // for a negative credit entry, leaving the balance unchanged.
     assert.equal(await currentBalance(customer.id), 1000);
-    await assertLedgerMatchesBalance(customer.id);
+    assert.equal(
+      await customerRepo.getCreditTotal(customer.id),
+      creditTotalBefore - 3000,
+      "the paired negative credit entry makes the spend permanent"
+    );
+    await assertLedgerInvariant(customer.id);
 
     const convertedTwice = await walletService.convertHold(order.id);
     assert.equal(convertedTwice.success, false);
@@ -268,6 +223,6 @@ describe("wallet ledger", () => {
     const wins = results.filter((r) => r.success).length;
     assert.equal(wins, 1, "exactly one concurrent hold must succeed");
     assert.equal(await currentBalance(customer.id), 200);
-    await assertLedgerMatchesBalance(customer.id);
+    await assertLedgerInvariant(customer.id);
   });
 });

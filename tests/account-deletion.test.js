@@ -5,92 +5,54 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { db } = require("../config/db");
-const { orders, depots, products, dangoteOrderRequests } = require("../db/schema");
-const { customerRepo } = require("../repositories");
+const { dangoteOrderRequests } = require("../db/schema");
+const walletService = require("../services/wallet.service");
 const accountDeletion = require("../services/accountDeletion.service");
 const { generateOrderReference } = require("../utils/helpers");
 const { closeDb } = require("./helpers");
+const { seedState, seedProduct, seedCustomer, seedOrder } = require("./liveFixtures");
 
 const RUN = Date.now();
-let seq = 0;
 
-async function depotFixture() {
-  const [existing] = await db.select().from(depots).limit(1);
-  if (existing) return existing.id;
-  const [row] = await db
-    .insert(depots)
-    .values({
-      name: "Delete Depot",
-      code: `DEL${String(RUN).slice(-4)}`,
-      address: "1 Test Rd",
-      city: "Lagos",
-      state: "Lagos",
-      country: "NG",
-      postcode: "100001",
-      maxCapacity: 1000000,
-      establishedYear: "2020",
-    })
-    .returning();
-  return row.id;
-}
-
-async function productFixture() {
-  const [existing] = await db.select().from(products).limit(1);
-  if (existing) return existing.id;
-  const [row] = await db
-    .insert(products)
-    .values({ name: "Delete Product", sku: `DEL-${RUN}`, category: "PMS" })
-    .returning();
-  return row.id;
-}
-
-async function makeOrder(customerId, depotId, productId, status) {
-  const orderNumber = `ORD-DEL-${RUN}-${seq++}`;
-  const [row] = await db
-    .insert(orders)
-    .values({
-      orderNumber,
-      customerId,
-      state: "Lagos",
-      depotId,
-      productId,
-      quantity: 33000,
-      price: "100.00",
-      totalAmount: "3300000.00",
-      deliveryType: "pickup",
-      status,
-      paymentStatus: status === "Pending" ? "Unpaid" : "Paid",
-      ...(status !== "Pending"
-        ? { paymentConfirmedAt: new Date() }
-        : {}),
-    })
-    .returning();
-  return row;
-}
+// Live consumer_order: userId + stateId (no depotId), lowercase status. The
+// Sman statuses the old suite spoke map as Paid→paid, Released→released,
+// Pending→pending (utils/orderStatusMapping.js).
+const LIVE_STATUS = { Paid: "paid", Released: "released", Pending: "pending" };
 
 describe("account deletion blockers", () => {
-  let depotId;
+  let stateId;
   let productId;
 
   before(async () => {
-    depotId = await depotFixture();
-    productId = await productFixture();
+    stateId = (await seedState()).id;
+    productId = (await seedProduct()).id;
   });
 
   after(async () => {
     await closeDb();
   });
 
-  test("Paid in-progress orders name the refs and say they cannot be cancelled", async () => {
-    const customer = await customerRepo.create({
-      name: "Delete Blocker",
-      phone: `+23483${String(RUN).slice(-8)}`,
-      companyName: "Honeywell Adada",
-      status: "Active",
-      balance: "0.00",
+  const makeOrder = (customerId, status) =>
+    seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity: 33000,
+      price: "100.00",
+      totalPrice: "3300000.00",
+      status: LIVE_STATUS[status],
+      ...(status !== "Pending" ? { paymentConfirmedAt: new Date().toISOString() } : {}),
     });
-    const a = await makeOrder(customer.id, depotId, productId, "Paid");
-    const b = await makeOrder(customer.id, depotId, productId, "Released");
+
+  test("Paid in-progress orders name the refs and say they cannot be cancelled", async () => {
+    const customer = await seedCustomer({
+      name: "Delete Blocker",
+      companyName: "Honeywell Adada",
+    });
+    const a = await makeOrder(customer.id, "Paid");
+    const b = await makeOrder(customer.id, "Released");
+    // consumer_order stores no per-order company — the customer's own
+    // companyName is the only source for the reference now.
     const refA = generateOrderReference("Honeywell Adada", a.id);
     const refB = generateOrderReference("Honeywell Adada", b.id);
 
@@ -107,14 +69,11 @@ describe("account deletion blockers", () => {
   });
 
   test("unpaid Pending orders ask the customer to cancel them by ref", async () => {
-    const customer = await customerRepo.create({
+    const customer = await seedCustomer({
       name: "Delete Unpaid",
-      phone: `+23484${String(RUN).slice(-8)}`,
       companyName: "Shell Petroleum",
-      status: "Active",
-      balance: "0.00",
     });
-    const order = await makeOrder(customer.id, depotId, productId, "Pending");
+    const order = await makeOrder(customer.id, "Pending");
     const ref = generateOrderReference("Shell Petroleum", order.id);
 
     const { blockers } = await accountDeletion.collectBlockers(customer.id);
@@ -126,12 +85,9 @@ describe("account deletion blockers", () => {
   });
 
   test("open Dangote requests name the customer-facing reference", async () => {
-    const customer = await customerRepo.create({
+    const customer = await seedCustomer({
       name: "Delete Dangote",
-      phone: `+23485${String(RUN).slice(-8)}`,
       companyName: "Samcode Oil",
-      status: "Active",
-      balance: "0.00",
     });
     const [req] = await db
       .insert(dangoteOrderRequests)
@@ -166,12 +122,14 @@ describe("account deletion blockers", () => {
   });
 
   test("wallet balance names the amount and does not invent a withdraw path", async () => {
-    const customer = await customerRepo.create({
-      name: "Delete Balance",
-      phone: `+23486${String(RUN).slice(-8)}`,
-      status: "Active",
-      balance: "15000.50",
+    const customer = await seedCustomer({ name: "Delete Balance" });
+    // The balance is the sman credit ledger now, not a customers column.
+    const credited = await walletService.credit({
+      customerId: customer.id,
+      amount: 15000.5,
+      description: "account-deletion balance fixture",
     });
+    assert.equal(credited.success, true, JSON.stringify(credited));
 
     const { blockers } = await accountDeletion.collectBlockers(customer.id);
     const message = accountDeletion.formatBlockerMessage(blockers);

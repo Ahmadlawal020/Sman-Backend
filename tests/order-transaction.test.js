@@ -5,25 +5,60 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { db } = require("../config/db");
-const { customerRepo, depositRepo, pfiRepo } = require("../repositories");
+const { customerRepo, depositRepo } = require("../repositories");
+const walletService = require("../services/wallet.service");
+const { seedState, seedProduct, seedCustomer, seedOrder } = require("./liveFixtures");
 const { closeDb } = require("./helpers");
 
-const PHONE = "+2348199000001";
-
-async function fixture(balance) {
-  const existing = await customerRepo.findByPhone(PHONE);
-  if (existing) return customerRepo.update(existing.id, { balance: String(balance) });
-  return customerRepo.create({ name: "Tx Fixture", phone: PHONE, status: "Active", balance: String(balance) });
-}
-
-async function countDeposits(customerId) {
-  const rows = await depositRepo.findByCustomer
-    ? await depositRepo.findByCustomer(customerId)
-    : null;
-  return rows ? rows.length : null;
-}
+// The properties under test (H2/H6): money and its ledger move together, or
+// not at all. Live model — there is no customers.balance column and no
+// customerRepo.debitBalance:
+//
+//   balance = SUM(sman.customer_credits.amount) − SUM(active sman.wallet_holds)
+//
+// A spend is a negative customer_credits entry; when it pays for an order it
+// MUST be paired, in the same transaction, with the real Django ledger row
+// (consumer_orderpaymentrecord, order_id NOT NULL) — that pairing is what
+// walletService.convertHold does, and what these tests hold to the old
+// invariants: commit together, roll back together, and an abort anywhere in
+// the transaction undoes the money movement.
 
 describe("order transactions — money and its ledger roll back together (H2/H6)", () => {
+  let state;
+  let product;
+
+  /** A fresh customer funded with exactly `balance` in ledger credit. */
+  async function fixture(balance) {
+    const customer = await seedCustomer({ name: "Tx Fixture" });
+    if (balance > 0) {
+      const credited = await walletService.credit({
+        customerId: customer.id,
+        amount: balance,
+        description: "order-transaction fixture funding",
+      });
+      assert.equal(credited.success, true, JSON.stringify(credited));
+    }
+    return customer;
+  }
+
+  /** An order for the payment record to hang off (order_id is NOT NULL). */
+  const makeOrder = (customerId, totalAmount) =>
+    seedOrder({
+      customerId,
+      stateId: state.id,
+      productId: product.id,
+      quantity: 100,
+      price: "1.00",
+      totalPrice: String(totalAmount),
+    });
+
+  const balanceOf = (customerId, tx) => customerRepo.getBalance(customerId, tx);
+
+  before(async () => {
+    state = await seedState();
+    product = await seedProduct();
+  });
+
   after(async () => {
     await closeDb();
   });
@@ -33,82 +68,92 @@ describe("order transactions — money and its ledger roll back together (H2/H6)
 
     await assert.rejects(
       db.transaction(async (tx) => {
-        const debited = await customerRepo.debitBalance(c.id, 50, tx);
+        // The live debit primitive: a negative credit-ledger entry.
+        const debited = await customerRepo.recordCreditEntry(c.id, -50, { description: "spend inside tx" }, tx);
         assert.ok(debited, "debit succeeded inside the tx");
-        assert.equal(Number(debited.balance), 50, "balance is 50 *within* the tx");
+        assert.equal(await balanceOf(c.id, tx), 50, "balance is 50 *within* the tx");
         throw new Error("boom — something later failed");
       }),
       /boom/
     );
 
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 100, "rolled back to 100 — the debit did not persist");
+    assert.equal(await balanceOf(c.id), 100, "rolled back to 100 — the debit did not persist");
   });
 
   test("H6: a failing ledger write rolls the debit back", async () => {
-    // This is the defect. Before, the deposit was a swallowed try/catch, so a
-    // debit could commit with no ledger row. Now the deposit is inside the
-    // transaction — if it fails, the money movement is undone.
+    // This is the defect. Before, the ledger write was a swallowed try/catch,
+    // so a debit could commit with no ledger row. Now the paired Django
+    // payment record is inside the transaction — if it fails, the money
+    // movement is undone. (Old trick: type "not_a_valid_type"; the live
+    // equivalent NOT NULL to violate is consumer_orderpaymentrecord.order_id.)
     const c = await fixture(100);
+    const now = new Date().toISOString();
 
     await assert.rejects(
       db.transaction(async (tx) => {
-        const debited = await customerRepo.debitBalance(c.id, 40, tx);
+        const debited = await customerRepo.recordCreditEntry(c.id, -40, { description: "spend awaiting ledger" }, tx);
         assert.ok(debited);
-        // Force the ledger write to fail: `type` only accepts credit|debit.
+        assert.equal(await balanceOf(c.id, tx), 60, "the money moved *within* the tx");
+        // Force the ledger write to fail: order_id is NOT NULL.
         await depositRepo.create(
           {
-            customerId: c.id,
-            amount: "40",
-            type: "not_a_valid_type",
-            description: "should never persist",
-            balanceAfter: "60",
+            orderId: null,
+            amount: "40.00",
+            paymentDate: now.slice(0, 10),
+            notes: "should never persist",
+            createdAt: now,
+            updatedAt: now,
           },
           tx
         );
       })
     );
 
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 100, "the debit rolled back with the failed ledger write");
+    assert.equal(await balanceOf(c.id), 100, "the debit rolled back with the failed ledger write");
   });
 
   test("a debit and its ledger row commit together", async () => {
+    // The real production path for an order spend: placeHold, then
+    // convertHold — one transaction writing the consumer_orderpaymentrecord
+    // row AND the paired negative customer_credits entry.
     const c = await fixture(100);
-    const before = await countDeposits(c.id);
+    const order = await makeOrder(c.id, 30);
+    const ledgerBefore = (await depositRepo.findByOrder(order.id)).length;
 
-    const balanceAfter = await db.transaction(async (tx) => {
-      const debited = await customerRepo.debitBalance(c.id, 30, tx);
-      await depositRepo.create(
-        {
-          customerId: c.id,
-          amount: "30",
-          type: "debit",
-          description: "committed together",
-          balanceAfter: String(debited.balance),
-        },
-        tx
-      );
-      return debited.balance;
-    });
+    const held = await walletService.placeHold({ customerId: c.id, orderId: order.id, amount: 30 });
+    assert.equal(held.success, true, JSON.stringify(held));
+    assert.equal(await balanceOf(c.id), 70, "the hold already makes the money unspendable");
 
-    assert.equal(Number(balanceAfter), 70);
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 70, "balance persisted");
-    if (before !== null) {
-      assert.equal(await countDeposits(c.id), before + 1, "exactly one ledger row was added");
-    }
+    const converted = await walletService.convertHold(order.id, "committed together");
+    assert.equal(converted.success, true, JSON.stringify(converted));
+
+    assert.equal(await balanceOf(c.id), 70, "balance persisted");
+    const ledgerAfter = await depositRepo.findByOrder(order.id);
+    assert.equal(ledgerAfter.length, ledgerBefore + 1, "exactly one ledger row was added");
+    assert.equal(Number(ledgerAfter[0].amount), 30);
+    assert.equal(
+      await customerRepo.getCreditTotal(c.id),
+      70,
+      "the paired negative credit entry made the spend permanent — no recovery when the hold stops being active"
+    );
   });
 
   test("a guarded write returning null can abort the whole transaction", async () => {
     // The createOrder pattern: reserveStock returns null on a lost race; the
     // controller throws {status:400}, which rolls back everything already done
-    // in the transaction. Proven here with the balance as the observable.
+    // in the transaction — including the wallet hold placed for the order.
+    // Proven here with the balance as the observable.
     const c = await fixture(100);
+    const order = await makeOrder(c.id, 25);
 
     await assert.rejects(
       db.transaction(async (tx) => {
-        await customerRepo.debitBalance(c.id, 25, tx);
+        const held = await walletService.placeHold(
+          { customerId: c.id, orderId: order.id, amount: 25, description: "hold pending stock" },
+          tx
+        );
+        assert.equal(held.success, true, JSON.stringify(held));
+        assert.equal(await balanceOf(c.id, tx), 75, "the hold is live *within* the tx");
         // Simulate a guarded write that lost its race.
         const lost = null;
         if (!lost) throw Object.assign(new Error("Insufficient stock"), { status: 400 });
@@ -116,7 +161,7 @@ describe("order transactions — money and its ledger roll back together (H2/H6)
       (err) => err.status === 400
     );
 
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 100, "the earlier debit was rolled back by the abort");
+    assert.equal(await balanceOf(c.id), 100, "the earlier hold was rolled back by the abort");
+    assert.equal(await walletService.findHoldByOrder(order.id), null, "no orphaned hold row survives");
   });
 });

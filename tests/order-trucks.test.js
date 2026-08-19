@@ -6,114 +6,62 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { orders, depots, products } = require("../db/schema");
-const { customerRepo, truckRepo, orderTruckRepo, bankAccountRepo } = require("../repositories");
+const { orderRepo, orderTruckRepo } = require("../repositories");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedCustomer, seedOrder, seedFleetTruck } = require("./liveFixtures");
 
-// placeOrder pays into the depot's own bank account (manual deposit only —
-// no Paystack DVA), so whichever depot this resolves to needs one linked.
-async function depotFixture() {
-  const [existing] = await db.select().from(depots).limit(1);
-  const depotId = existing
-    ? existing.id
-    : (
-        await db
-          .insert(depots)
-          .values({
-            name: "Truck Depot",
-            code: "TRKD",
-            address: "1 Test Rd",
-            city: "Lagos",
-            state: "Lagos",
-            country: "NG",
-            postcode: "100001",
-            maxCapacity: 1000000,
-            establishedYear: "2020",
-          })
-          .returning()
-      )[0].id;
-
-  const linked = await bankAccountRepo.findAll({ depotId, status: "Active" });
-  if (linked.length === 0) {
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Truck Depot Account",
-      accountNumber: `TRKDACC${depotId}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-  }
-
-  return depotId;
-}
-
-async function productFixture() {
-  const [existing] = await db.select().from(products).limit(1);
-  if (existing) return existing.id;
-  const [row] = await db
-    .insert(products)
-    .values({ name: "Truck Product", sku: "TRKD-PRD", category: "PMS" })
-    .returning();
-  return row.id;
-}
-
-let seq = 0;
 const RUN = Date.now();
-async function makeOrder(customerId, depotId, productId, { deliveryType, quantity } = {}) {
-  const [row] = await db
-    .insert(orders)
-    .values({
-      orderNumber: `ORD-TRK-${RUN}-${seq++}`,
-      customerId,
-      state: "Lagos",
-      depotId,
-      productId,
-      quantity: quantity ?? 60000,
-      price: "100.00",
-      totalAmount: "6000000.00",
-      deliveryType: deliveryType || "delivery",
-      status: "Paid",
-      paymentStatus: "Paid",
-    })
-    .returning();
-  return row;
-}
 
-describe("release-time truck allocation (delivery) — order_trucks", () => {
-  let depotId;
+describe("release-time truck allocation (delivery) — consumer_truckallocation", () => {
+  let stateId;
   let productId;
   let customerId;
   let releaseStaff;
   let fleetTruck;
 
   before(async () => {
-    depotId = await depotFixture();
-    productId = await productFixture();
-    const customer = await customerRepo.create({
-      name: "Truck Customer",
-      phone: `+23482${String(RUN).slice(-8)}`,
-      status: "Active",
-    });
+    // Live model: orders carry a stateId (no depotId exists on
+    // consumer_order at all); the release flow never needs a depot row.
+    const state = await seedState({ name: `Truck State ${RUN}` });
+    stateId = state.id;
+    const product = await seedProduct({ name: `Truck Product ${RUN}` });
+    productId = product.id;
+    const customer = await seedCustomer({ name: "Truck Customer" });
     customerId = customer.id;
     releaseStaff = await staffTokenWithRoles(["release"], "test-trk-release@soroman.test");
-    fleetTruck = await truckRepo.create({
-      plateNumber: `FLEET-${String(RUN).slice(-6)}`,
-      model: "Actros",
-      capacity: "45000 L",
-    });
+    fleetTruck = await seedFleetTruck({ plateNumber: `FLEET-${String(RUN).slice(-6)}` });
   });
 
   after(async () => {
     await closeDb();
   });
 
-  test("a delivery release creates one load per truck, copying the fleet plate", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      deliveryType: "delivery",
-      quantity: 60000,
+  // A paid delivery order seeded straight into the live tables ("paid" is
+  // Django's lowercase status; paymentStatus is derived, not stored).
+  const makeOrder = ({ deliveryType, quantity } = {}) =>
+    seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity: quantity ?? 60000,
+      price: "100.00",
+      status: "paid",
+      releaseType: deliveryType || "delivery",
     });
+
+  // KNOWN CUTOVER REGRESSION (expected failure): releaseOrder's
+  // truck-allocation loop has NOT been migrated to the live schema — see the
+  // FLAGGED block in controllers/administration/order.controller.js:25-60.
+  // It inserts truckIndex/truckId/status columns consumer_truckallocation
+  // does not have, writes the plate string into the integer truck_number
+  // ordinal, and never supplies the NOT NULL ticket_number/order_product_id
+  // — so a delivery release with trucks 500s and rolls back. It currently
+  // dies even earlier: the Paid→Released transition itself passes
+  // `set: { releasedAt: new Date() }` into a mode:'string' timestamptz
+  // column (see the note on the pickup-release test below). The assertions
+  // below are written in live vocabulary so they hold once that pass lands.
+  test("a delivery release creates one load per truck, copying the fleet plate", async () => {
+    const order = await makeOrder({ deliveryType: "delivery", quantity: 60000 });
 
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
@@ -130,24 +78,20 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
 
     const loads = await orderTruckRepo.findByOrder(order.id);
     assert.equal(loads.length, 2);
-    assert.deepEqual(loads.map((l) => l.truckIndex), [1, 2]);
+    // Live: truckNumber is the ordinal; the plate lives in plateNumber.
+    assert.deepEqual(loads.map((l) => l.truckNumber), [1, 2]);
 
-    const fleetLoad = loads.find((l) => l.truckId === fleetTruck.id);
-    assert.ok(fleetLoad, "fleet load present");
-    assert.equal(fleetLoad.truckNumber, fleetTruck.plateNumber, "plate copied from the registry");
-    assert.equal(fleetLoad.status, "pending");
+    const fleetLoad = loads.find((l) => l.plateNumber === fleetTruck.plateNumber);
+    assert.ok(fleetLoad, "fleet load present — plate copied from the registry");
+    assert.equal(fleetLoad.ticketStatus, "pending");
     assert.equal(fleetLoad.driverName, "Musa");
 
-    const extLoad = loads.find((l) => l.truckId === null);
+    const extLoad = loads.find((l) => l.plateNumber === "EXT-9001");
     assert.ok(extLoad, "external load present");
-    assert.equal(extLoad.truckNumber, "EXT-9001");
   });
 
-  test("the truck quantities must sum to the order quantity (400), and nothing is released", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      deliveryType: "delivery",
-      quantity: 60000,
-    });
+  test("the truck quantities must sum to the order quantity, and nothing is released", async () => {
+    const order = await makeOrder({ deliveryType: "delivery", quantity: 60000 });
 
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
@@ -157,13 +101,13 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
     assert.equal(res.status, 400);
 
     // The transition rolled back with the bad allocation.
-    const [after] = await db.select().from(orders).where(require("drizzle-orm").eq(orders.id, order.id));
+    const after = await orderRepo.findById(order.id);
     assert.equal(after.status, "Paid", "still Paid — release rolled back");
     assert.equal(await orderTruckRepo.countByOrder(order.id), 0, "no loads persisted");
   });
 
   test("a delivery release with no trucks is refused (400)", async () => {
-    const order = await makeOrder(customerId, depotId, productId, { deliveryType: "delivery" });
+    const order = await makeOrder({ deliveryType: "delivery" });
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
@@ -172,10 +116,7 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
   });
 
   test("a pickup release must NOT carry trucks — those are captured at the gate (400)", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      deliveryType: "pickup",
-      quantity: 60000,
-    });
+    const order = await makeOrder({ deliveryType: "pickup", quantity: 60000 });
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
@@ -183,8 +124,15 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
     assert.equal(res.status, 400);
   });
 
+  // KNOWN CUTOVER REGRESSION (expected failure): the desk release endpoint
+  // 500s on the Paid→Released transition itself — releaseOrder passes
+  // `set: { releasedAt: new Date() }` (controllers/administration/
+  // order.controller.js:196) but live consumer_order.released_at is a
+  // mode:'string' timestamptz, so the Date reaches Postgres as
+  // "Wed Aug 19 2026 … (West Africa Time)" and the UPDATE fails. (The
+  // payment path is unaffected — releaseOnPayment passes an ISO string.)
   test("a pickup release with no trucks is allowed and just flips status", async () => {
-    const order = await makeOrder(customerId, depotId, productId, { deliveryType: "pickup" });
+    const order = await makeOrder({ deliveryType: "pickup" });
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
@@ -195,7 +143,7 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
   });
 
   test("a truck with neither a fleet id nor a plate is rejected by validation (400)", async () => {
-    const order = await makeOrder(customerId, depotId, productId, { deliveryType: "delivery" });
+    const order = await makeOrder({ deliveryType: "delivery" });
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
@@ -203,15 +151,19 @@ describe("release-time truck allocation (delivery) — order_trucks", () => {
     assert.equal(res.status, 400);
   });
 
+  // KNOWN CUTOVER REGRESSION (expected failure): same released_at Date bug
+  // as above — the transition 500s before the fleet lookup can reject the
+  // unknown id, so the caller sees 500 rather than 400. The rollback
+  // assertion still holds (the transaction does roll back).
   test("an unknown fleet truck id is rejected (400) and the release rolls back", async () => {
-    const order = await makeOrder(customerId, depotId, productId, { deliveryType: "delivery" });
+    const order = await makeOrder({ deliveryType: "delivery" });
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
       .send({ trucks: [{ truckId: 999999, quantity: 60000 }] });
     assert.equal(res.status, 400);
 
-    const [after] = await db.select().from(orders).where(require("drizzle-orm").eq(orders.id, order.id));
+    const after = await orderRepo.findById(order.id);
     assert.equal(after.status, "Paid", "release rolled back");
   });
 });

@@ -51,7 +51,10 @@ describe("customer portal — wallet transaction history", () => {
   test("credits and debits appear newest-first with type/amount/ref/at", async () => {
     const { customer, accessToken } = await registerActiveCustomer(2);
     await walletService.credit({ customerId: customer.id, amount: 500000, description: "Top up", reference: `WT-CR-${RUN}` });
-    await walletService.debit({ customerId: customer.id, amount: 200000, description: "Order pay", reference: `WT-DR-${RUN}` });
+    // Live model: walletService.debit accepts no reference — a direct debit
+    // is a bare negative sman.customer_credits row (description only), so it
+    // surfaces with ref: null. Only credits carry a reference on this path.
+    await walletService.debit({ customerId: customer.id, amount: 200000, description: "Order pay" });
 
     const res = await request(app)
       .get(`${WALLET}/transactions`)
@@ -60,13 +63,18 @@ describe("customer portal — wallet transaction history", () => {
 
     const rows = res.body.data.data;
     assert.equal(rows.length, 2);
-    // Newest first — the debit was the last write.
+    // Newest first — the debit was the last write. Amounts are ledger-signed
+    // on the live contract: `type` is derived from the sign of the
+    // customer_credits amount, and the amount itself keeps that sign, so a
+    // debit reads as a negative number rather than (type, magnitude).
     assert.equal(rows[0].type, "debit");
-    assert.equal(rows[0].amount, 200000);
-    assert.equal(rows[0].ref, `WT-DR-${RUN}`);
+    assert.equal(rows[0].amount, -200000);
+    assert.equal(rows[0].ref, null);
+    assert.equal(rows[0].description, "Order pay");
     assert.ok(rows[0].at, "carries a timestamp");
     assert.equal(rows[1].type, "credit");
     assert.equal(rows[1].amount, 500000);
+    assert.equal(rows[1].ref, `WT-CR-${RUN}`);
     assert.equal(res.body.data.pagination.total, 2);
   });
 

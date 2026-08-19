@@ -7,7 +7,11 @@ const request = require("supertest");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { customerOtps, customers } = require("../db/schema");
+// Live schema: the old clean-room `customers` table is gone — customer rows
+// live in Django's consumer_customer (7 columns, no status/phone_verified_at;
+// see repositories/customer.repository.js). customerOtps is Sman-owned (sman
+// schema) and unchanged.
+const { customerOtps, consumerCustomer } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const { customerRepo, sessionRepo } = require("../repositories");
 const { TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff, closeDb } = require("./helpers");
@@ -116,8 +120,9 @@ describe("end-to-end journeys", () => {
 
     const created = await customerRepo.findByPhone(phone);
     assert.ok(created, "customer created");
-    assert.equal(created.status, "Pending", "registered, but the number is not yet proven");
-    assert.equal(created.phoneVerifiedAt, null, "phone unverified until the code is used");
+    // Pending-until-verified status and phoneVerifiedAt tracking are gone
+    // with the live cutover — asserted in the dedicated KNOWN REGRESSION
+    // tests below, not here, so the rest of the journey still composes.
 
     // 2. Verify the code. Proving control of the number IS the activation
     //    gate — no staff approval step exists.
@@ -127,15 +132,13 @@ describe("end-to-end journeys", () => {
     assert.equal(verified.status, 200, "verify");
     const deviceOne = verified.body.data;
     assert.ok(deviceOne.accessToken && deviceOne.refreshToken);
-    assert.ok(deviceOne.customer.phoneVerifiedAt, "phone now verified");
-    assert.equal(deviceOne.customer.status, "Active", "activated by proving the number");
+    assert.equal(deviceOne.customer.name, "Grace Hopper", "the row registered is the row signed in");
 
     // 3. Browse.
     const me = await request(app)
       .get(`${PORTAL}/me`)
       .set("Authorization", `Bearer ${deviceOne.accessToken}`);
     assert.equal(me.status, 200, "signed in");
-    assert.equal(me.body.data.customer.name, "Grace Hopper");
 
     // 4. Sign in from a second device, via login rather than register.
     await request(app).post(`${PORTAL}/request-otp`).send({ phone });
@@ -178,18 +181,10 @@ describe("end-to-end journeys", () => {
       .send({ refreshToken: deviceTwo.refreshToken });
     assert.equal(rotated.status, 200, "rotate");
 
-    // 8. A staff-side deactivation reaches the live session without re-login,
-    //    because status is read from the row rather than baked into the token.
-    await customerRepo.update(created.id, { status: "Inactive" });
-    const afterDeactivation = await request(app)
-      .get(`${PORTAL}/me`)
-      .set("Authorization", `Bearer ${rotated.body.data.accessToken}`);
-    assert.equal(
-      afterDeactivation.status,
-      401,
-      "deactivation takes effect immediately, not at token expiry"
-    );
-    await customerRepo.update(created.id, { status: "Active" });
+    // 8. (was: staff-side deactivation locks out the live session) — the
+    //    live consumer_customer table has no status column, so deactivation
+    //    is not representable at all. Covered by the KNOWN REGRESSION test
+    //    below rather than silently dropped.
 
     // 9. Sign out.
     const out = await request(app)
@@ -229,12 +224,8 @@ describe("end-to-end journeys", () => {
     assert.equal(created.status, 201, "staff can create a customer");
     const row = await customerRepo.findByPhone(phone);
     assert.ok(row, "stored under the normalised E.164 number, not as typed");
-    assert.equal(
-      row.status,
-      "Active",
-      "staff met them in person — that vouching is the vetting, so no OTP gate applies"
-    );
-    assert.equal(row.phoneVerifiedAt, null, "but the number itself is still unproven");
+    // Active-on-creation status and phoneVerifiedAt tracking have no live
+    // columns — see the KNOWN REGRESSION tests below.
 
     // 2. Staff creation is idempotent-safe: the same number cannot be entered twice.
     const duplicate = await request(app)
@@ -251,16 +242,14 @@ describe("end-to-end journeys", () => {
       .send({ phone, code: DEV_CODE });
 
     assert.equal(verified.status, 200, "a staff-created customer can sign in to the portal");
-    assert.equal(verified.body.data.customer.status, "Active", "still Active");
-    assert.ok(
-      verified.body.data.customer.phoneVerifiedAt,
-      "and the number is now proven as well"
-    );
     assert.equal(verified.body.data.customer.name, "Walk In Buyer", "same record, not a new one");
 
     // 4. One customer, not two. Queried directly rather than through findAll,
     //    which clamps limit to 100 and could miss the row entirely.
-    const matches = await db.select().from(customers).where(eq(customers.phone, phone));
+    const matches = await db
+      .select()
+      .from(consumerCustomer)
+      .where(eq(consumerCustomer.phoneNumber, phone));
     assert.equal(matches.length, 1, "the two creation paths must not fork the identity");
   });
 
@@ -307,5 +296,89 @@ describe("end-to-end journeys", () => {
       401,
       "and the reverse"
     );
+  });
+
+  // ── KNOWN REGRESSIONS (live cutover) ──────────────────────────────────────
+  // Django's consumer_customer has no status or phone_verified_at column
+  // (see repositories/customer.repository.js's header), so the whole
+  // Pending → Active lifecycle and the staff-deactivation kill switch have
+  // nothing to persist to. These fail HONESTLY — they assert the product
+  // behavior that shipped before the cutover and is currently gone. Do not
+  // delete or weaken them; they are the record of the gap.
+
+  test("KNOWN REGRESSION: registration no longer records Pending status or phone verification", async () => {
+    const phone = "+2348133000004";
+    await db.delete(customerOtps);
+    const stale = await customerRepo.findByPhone(phone);
+    if (stale) await customerRepo.deleteById(stale.id);
+
+    await request(app)
+      .post(`${PORTAL}/register`)
+      .send({ phone, name: "Status Regression" });
+    const created = await customerRepo.findByPhone(phone);
+    assert.ok(created, "customer created");
+    assert.equal(created.status, "Pending", "no live status column — Pending gate is gone");
+    assert.equal(created.phoneVerifiedAt, null, "no live phone_verified_at column");
+
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
+      .send({ phone, code: DEV_CODE });
+    assert.equal(verified.status, 200);
+    assert.equal(verified.body.data.customer.status, "Active", "OTP promotion has nowhere to write");
+    assert.ok(verified.body.data.customer.phoneVerifiedAt, "verification timestamp not recorded");
+  });
+
+  test("KNOWN REGRESSION: staff deactivation no longer locks out a live session", async () => {
+    const phone = "+2348133000005";
+    await db.delete(customerOtps);
+    const stale = await customerRepo.findByPhone(phone);
+    if (stale) await customerRepo.deleteById(stale.id);
+
+    await request(app)
+      .post(`${PORTAL}/register`)
+      .send({ phone, name: "Deactivation Regression" });
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
+      .send({ phone, code: DEV_CODE });
+    assert.equal(verified.status, 200);
+    const accessToken = verified.body.data.accessToken;
+
+    const created = await customerRepo.findByPhone(phone);
+    // No status column: this update is silently a no-op, so the session
+    // stays alive. Before the cutover this 401'd immediately.
+    await customerRepo.update(created.id, { status: "Inactive" });
+    const afterDeactivation = await request(app)
+      .get(`${PORTAL}/me`)
+      .set("Authorization", `Bearer ${accessToken}`);
+    assert.equal(
+      afterDeactivation.status,
+      401,
+      "deactivation should take effect immediately — impossible without a status column"
+    );
+  });
+
+  test("an authenticated /me carries the name/phone display aliases", async () => {
+    // Guards session.repository.js's findWithPrincipal applying
+    // customer.repository.js's withDisplay — without it req.customer.name/
+    // req.customer.phone are undefined on every authenticated request.
+    const phone = "+2348133000006";
+    await db.delete(customerOtps);
+    const stale = await customerRepo.findByPhone(phone);
+    if (stale) await customerRepo.deleteById(stale.id);
+
+    await request(app)
+      .post(`${PORTAL}/register`)
+      .send({ phone, name: "Alias Bug" });
+    const verified = await request(app)
+      .post(`${PORTAL}/verify-otp`).set(NATIVE_TRANSPORT)
+      .send({ phone, code: DEV_CODE });
+    assert.equal(verified.status, 200);
+
+    const me = await request(app)
+      .get(`${PORTAL}/me`)
+      .set("Authorization", `Bearer ${verified.body.data.accessToken}`);
+    assert.equal(me.status, 200);
+    assert.equal(me.body.data.customer.name, "Alias Bug", "the profile must carry the display name");
+    assert.equal(me.body.data.customer.phone, phone, "the profile must carry the phone");
   });
 });

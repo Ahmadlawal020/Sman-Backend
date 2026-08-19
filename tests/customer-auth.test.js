@@ -8,6 +8,7 @@ const jwt = require("jsonwebtoken");
 
 const app = require("../app");
 const { customerRepo, customerOtpRepo, sessionRepo } = require("../repositories");
+const walletService = require("../services/wallet.service");
 const { signAccessToken } = require("../services/token.service");
 const { closeDb, TEST_STAFF, NATIVE_TRANSPORT, ensureTestStaff } = require("./helpers");
 
@@ -19,17 +20,27 @@ const LIMIT_OVERSHOOT = 8;
 
 // Distinct numbers per concern, so one test's rate-limit budget cannot starve
 // another's. All valid Nigerian mobiles.
+//
+// Prefix +234810 is reserved for THIS file. It must not collide with the
+// time-derived numbers other suites mint in the same serial run —
+// identity.test.js and otp-demo.test.js both generate +234811 plus seven
+// digits of Date.now()%1e7, which cycles through every fixed +234811xxxxxxx
+// value (this file's old numbers included) every ~2.8 hours. consumer_customer
+// has no unique constraint on phone_number, so such a collision silently
+// leaves duplicate rows and findByPhone starts returning the other suite's
+// customer. Before claiming a new prefix here, grep tests/ for it first.
 const PHONES = {
-  register: "+2348111000001",
-  existing: "+2348111000002",
-  unknown: "+2348111000003",
-  attempts: "+2348111000004",
-  session: "+2348111000005",
+  register: "+2348105550001",
+  existing: "+2348105550002",
+  unknown: "+2348105550003",
+  attempts: "+2348105550004",
+  session: "+2348105550005",
   intl: "+447400123456",
-  pending: "+2348111000007",
-  scoping: "+2348111000008",
-  delete: "+2348111000009",
-  deleteBalance: "+2348111000010",
+  pending: "+2348105550007",
+  scoping: "+2348105550008",
+  delete: "+2348105550009",
+  deleteBalance: "+2348105550010",
+  company: "+2348105550011",
 };
 
 const { db } = require("../config/db");
@@ -48,16 +59,17 @@ async function clearOtpHistory() {
 }
 
 async function resetCustomer(phone, overrides = {}) {
+  // No status column on consumer_customer — the old { status: "Active" }
+  // stamp is gone with the lifecycle (see the account-state note below).
   await clearOtpHistory();
   const existing = await customerRepo.findByPhone(phone);
   if (existing) {
-    return customerRepo.update(existing.id, { status: "Active", ...overrides });
+    return customerRepo.update(existing.id, overrides);
   }
   return customerRepo.create({
     name: "Fixture Customer",
     phone,
     companyName: "",
-    status: "Active",
     ...overrides,
   });
 }
@@ -123,7 +135,10 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
   // --- registration --------------------------------------------------------
 
-  test("registering an unknown number creates a Pending customer", async () => {
+  test("registering an unknown number creates a customer", async () => {
+    // consumer_customer has no status column — the old Pending/Active
+    // lifecycle is gone (accepted 2026-08-19). What still matters: the row
+    // exists and no session is issued until the OTP is verified.
     await clearOtpHistory();
     const existing = await customerRepo.findByPhone(PHONES.register);
     if (existing) await customerRepo.deleteById(existing.id);
@@ -133,9 +148,9 @@ describe("customer auth — register, OTP, enumeration safety", () => {
       .send({ phone: PHONES.register, name: "Ada Lovelace", companyName: "Analytical Ltd" });
 
     assert.equal(res.status, 200);
+    assert.equal(res.body.data?.accessToken, undefined, "registration alone must not issue a session");
     const created = await customerRepo.findByPhone(PHONES.register);
     assert.ok(created, "customer row created");
-    assert.equal(created.status, "Pending", "must not be Active on self-registration");
     assert.equal(created.name, "Ada Lovelace");
     assert.equal(created.companyName, "Analytical Ltd");
   });
@@ -152,7 +167,9 @@ describe("customer auth — register, OTP, enumeration safety", () => {
   });
 
   test("companyName is optional", async () => {
-    const phone = "+2348111000009";
+    // Own number — this test deletes and re-registers it, which must never
+    // eat another concern's fixture (it used to share PHONES.delete).
+    const phone = PHONES.company;
     const existing = await customerRepo.findByPhone(phone);
     if (existing) await customerRepo.deleteById(existing.id);
 
@@ -260,7 +277,6 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     assert.equal(res.status, 200);
     assert.ok(res.body.data.accessToken);
     assert.ok(res.body.data.refreshToken);
-    assert.ok(res.body.data.customer.phoneVerifiedAt, "phone marked verified");
 
     const decoded = jwt.decode(res.body.data.accessToken);
     assert.equal(decoded.aud, "customer");
@@ -426,9 +442,16 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
   // --- account state -------------------------------------------------------
 
-  test("verifying the code activates the account — there is no staff approval", async () => {
-    // Proving control of the number IS the gate. Pending means "registered,
-    // phone not yet proven", not "awaiting a human".
+  // The Pending→Active promotion, "Inactive cannot authenticate", and
+  // "deactivation kills a live session" tests stood here. consumer_customer
+  // (Django's real table) has no status column, so the whole customer-status
+  // lifecycle lost its backing in the live-DB cutover. Decision (2026-08-19):
+  // accepted as gone rather than rebuilt on a sman table — proving control of
+  // the phone via OTP is the activation gate, and there is currently no
+  // deactivation mechanism in this backend. If deactivation returns, restore
+  // these tests from git history alongside its new storage.
+
+  test("verifying as a fresh registrant issues a session", async () => {
     await clearOtpHistory();
     const stray = await customerRepo.findByPhone(PHONES.pending);
     if (stray) await customerRepo.deleteById(stray.id);
@@ -437,76 +460,26 @@ describe("customer auth — register, OTP, enumeration safety", () => {
       .post(`${BASE}/register`)
       .send({ phone: PHONES.pending, name: "Newly Registered" });
 
-    const beforeVerify = await customerRepo.findByPhone(PHONES.pending);
-    assert.equal(beforeVerify.status, "Pending", "unproven until the code is used");
-
     const verified = await request(app)
       .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
       .send({ phone: PHONES.pending, code: DEV_CODE });
 
     assert.equal(verified.status, 200);
-    assert.equal(verified.body.data.customer.status, "Active", "promoted on first verification");
-    assert.ok(verified.body.data.customer.phoneVerifiedAt);
+    assert.ok(verified.body.data.accessToken, "first verification signs the registrant in");
   });
 
-  test("verification does not resurrect a deactivated account", async () => {
-    // Inactive is a staff decision; passing an OTP must never undo it.
-    const customer = await resetCustomer(PHONES.pending);
-    await request(app).post(`${BASE}/request-otp`).send({ phone: PHONES.pending });
-    await customerRepo.update(customer.id, { status: "Inactive" });
-
-    try {
-      const res = await request(app)
-        .post(`${BASE}/verify-otp`).set(NATIVE_TRANSPORT)
-        .send({ phone: PHONES.pending, code: DEV_CODE });
-
-      assert.equal(res.status, 401, "a deactivated account cannot authenticate");
-      const after = await customerRepo.findById(customer.id);
-      assert.equal(after.status, "Inactive", "and stays deactivated");
-      assert.ok(
-        await customerOtpRepo.findLive(customer.id),
-        "the code is not burned — the refusal happens before it is consumed"
-      );
-    } finally {
-      await customerRepo.update(customer.id, { status: "Active" });
-    }
-  });
-
-  test("the ordering gate still rejects anything not Active", async () => {
-    // Asserted directly until §8 ships a route that uses it.
+  test("the ordering gate admits any authenticated customer", async () => {
+    // requireActiveCustomer is a deliberate pass-through now (see
+    // middleware/verifyCustomer.js) — holding a session token, which requires
+    // having passed OTP verification, is the activation gate.
     const { requireActiveCustomer } = require("../middleware/verifyCustomer");
-    for (const status of ["Pending", "Inactive"]) {
-      let outcome = null;
-      requireActiveCustomer(
-        { customer: { status } },
-        { status: (c) => ({ json: (b) => (outcome = { code: c, body: b }) }) },
-        () => (outcome = "allowed")
-      );
-      assert.equal(outcome.code, 403, `${status} must not be able to order`);
-    }
-
     let allowed = null;
     requireActiveCustomer(
-      { customer: { status: "Active" } },
+      { customer: { id: 1 } },
       { status: () => ({ json: () => {} }) },
       () => (allowed = true)
     );
-    assert.equal(allowed, true, "Active passes");
-  });
-
-  test("an Inactive customer's live session stops working", async () => {
-    const customer = await resetCustomer(PHONES.session);
-    const { accessToken } = await signIn(PHONES.session);
-
-    await customerRepo.update(customer.id, { status: "Inactive" });
-    try {
-      const res = await request(app)
-        .get(`${BASE}/me`)
-        .set("Authorization", `Bearer ${accessToken}`);
-      assert.equal(res.status, 401);
-    } finally {
-      await customerRepo.update(customer.id, { status: "Active" });
-    }
+    assert.equal(allowed, true, "an authenticated customer passes");
   });
 
   // --- account deletion (App Store 5.1.1(v), OTP-gated) ---------------------
@@ -539,11 +512,10 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     assert.ok(res.body.data.deletedAt);
 
     const after = await customerRepo.findById(customerId);
-    assert.equal(after.status, "Inactive");
+    // No status/phoneVerifiedAt columns live — anonymization is the tombstone.
     assert.equal(after.name, "Deleted User");
     assert.equal(after.phone, `deleted_${customerId}`);
     assert.equal(after.email, "");
-    assert.equal(after.phoneVerifiedAt, null);
 
     const me = await request(app)
       .get(`${BASE}/me`)
@@ -574,7 +546,7 @@ describe("customer auth — register, OTP, enumeration safety", () => {
     assert.equal(res.status, 401, JSON.stringify(res.body));
     const after = await customerRepo.findById(customer.id);
     assert.equal(after.phone, phone, "account must remain intact");
-    assert.equal(after.status, "Active");
+    assert.equal(after.name, "Wrong Purpose", "not anonymized");
   });
 
   test("DELETE /account requires a verification code", async () => {
@@ -589,9 +561,36 @@ describe("customer auth — register, OTP, enumeration safety", () => {
   });
 
   test("request-otp and delete refuse when the wallet still has a balance", async () => {
+    // Live model: there is no customers.balance column to poke — the blocker
+    // (accountDeletionService.collectBlockers) reads customerRepo.getBalance,
+    // i.e. SUM(sman.customer_credits) − SUM(active sman.wallet_holds). Fund
+    // and drain the wallet through the real ledger instead.
     const phone = PHONES.deleteBalance;
     const { accessToken, customer } = await signIn(phone, "Has Balance");
-    await customerRepo.update(customer.id, { balance: "150.00" });
+    // register never overwrites an existing profile, so the row keeps
+    // whatever name it was first created with — capture it for the
+    // not-anonymized check at the end.
+    const nameBefore = (await customerRepo.findById(customer.id)).name;
+
+    const drain = async () => {
+      const left = await customerRepo.getBalance(customer.id);
+      if (left > 0) {
+        const drained = await walletService.debit({
+          customerId: customer.id,
+          amount: left,
+          description: "test drain — clear the deletion blocker",
+        });
+        assert.equal(drained.success, true, JSON.stringify(drained));
+      }
+    };
+    await drain(); // the fixture customer persists across runs — start from 0
+
+    const funded = await walletService.credit({
+      customerId: customer.id,
+      amount: 150,
+      description: "deletion-blocker fixture funding",
+    });
+    assert.equal(funded.success, true, JSON.stringify(funded));
 
     try {
       const otpRes = await request(app)
@@ -601,11 +600,16 @@ describe("customer auth — register, OTP, enumeration safety", () => {
       assert.match(otpRes.body.message, /wallet/i);
       assert.match(otpRes.body.message, /₦150\.00/);
 
-      await customerRepo.update(customer.id, { balance: "0.00" });
+      await drain();
       await request(app)
         .post(`${BASE}/account/request-otp`)
         .set("Authorization", `Bearer ${accessToken}`);
-      await customerRepo.update(customer.id, { balance: "150.00" });
+      const refunded = await walletService.credit({
+        customerId: customer.id,
+        amount: 150,
+        description: "deletion-blocker fixture re-funding",
+      });
+      assert.equal(refunded.success, true, JSON.stringify(refunded));
 
       const res = await request(app)
         .delete(`${BASE}/account`)
@@ -619,9 +623,11 @@ describe("customer auth — register, OTP, enumeration safety", () => {
 
       const after = await customerRepo.findById(customer.id);
       assert.equal(after.phone, phone, "PII must remain when deletion is blocked");
-      assert.equal(after.status, "Active");
+      // No status column live — the row surviving un-anonymized is the check.
+      assert.equal(after.name, nameBefore, "not anonymized");
+      assert.notEqual(after.name, "Deleted User");
     } finally {
-      await customerRepo.update(customer.id, { balance: "0.00" });
+      await drain();
     }
   });
 

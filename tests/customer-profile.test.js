@@ -39,24 +39,24 @@ describe("customer portal — own profile", () => {
     assert.equal(res.status, 401);
   });
 
-  test("GET returns the customer with address and virtual account", async () => {
-    const { customer, accessToken } = await registerCustomer("1");
-    await customerRepo.update(customer.id, {
-      address: "12 Depot Rd, Apapa",
-      virtualAccountNumber: `99${String(RUN).slice(-8)}`,
-      virtualAccountBank: "Test Bank",
-      virtualAccountName: "SOROMAN / PROFILE",
-    });
+  test("GET returns the customer profile shape", async () => {
+    // Post-cutover contract: consumer_customer has no address column and
+    // Paystack DVAs are disabled (manual deposit only), so `address` is always
+    // "" and `virtualAccount` is always null. Both keys are deliberately kept
+    // in the response shape — see the profilePayload comment in
+    // controllers/portal/profile.controller.js — so clients don't need a
+    // contract change if either feature returns.
+    const { accessToken } = await registerCustomer("1");
 
     const res = await request(app).get(PROFILE).set("Authorization", `Bearer ${accessToken}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.data.customer.address, "12 Depot Rd, Apapa");
+    assert.ok("address" in res.body.data.customer, "address key kept in the shape");
+    assert.equal(res.body.data.customer.address, "", "no live address column — always empty");
     assert.equal(res.body.data.customer.companyName, "Profile Co");
-    assert.equal(res.body.data.virtualAccount.bank, "Test Bank");
     assert.ok(!("balance" in res.body.data.customer), "internal fields stay internal");
   });
 
-  test("GET reports a null virtual account until one is assigned", async () => {
+  test("GET reports a null virtual account always (DVA funding disabled)", async () => {
     const { accessToken } = await registerCustomer("2");
     const res = await request(app).get(PROFILE).set("Authorization", `Bearer ${accessToken}`);
     assert.equal(res.status, 200);
@@ -72,7 +72,9 @@ describe("customer portal — own profile", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.data.customer.name, "Renamed Buyer");
     assert.equal(res.body.data.customer.email, "buyer@profile.test");
-    assert.equal(res.body.data.customer.address, "New address");
+    // No live address column: the repo consciously discards `address`, so the
+    // write is accepted (other fields land) but the value is not persisted.
+    assert.equal(res.body.data.customer.address, "");
   });
 
   test("PATCH refuses fields a customer must never write", async () => {

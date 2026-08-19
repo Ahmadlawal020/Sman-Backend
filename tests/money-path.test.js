@@ -1,26 +1,38 @@
 // Must precede any require that reaches config/db.
 require("dotenv").config();
 
-const { test, describe, before, after } = require("node:test");
+const { test, describe, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { customerRepo } = require("../repositories");
+const walletService = require("../services/wallet.service");
+const { seedCustomer } = require("./liveFixtures");
+
 const { closeDb } = require("./helpers");
 
-const PHONE = "+2348177000001";
+// The property under test: the wallet cannot be overdrawn.
+//
+// Live model: there is no customers.balance column (and no debitBalance/
+// creditBalance on customerRepo). The balance is computed —
+// SUM(sman.customer_credits) − SUM(active sman.wallet_holds) — and the ONE
+// guarded spend path is wallet.service.js (debit/placeHold), which locks the
+// customer's consumer_customer row FOR UPDATE before checking the balance.
 
+/** A fresh customer holding exactly `balance` in ledger credit. */
 async function fixture(balance) {
-  const existing = await customerRepo.findByPhone(PHONE);
-  if (existing) {
-    return customerRepo.update(existing.id, { balance: String(balance) });
+  const customer = await seedCustomer({ name: "Money Fixture" });
+  if (balance > 0) {
+    const credited = await walletService.credit({
+      customerId: customer.id,
+      amount: balance,
+      description: "money-path fixture funding",
+    });
+    assert.equal(credited.success, true, JSON.stringify(credited));
   }
-  return customerRepo.create({
-    name: "Money Fixture",
-    phone: PHONE,
-    status: "Active",
-    balance: String(balance),
-  });
+  return customer;
 }
+
+const balanceOf = (customerId) => customerRepo.getBalance(customerId);
 
 describe("money path — the wallet cannot be overdrawn", () => {
   after(async () => {
@@ -29,19 +41,19 @@ describe("money path — the wallet cannot be overdrawn", () => {
 
   test("a debit larger than the balance is refused", async () => {
     const c = await fixture(100);
-    const result = await customerRepo.debitBalance(c.id, 150);
+    const result = await walletService.debit({ customerId: c.id, amount: 150, description: "overdraw attempt" });
 
-    assert.equal(result, null, "returns null rather than throwing or overdrawing");
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 100, "balance untouched");
+    assert.equal(result.success, false, "refused rather than overdrawing");
+    assert.equal(result.insufficient, true);
+    assert.equal(await balanceOf(c.id), 100, "balance untouched");
   });
 
   test("a debit exactly equal to the balance succeeds", async () => {
     const c = await fixture(100);
-    const result = await customerRepo.debitBalance(c.id, 100);
+    const result = await walletService.debit({ customerId: c.id, amount: 100, description: "exact debit" });
 
-    assert.ok(result, "an exact debit is allowed");
-    assert.equal(Number(result.balance), 0);
+    assert.equal(result.success, true, "an exact debit is allowed");
+    assert.equal(await balanceOf(c.id), 0);
   });
 
   test("concurrent debits cannot both win — this is H3", async () => {
@@ -51,81 +63,97 @@ describe("money path — the wallet cannot be overdrawn", () => {
     const c = await fixture(100);
 
     const results = await Promise.all([
-      customerRepo.debitBalance(c.id, 100),
-      customerRepo.debitBalance(c.id, 100),
-      customerRepo.debitBalance(c.id, 100),
+      walletService.debit({ customerId: c.id, amount: 100, description: "racer 1" }),
+      walletService.debit({ customerId: c.id, amount: 100, description: "racer 2" }),
+      walletService.debit({ customerId: c.id, amount: 100, description: "racer 3" }),
     ]);
 
-    const winners = results.filter(Boolean);
+    const winners = results.filter((r) => r.success);
     assert.equal(winners.length, 1, "exactly one debit may succeed");
 
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 0, "balance lands at zero, never negative");
+    assert.equal(await balanceOf(c.id), 0, "balance lands at zero, never negative");
   });
 
   test("many small concurrent debits never overdraw", async () => {
     // Ten racers against a balance covering four.
     const c = await fixture(40);
     const results = await Promise.all(
-      Array.from({ length: 10 }, () => customerRepo.debitBalance(c.id, 10))
+      Array.from({ length: 10 }, (_, i) =>
+        walletService.debit({ customerId: c.id, amount: 10, description: `racer ${i}` })
+      )
     );
 
-    assert.equal(results.filter(Boolean).length, 4, "only what the balance covers");
-    const after = await customerRepo.findById(c.id);
-    assert.equal(Number(after.balance), 0);
+    assert.equal(results.filter((r) => r.success).length, 4, "only what the balance covers");
+    assert.equal(await balanceOf(c.id), 0);
   });
 
-  test("the database refuses a negative balance even if the code is bypassed", async () => {
-    // The CHECK constraint is the backstop for a future unguarded debit —
-    // a new code path, a hand-run UPDATE, a migration script.
+  test("the database refuses to let the ledger go negative even if the code is bypassed", async () => {
+    // Pre-cutover, customers_balance_non_negative (a CHECK constraint) was
+    // the backstop for a future unguarded debit — a new code path, a
+    // hand-run UPDATE, a migration script.
+    //
+    // KNOWN REGRESSION (live cutover): the computed ledger has NO database
+    // backstop at all — sman.customer_credits carries no constraint stopping
+    // a raw insert from taking a customer's SUM below zero (verified: only
+    // pkey + plain indexes exist). Every guard now lives in
+    // wallet.service.js alone. Left failing honestly; a real fix needs a
+    // trigger or deferred constraint on the ledger sum, or at minimum an
+    // amount sanity check tied to the balance at insert time.
     const c = await fixture(50);
     const { db } = require("../config/db");
-    const { customers } = require("../db/schema");
-    const { eq, sql } = require("drizzle-orm");
+    const { customerCredits } = require("../db/schema");
 
     await assert.rejects(
       async () =>
-        db
-          .update(customers)
-          .set({ balance: sql`${customers.balance} - 999` })
-          .where(eq(customers.id, c.id)),
-      // Drizzle wraps driver errors — the SQLSTATE lives on .cause, not on the
-      // thrown object. Reading err.code finds undefined, which is exactly how
-      // the error handler was missing every constraint violation.
-      (err) => (err.cause?.code ?? err.code) === "23514",
-      "a raw overdraw must violate customers_balance_non_negative"
+        db.insert(customerCredits).values({
+          customerId: c.id,
+          amount: "-999.00",
+          description: "raw unguarded debit",
+        }),
+      "a raw ledger entry overdrawing the wallet must be refused by the database"
     );
+    assert.ok((await balanceOf(c.id)) >= 0, "the ledger can never read negative");
   });
 
-  test("credit and debit are separate functions and reject the wrong sign", async () => {
+  test("credit and debit are separate operations and each rejects the wrong sign", async () => {
     // A single signed updateBalance is how the guard came to be missing from
-    // the debit path — the two directions have different safety requirements.
+    // the old debit path — the two directions have different safety
+    // requirements. The live wallet service keeps them separate and fails
+    // closed (success: false) on a zero or negative amount.
     const c = await fixture(10);
 
-    await assert.rejects(async () => customerRepo.creditBalance(c.id, -5), RangeError);
-    await assert.rejects(async () => customerRepo.debitBalance(c.id, -5), RangeError);
-    await assert.rejects(async () => customerRepo.debitBalance(c.id, 0), RangeError);
+    const badCredit = await walletService.credit({ customerId: c.id, amount: -5 });
+    assert.equal(badCredit.success, false, "a negative credit is refused");
+    const badDebit = await walletService.debit({ customerId: c.id, amount: -5 });
+    assert.equal(badDebit.success, false, "a negative debit is refused");
+    const zeroDebit = await walletService.debit({ customerId: c.id, amount: 0 });
+    assert.equal(zeroDebit.success, false, "a zero debit is refused");
+    assert.equal(await balanceOf(c.id), 10, "nothing moved");
+
+    // The ledger primitive itself refuses a meaningless zero entry.
+    await assert.rejects(async () => customerRepo.recordCreditEntry(c.id, 0), RangeError);
   });
 
-  test("credit returns the post-credit balance, not a stale read", async () => {
+  test("a credit is immediately visible in the derived balance, not a stale read", async () => {
     const c = await fixture(10);
-    const credited = await customerRepo.creditBalance(c.id, 15);
-    assert.equal(Number(credited.balance), 25, "callers use this for balanceAfter");
+    const credited = await walletService.credit({ customerId: c.id, amount: 15, description: "top-up" });
+    assert.equal(credited.success, true);
+    assert.equal(await balanceOf(c.id), 25, "callers read the post-credit balance from the ledger");
   });
 
   test("the settlement sweep sees every funded customer, not the first 100", async () => {
     // H7: findAll clamps limit to 100 and orders created_at DESC, so any
     // customer outside that window was never settled and nothing said so.
-    await fixture(500);
+    const c = await fixture(500);
     const funded = await customerRepo.findWithPositiveBalance();
 
-    assert.ok(funded.length >= 1);
+    assert.ok(funded.some((row) => row.id === c.id), "the funded fixture is seen");
     assert.ok(
-      funded.every((c) => Number(c.balance) > 0),
+      funded.every((row) => Number(row.balance) > 0),
       "only customers holding money"
     );
     assert.ok(
-      funded.some((c) => c.phone === undefined || true),
+      funded.every((row) => Object.keys(row).every((k) => k === "id" || k === "balance")),
       "projection is narrow — id and balance are all the sweep needs"
     );
   });

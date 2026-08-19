@@ -6,11 +6,11 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderRepo, ticketRepo, bankAccountRepo } = require("../repositories");
+const { customerRepo, orderRepo, ticketRepo } = require("../repositories");
 const orderService = require("../services/order.service");
+const walletService = require("../services/wallet.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi } = require("./liveFixtures");
 
 const PORTAL_AUTH = "/api/customer/auth";
 const ORDERS = "/api/customer/orders";
@@ -22,9 +22,10 @@ const QTY = 20000;
 const TOTAL = UNIT_PRICE * QTY;
 
 /**
- * Register a customer, prove the phone (first correct OTP → Active), and seed a
- * virtual account so order creation doesn't reach the external payment provider.
- * Returns the customer row + a native-transport access token.
+ * Register a customer and prove the phone (first correct OTP). Live model:
+ * there is no customer status column and no per-customer virtual account —
+ * holding a session is the activation, and payment goes to the depot's own
+ * bank account (seeded below), so nothing else needs stubbing.
  */
 async function registerActiveCustomer(tag) {
   // Nigerian E.164: +234 + 10 digits. Tag is an integer counter so many
@@ -39,61 +40,47 @@ async function registerActiveCustomer(tag) {
   assert.equal(ver.status, 200, JSON.stringify(ver.body));
 
   const customer = await customerRepo.findByPhone(phone);
-  await customerRepo.update(customer.id, {
-    virtualAccountNumber: `VA${tag}${String(RUN).slice(-6)}`,
-    virtualAccountBank: "Test Bank",
-    virtualAccountName: `SOROMANNIGERI/ C${tag}`,
-  });
   return { customer, accessToken: ver.body.data.accessToken };
 }
+
+/** Fund the wallet the live way: a positive sman.customer_credits entry. */
+async function fundWallet(customerId, amount) {
+  const result = await walletService.credit({
+    customerId,
+    amount,
+    description: "customer-order test funding",
+  });
+  assert.equal(result.success, true, JSON.stringify(result));
+}
+
+const balanceOf = (customerId) => customerRepo.getBalance(customerId);
 
 describe("customer portal — a customer places their own order", () => {
   let depotId;
   let productId;
+  let stateName;
 
   before(async () => {
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: "Portal Depot",
-        code: `POR${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Lagos",
-        state: "Lagos",
-        country: "NG",
-        postcode: "100001",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
+    // Live model: pricing and stock are STATE-scoped (consumer_productprice
+    // per product+state, PFI stock pooled per state), and the depot joins in
+    // via location === state name. placeOrder pays into the depot's own bank
+    // account (manual deposit only — no Paystack DVA), so the depot needs an
+    // Active one linked.
+    const state = await seedState({ name: `Portal State ${RUN}` });
+    stateName = state.name;
+
+    const depot = await seedDepot({
+      name: `Portal Depot ${RUN}`,
+      location: state.name,
+      bankAccount: true,
+    });
     depotId = depot.id;
 
-    // placeOrder pays into the depot's own bank account (manual deposit
-    // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Portal Depot Account",
-      accountNumber: `PORACC${String(RUN).slice(-6)}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-
-    const [product] = await db
-      .insert(products)
-      .values({ name: "Portal PMS", sku: `POR-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
+    const product = await seedProduct({ name: `Portal PMS ${RUN}` });
     productId = product.id;
 
-    await db.insert(depotProductPrices).values({ depotId, productId, currentPrice: String(UNIT_PRICE) });
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-POR-${RUN}`,
-      status: "active",
-      locationId: depotId,
-      productId,
-      startingQtyLitres: 500000,
-      soldQtyLitres: 0,
-    });
+    await seedPrice(productId, state.id, { price: String(UNIT_PRICE) });
+    await seedPfi({ productId, locationId: state.id, startingQtyLitres: "100000000.00" });
   });
 
   after(async () => {
@@ -103,7 +90,7 @@ describe("customer portal — a customer places their own order", () => {
   const body = (extra = {}) => ({
     depot: depotId,
     product: productId,
-    state: "Lagos",
+    state: stateName,
     quantity: QTY,
     deliveryType: "pickup",
     companyName: "Test Buyer Co",
@@ -123,6 +110,10 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(res.body.data.order.status, "Pending");
     assert.equal(res.body.data.order.paymentStatus, "Unpaid");
     assert.ok(res.body.data.payment.accountNumber, "an account to transfer into is returned");
+    // KNOWN REGRESSION (live cutover): consumer_order has no company_name
+    // column and placeOrder (services/order.service.js) drops the validated
+    // companyName on the floor — the company an order is for is no longer
+    // stored anywhere. Left failing honestly rather than deleted.
     assert.equal(res.body.data.order.companyName, "Test Buyer Co", "the company the order is for is stored");
   });
 
@@ -156,7 +147,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("a funded wallet pays an order after placement, advancing it to Paid", async () => {
     const { customer, accessToken } = await registerActiveCustomer("2");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
 
     const res = await request(app)
       .post(ORDERS)
@@ -178,7 +169,7 @@ describe("customer portal — a customer places their own order", () => {
     // waiting for a desk to wave it through.
     assert.equal(order.status, "Released", "payment cleared it for loading");
     assert.ok(order.releasedAt, "releasedAt stamped by the payment");
-    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+    assert.equal(await balanceOf(customer.id), 0, "wallet spent");
   });
 
   test("a customer may choose fleet delivery too, not only pickup", async () => {
@@ -212,7 +203,8 @@ describe("customer portal — a customer places their own order", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .send(body({ deliveryType: "pickup", deliveryAddress: "somewhere irrelevant" }));
     assert.equal(res.status, 201, JSON.stringify(res.body));
-    assert.equal(res.body.data.order.deliveryAddress, "");
+    // Live column is nullable — pickup stores no address at all ("" pre-cutover).
+    assert.ok(!res.body.data.order.deliveryAddress, "no delivery address is stored for pickup");
   });
 
   test("the body cannot smuggle a different customer — the order is always the caller's", async () => {
@@ -251,8 +243,11 @@ describe("customer portal — a customer places their own order", () => {
       list.body.data.orders.some((o) => o.id === orderId),
       "the order is in the customer's own list"
     );
+    // B's own list must NOT contain A's order — the list is caller-scoped.
+    const listB = await request(app).get(ORDERS).set("Authorization", `Bearer ${b.accessToken}`);
+    assert.equal(listB.status, 200);
     assert.ok(
-      list.body.data.orders.every((o) => o.customerId === a.customer.id),
+      listB.body.data.orders.every((o) => o.id !== orderId),
       "the list is scoped to the caller"
     );
 
@@ -279,6 +274,17 @@ describe("customer portal — a customer places their own order", () => {
         own.body.data.order.paymentConfirmedAt === undefined ||
         typeof own.body.data.order.paymentConfirmedAt === "string",
       "lifecycle stamps are exposed on the owner detail"
+    );
+
+    // KNOWN REGRESSION (live cutover): orderRepo.findAll's row select omits
+    // userId, so formatOrderRow's customerId alias is undefined on every list
+    // row — the portal can no longer read whose order a list row is. The
+    // scoping itself is proven above; this contract assertion is left failing
+    // honestly. Fix: add userId to the findAll select in
+    // repositories/order.repository.js.
+    assert.ok(
+      list.body.data.orders.every((o) => o.customerId === a.customer.id),
+      "list rows carry the owner's customerId"
     );
   });
 
@@ -343,7 +349,7 @@ describe("customer portal — a customer places their own order", () => {
 
     // Fund the wallet, place a second order, then pay it so it settles and
     // releases, leaving one Pending order and one Released for the filters.
-    await customerRepo.creditBalance(pending.body.data.order.customerId, TOTAL);
+    await fundWallet(pending.body.data.order.customerId, TOTAL);
     const paid = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -361,15 +367,17 @@ describe("customer portal — a customer places their own order", () => {
     assert.ok(onlyPending.body.data.orders.some((o) => o.orderNumber === pendingNumber));
     assert.equal(onlyPending.body.data.pagination.limit, 50, "pagination carries the page limit");
 
-    // Search by order number fragment.
-    const fragment = pendingNumber.slice(-6);
+    // Search by order reference. References are not stored live — search
+    // resolves them back to the id (utils/helpers.parseOrderReference), so
+    // the full reference is the searchable token, not an arbitrary fragment.
     const searched = await request(app)
-      .get(`${ORDERS}?search=${encodeURIComponent(fragment)}`)
+      .get(`${ORDERS}?search=${encodeURIComponent(pendingNumber)}`)
       .set("Authorization", `Bearer ${accessToken}`);
     assert.equal(searched.status, 200);
     assert.ok(
-      searched.body.data.orders.every((o) => o.orderNumber.includes(fragment)),
-      "search narrows to matching order numbers"
+      searched.body.data.orders.length >= 1 &&
+        searched.body.data.orders.every((o) => o.orderNumber === pendingNumber),
+      "search narrows to the referenced order"
     );
 
     // Pagination: limit is echoed and hard-capped at 100 by the repository.
@@ -396,7 +404,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("a customer pays their own unpaid order from wallet balance", async () => {
     const { customer, accessToken } = await registerActiveCustomer("20");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
 
     const placed = await request(app)
       .post(ORDERS)
@@ -412,7 +420,7 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
     assert.equal(paid.body.data.order.paymentStatus, "Paid");
     assert.equal(paid.body.data.order.status, "Released", "paying releases it");
-    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+    assert.equal(await balanceOf(customer.id), 0, "wallet spent");
   });
 
   test("paying with an empty wallet is refused (400), the order stays Unpaid", async () => {
@@ -435,7 +443,7 @@ describe("customer portal — a customer places their own order", () => {
   test("a customer cannot pay another customer's order — 404, and nothing is touched", async () => {
     const owner = await registerActiveCustomer("22");
     const intruder = await registerActiveCustomer("23");
-    await customerRepo.creditBalance(intruder.customer.id, TOTAL);
+    await fundWallet(intruder.customer.id, TOTAL);
 
     const placed = await request(app)
       .post(ORDERS)
@@ -450,12 +458,12 @@ describe("customer portal — a customer places their own order", () => {
     assert.equal(res.status, 404, JSON.stringify(res.body));
     // The owner's order is untouched and the intruder's wallet is not debited.
     assert.equal((await orderRepo.findById(orderId)).paymentStatus, "Unpaid");
-    assert.equal(Number((await customerRepo.findById(intruder.customer.id)).balance), TOTAL);
+    assert.equal(await balanceOf(intruder.customer.id), TOTAL);
   });
 
   test("paying an already-paid order is refused (409)", async () => {
     const { customer, accessToken } = await registerActiveCustomer("24");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -501,7 +509,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("a customer cannot cancel a paid order here (409)", async () => {
     const { customer, accessToken } = await registerActiveCustomer("31");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -543,7 +551,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("a customer pays an older order from wallet by its reference", async () => {
     const { customer, accessToken } = await registerActiveCustomer("34");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -556,13 +564,13 @@ describe("customer portal — a customer places their own order", () => {
       .send({});
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
     assert.equal(paid.body.data.order.paymentStatus, "Paid");
-    assert.equal(Number((await customerRepo.findById(customer.id)).balance), 0, "wallet spent");
+    assert.equal(await balanceOf(customer.id), 0, "wallet spent");
   });
 
   test("a customer cannot pay another customer's order by reference — 404", async () => {
     const owner = await registerActiveCustomer("35");
     const intruder = await registerActiveCustomer("36");
-    await customerRepo.creditBalance(intruder.customer.id, TOTAL);
+    await fundWallet(intruder.customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${owner.accessToken}`)
@@ -598,7 +606,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("a customer cannot cancel a paid order by reference (409), and it is untouched", async () => {
     const { customer, accessToken } = await registerActiveCustomer("41");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -642,7 +650,7 @@ describe("customer portal — a customer places their own order", () => {
 
   test("post-payment effects are idempotent — re-running creates no duplicate ticket", async () => {
     const { customer, accessToken } = await registerActiveCustomer("37");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
@@ -658,11 +666,17 @@ describe("customer portal — a customer places their own order", () => {
     // test is about — the ticket and commission heal idempotently.)
     const result = await orderService.runPostPaymentEffects(orderId);
     assert.equal(result.ticket, true, "re-run heals the ticket");
-    assert.equal(result.commission, true, "re-run heals the commission");
     assert.equal(
       (await ticketRepo.findByOrder(orderId)).id,
       ticket.id,
       "the same ticket, not a duplicate"
     );
+
+    // KNOWN REGRESSION (live cutover): commissionService.createForOrder
+    // throws "no resolvable depotId on the live schema" for every order —
+    // consumer_order has no depot FK and the commission path was never given
+    // a depot-resolution decision, so NO commissions are created at all.
+    // Left failing honestly (see services/commission.service.js).
+    assert.equal(result.commission, true, "re-run heals the commission");
   });
 });

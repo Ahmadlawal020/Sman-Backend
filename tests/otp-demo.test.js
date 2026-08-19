@@ -8,8 +8,11 @@ const { eq } = require("drizzle-orm");
 
 const app = require("../app");
 const { db } = require("../config/db");
+// Live schema: the old clean-room `customers` table is gone — rows live in
+// Django's consumer_customer. The identity/OTP/device tables are Sman-owned
+// (sman schema) and unchanged.
 const {
-  customers,
+  consumerCustomer,
   customerIdentities,
   customerOtps,
   customerTrustedDevices,
@@ -78,7 +81,7 @@ describe("store-review demo OTP (single-number static code)", () => {
       await db.delete(customerTrustedDevices).where(eq(customerTrustedDevices.customerId, c.id));
       await db.delete(customerIdentities).where(eq(customerIdentities.customerId, c.id));
       await db.delete(customerOtps).where(eq(customerOtps.customerId, c.id));
-      await db.delete(customers).where(eq(customers.id, c.id));
+      await db.delete(consumerCustomer).where(eq(consumerCustomer.id, c.id));
     }
     await closeDb();
   });

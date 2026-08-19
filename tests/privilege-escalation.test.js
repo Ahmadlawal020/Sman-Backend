@@ -42,8 +42,9 @@ describe("privilege escalation — PATCH /api/admin/:id", () => {
 
     assert.equal(res.status, 403);
 
+    // administration_user.roles is Django's integer[]; 0 = super_admin.
     const after = await staffRepo.findById(plain.staff.id);
-    assert.ok(!after.roles.includes("super_admin"), `roles became ${after.roles}`);
+    assert.ok(!after.roles.includes(0), `roles became ${after.roles}`);
   });
 
   test("an admin cannot promote somebody else either", async () => {
@@ -56,7 +57,7 @@ describe("privilege escalation — PATCH /api/admin/:id", () => {
 
     assert.equal(res.status, 403);
     const after = await staffRepo.findById(victim.staff.id);
-    assert.ok(!after.roles.includes("super_admin"));
+    assert.ok(!after.roles.includes(0), `roles became ${after.roles}`);
   });
 
   test("an admin cannot suspend anyone", async () => {
@@ -81,7 +82,10 @@ describe("privilege escalation — PATCH /api/admin/:id", () => {
       .send({ first_name: "Renamed", phone_number: "08012345678" });
 
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal((await staffRepo.findById(plain.staff.id)).firstName, "Renamed");
+    // administration_user has no first_name/surname split — normalizeShape in
+    // staff.repository.js collapses whatever name parts arrive into fullName,
+    // so a first_name-only PATCH replaces the whole full_name.
+    assert.equal((await staffRepo.findById(plain.staff.id)).fullName, "Renamed");
   });
 
   test("a super admin can still change roles", async () => {
@@ -114,8 +118,9 @@ describe("privilege escalation — PATCH /api/admin/:id", () => {
       .send({ roles: [1] });
 
     assert.equal(res.status, 400);
+    // 0 = super_admin in the stored integer[] vocabulary.
     const after = await staffRepo.findById(superUser.staff.id);
-    assert.ok(after.roles.includes("super_admin"), "still a super admin");
+    assert.ok(after.roles.includes(0), "still a super admin");
   });
 
   test("a super admin can suspend somebody else", async () => {

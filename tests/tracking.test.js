@@ -7,10 +7,11 @@ const request = require("supertest");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis, orders, orderTrucks } = require("../db/schema");
+const { consumerOrder, consumerTruckallocation } = require("../db/schema");
 const { eq } = require("drizzle-orm");
-const { customerRepo, bankAccountRepo } = require("../repositories");
+const { orderRepo } = require("../repositories");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi, now } = require("./liveFixtures");
 
 const PORTAL_AUTH = "/api/customer/auth";
 const ORDERS = "/api/customer/orders";
@@ -26,61 +27,37 @@ async function activeCustomer(tag) {
     .post(`${PORTAL_AUTH}/verify-otp`)
     .set(NATIVE_TRANSPORT)
     .send({ phone, code: DEV_CODE });
-  const customer = await customerRepo.findByPhone(phone);
-  await customerRepo.update(customer.id, {
-    virtualAccountNumber: `VA${tag}${String(RUN).slice(-6)}`,
-    virtualAccountBank: "Test Bank",
-    virtualAccountName: `SOROMANNIGERI/ T${tag}`,
-  });
-  return { customer, accessToken: ver.body.data.accessToken };
+  // No wallet funding needed — placing an order never touches the wallet;
+  // payment is a separate manual action these tests drive via raw status
+  // updates. The Paystack DVA fields the old fixture stamped have no live
+  // consumer_customer columns at all (manual deposit only now).
+  return { accessToken: ver.body.data.accessToken };
 }
 
 describe("public order tracking", () => {
   let depotId;
   let productId;
+  let productName;
+  let stateName;
 
   before(async () => {
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: "Track Depot",
-        code: `TRK${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Warri",
-        state: "Delta",
-        country: "NG",
-        postcode: "100001",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
+    // Live model: pricing/stock are STATE-scoped. The depot joins the catalog
+    // and order path via location === state name; sellable stock comes from an
+    // active PFI whose locationId is the state id.
+    const state = await seedState({ name: `Track State ${RUN}` });
+    stateName = state.name;
+
+    // placeOrder pays into the depot's own bank account (manual deposit only —
+    // no Paystack DVA), so every order-placing test depot needs one linked.
+    const depot = await seedDepot({ name: `Track Depot ${RUN}`, location: state.name, bankAccount: true });
     depotId = depot.id;
 
-    // placeOrder pays into the depot's own bank account (manual deposit
-    // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Track Depot Account",
-      accountNumber: `TRKACC${String(RUN).slice(-6)}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-
-    const [product] = await db
-      .insert(products)
-      .values({ name: "Track PMS", sku: `TRK-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
+    const product = await seedProduct({ name: `Track PMS ${RUN}` });
     productId = product.id;
-    await db.insert(depotProductPrices).values({ depotId, productId, currentPrice: "900" });
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-TRK-${RUN}`,
-      status: "active",
-      locationId: depotId,
-      productId,
-      startingQtyLitres: 5000000,
-      soldQtyLitres: 0,
-    });
+    productName = product.name;
+
+    await seedPrice(productId, state.id, { price: "900.00" });
+    await seedPfi({ productId, locationId: state.id });
   });
 
   after(async () => {
@@ -91,9 +68,40 @@ describe("public order tracking", () => {
     const res = await request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ depot: depotId, product: productId, state: "Delta", quantity: QTY, deliveryType: "pickup", companyName: "Tracking Co" });
+      .send({ depot: depotId, product: productId, state: stateName, quantity: QTY, deliveryType: "pickup", companyName: "Tracking Co" });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     return res.body.data.order;
+  };
+
+  /** Two live truck allocations on an order: one departed, one only ticketed. */
+  const seedLoads = async (orderId) => {
+    const orderProductId = await orderRepo.getLineItemId(orderId);
+    await db.insert(consumerTruckallocation).values([
+      {
+        orderId,
+        orderProductId,
+        truckNumber: 1,
+        plateNumber: "LAG-T1",
+        quantity: "15000",
+        ticketNumber: `TKT-TRK-${RUN}-${orderId}-T1`,
+        ticketStatus: "completed",
+        driverName: "Ada Private",
+        createdAt: now(),
+        updatedAt: now(),
+      },
+      {
+        orderId,
+        orderProductId,
+        truckNumber: 2,
+        plateNumber: "LAG-T2",
+        quantity: "15000",
+        ticketNumber: `TKT-TRK-${RUN}-${orderId}-T2`,
+        ticketStatus: "generated",
+        driverName: "Uche Private",
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    ]);
   };
 
   test("an unknown reference is a 404", async () => {
@@ -111,20 +119,23 @@ describe("public order tracking", () => {
 
     assert.equal(t.ref, order.orderNumber);
     assert.equal(t.stage, "received");
-    assert.equal(t.depotName, "Track Depot");
-    assert.equal(t.depotState, "Delta");
+    // consumer_order carries no depot at all (only pfiId → state), so the
+    // public feed deliberately drops the depot name rather than guessing one
+    // — see services/tracking.service.js trackByRef.
+    assert.equal(t.depotName, "");
     assert.equal(t.lines[0].quantity, QTY);
-    assert.equal(t.lines[0].category, "PMS");
+    assert.equal(t.lines[0].name, productName, "the product line survives the cutover");
+    assert.equal(t.lines[0].unit, "Liters");
     assert.ok(t.reached.received, "received is timestamped");
     assert.equal(t.reached.released, undefined, "later stages are not reached yet");
 
     // The privacy contract: nothing here may reveal price or who the buyer is.
     // Scan everything EXCEPT the legitimately-public reference and the movement
-    // timestamps — those carry random digit runs (a hex order number, a `.900`
-    // millisecond) that would otherwise trip the short "900" price pattern.
+    // timestamps — those carry random digit runs (a `.900` millisecond) that
+    // would otherwise trip the short "900" price pattern.
     const { ref, placedAt, reached, ...privacyScan } = t;
     const blob = JSON.stringify(privacyScan);
-    assert.ok(!/price|total|900|27000000/i.test(blob), "no price or total leaks");
+    assert.ok(!/price|total|900|27000000/i.test(blob), `no price or total leaks: ${blob}`);
     assert.ok(!/Track 1|virtualAccount|balance|company/i.test(blob), "no buyer identity leaks");
   });
 
@@ -132,10 +143,12 @@ describe("public order tracking", () => {
     const { accessToken } = await activeCustomer("2");
     const order = await place(accessToken);
 
+    // Live vocabulary: status is Django's lowercase set; there is no
+    // paymentStatus column — payment_confirmed_at is the paid signal.
     await db
-      .update(orders)
-      .set({ status: "Paid", paymentStatus: "Paid", paymentConfirmedAt: new Date() })
-      .where(eq(orders.id, order.id));
+      .update(consumerOrder)
+      .set({ status: "paid", paymentConfirmedAt: now() })
+      .where(eq(consumerOrder.id, order.id));
 
     const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     const t = res.body.data.tracked;
@@ -158,22 +171,18 @@ describe("public order tracking", () => {
     const { accessToken } = await activeCustomer("5");
     const order = await place(accessToken);
     await db
-      .update(orders)
+      .update(consumerOrder)
       .set({
-        status: "Loading",
-        paymentStatus: "Paid",
-        paymentConfirmedAt: new Date(),
-        releasedAt: new Date(),
-        loadingStartedAt: new Date(),
+        status: "loaded",
+        paymentConfirmedAt: now(),
+        releasedAt: now(),
+        loadingDatetime: now(),
       })
-      .where(eq(orders.id, order.id));
-    // One truck loaded and away, one still on the yard. Progress is counted off
-    // the exit gate, not off the ticket — a ticketed truck (`loaded`) may not
-    // have reached the depot yet.
-    await db.insert(orderTrucks).values([
-      { orderId: order.id, truckIndex: 1, truckNumber: "LAG-T1", quantity: "15000", status: "gated_out", driverName: "Ada Private", driverPhone: "+2348010000001" },
-      { orderId: order.id, truckIndex: 2, truckNumber: "LAG-T2", quantity: "15000", status: "gated_in", driverName: "Uche Private", driverPhone: "+2348010000002" },
-    ]);
+      .where(eq(consumerOrder.id, order.id));
+    // One truck loaded and away ("completed" — the allocation's terminal
+    // ticket_status), one only ticketed ("generated"). Progress is counted
+    // off "completed": a merely ticketed truck may not have loaded yet.
+    await seedLoads(order.id);
 
     const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     const t = res.body.data.tracked;
@@ -182,8 +191,8 @@ describe("public order tracking", () => {
     assert.deepEqual(
       t.trucks.map((x) => [x.index, x.plate, x.status]),
       [
-        [1, "LAG-T1", "gated_out"],
-        [2, "LAG-T2", "gated_in"],
+        [1, "LAG-T1", "completed"],
+        [2, "LAG-T2", "generated"],
       ],
       "in index order, plate + status each",
     );
@@ -204,7 +213,9 @@ describe("public order tracking", () => {
   test("a cancelled order is publicly trackable, shown as cancelled", async () => {
     const { accessToken } = await activeCustomer("4");
     const order = await place(accessToken);
-    await db.update(orders).set({ status: "Cancelled", cancelledAt: new Date() }).where(eq(orders.id, order.id));
+    // Django expresses cancellation as status='canceled' alone — there is no
+    // cancelled_at column on consumer_order at all.
+    await db.update(consumerOrder).set({ status: "canceled" }).where(eq(consumerOrder.id, order.id));
 
     const res = await request(app).get(`${TRACK}/${encodeURIComponent(order.orderNumber)}`);
     assert.equal(res.status, 200, JSON.stringify(res.body));

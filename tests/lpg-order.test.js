@@ -6,10 +6,10 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { lpgStations, lpgStationCylinders } = require("../db/schema");
 const { customerRepo, lpgStationRepo, auditLogRepo } = require("../repositories");
+const walletService = require("../services/wallet.service");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
+const { seedLpgStation } = require("./liveFixtures");
 
 const RUN = Date.now();
 const LPG = "/api/lpg-order-requests";
@@ -26,31 +26,27 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
     // and the orders/finance requireRole gates alike).
     staff = await staffTokenWithRoles(["super_admin"], `lpg-${RUN}@soroman.test`);
 
-    const [station] = await db
-      .insert(lpgStations)
-      .values({
-        name: "LPG Test Station",
-        code: `LPG${String(RUN).slice(-6)}`,
-        address: "1 Gas Rd",
-        city: "Lagos",
-        state: "Lagos",
-        country: "NG",
-        postcode: "100001",
-        lpgCapacityKg: 100000,
-        pricePerKg: "1200",
-        establishedYear: "2020",
-      })
-      .returning();
+    // Live schema: consumer_lpgplant (+ sman.lpg_station_extras for the
+    // address) with cylinder stock in sman.lpg_station_cylinders.
+    const station = await seedLpgStation({
+      name: `LPG Test Station ${RUN}`,
+      code: `A${String(RUN).slice(-6)}`,
+      address: "1 Gas Rd",
+      city: "Lagos",
+      state: "Lagos",
+      country: "NG",
+      postcode: "100001",
+      pricePerKg: "1200",
+      establishedYear: "2020",
+      cylinders: [{ cylinderSizeKg: SIZE_KG, quantity: START_QTY }],
+    });
     stationId = station.id;
 
-    await db
-      .insert(lpgStationCylinders)
-      .values({ lpgStationId: stationId, cylinderSizeKg: SIZE_KG, quantity: START_QTY });
-
+    // consumer_customer has no status column — customerRepo consciously
+    // discards the legacy field, so it is not sent at all.
     const customer = await customerRepo.create({
       name: "LPG Customer",
-      phone: `+234817${String(RUN).slice(-7)}`,
-      status: "Active",
+      phone: `+234815${String(RUN).slice(-7)}`,
     });
     customerId = customer.id;
   });
@@ -127,8 +123,17 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
   });
 
   test("cancelling a paid order refunds the wallet and restocks", async () => {
-    await customerRepo.creditBalance(customerId, 100000);
-    const balBefore = Number((await customerRepo.findById(customerId)).balance);
+    // The live wallet is a ledger (sman.customer_credits), not a stored
+    // customers.balance column — fund it through the wallet service and read
+    // it back through the computed balance.
+    const funded = await walletService.credit({
+      customerId,
+      amount: 100000,
+      description: "LPG test funding",
+      reference: `LPG-TEST-FUND-${RUN}`,
+    });
+    assert.equal(funded.success, true, JSON.stringify(funded));
+    const balBefore = await customerRepo.getBalance(customerId);
     const stockBefore = (await lpgStationRepo.getCylinderStock(stationId, SIZE_KG)).quantity;
 
     const id = await placeAndApprove(3);
@@ -138,7 +143,7 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
       .send({});
     assert.equal(paid.status, 200, JSON.stringify(paid.body));
     assert.ok(
-      Number((await customerRepo.findById(customerId)).balance) < balBefore,
+      (await customerRepo.getBalance(customerId)) < balBefore,
       "the wallet was debited on payment"
     );
 
@@ -151,7 +156,7 @@ describe("LPG order requests — cancel returns reserved cylinders to stock", ()
     assert.match(res.body.message, /refunded/i);
 
     assert.equal(
-      Number((await customerRepo.findById(customerId)).balance),
+      await customerRepo.getBalance(customerId),
       balBefore,
       "the wallet is refunded to its starting balance"
     );

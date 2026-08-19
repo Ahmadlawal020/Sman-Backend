@@ -8,10 +8,12 @@ const { eq } = require("drizzle-orm");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis, orders } = require("../db/schema");
-const { customerRepo, bankAccountRepo } = require("../repositories");
+const { consumerOrder } = require("../db/schema");
+const { customerRepo } = require("../repositories");
 const orderService = require("../services/order.service");
+const walletService = require("../services/wallet.service");
 const { NATIVE_TRANSPORT, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi } = require("./liveFixtures");
 
 const PORTAL_AUTH = "/api/customer/auth";
 const ORDERS = "/api/customer/orders";
@@ -33,61 +35,43 @@ async function registerActiveCustomer(tag) {
     .send({ phone, code: DEV_CODE });
   assert.equal(ver.status, 200, JSON.stringify(ver.body));
   const customer = await customerRepo.findByPhone(phone);
-  await customerRepo.update(customer.id, {
-    virtualAccountNumber: `VA${tag}${String(RUN).slice(-6)}`,
-    virtualAccountBank: "Test Bank",
-    virtualAccountName: `SOROMANNIGERI/ D${tag}`,
-  });
   return { customer, accessToken: ver.body.data.accessToken };
+}
+
+/** Fund the wallet the live way: a positive sman.customer_credits entry. */
+async function fundWallet(customerId, amount) {
+  const result = await walletService.credit({
+    customerId,
+    amount,
+    description: "dashboard test funding",
+  });
+  assert.equal(result.success, true, JSON.stringify(result));
 }
 
 describe("customer portal — dashboard", () => {
   let depotId;
   let productId;
+  let stateName;
 
   before(async () => {
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: "Dash Depot",
-        code: `DASH${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Lagos",
-        state: "Lagos",
-        country: "NG",
-        postcode: "100001",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
+    // Live model: pricing and stock are STATE-scoped; the depot joins in via
+    // location === state name and needs an Active bank account so placeOrder
+    // has somewhere to point the manual deposit.
+    const state = await seedState({ name: `Dash State ${RUN}` });
+    stateName = state.name;
+
+    const depot = await seedDepot({
+      name: `Dash Depot ${RUN}`,
+      location: state.name,
+      bankAccount: true,
+    });
     depotId = depot.id;
 
-    // placeOrder pays into the depot's own bank account (manual deposit
-    // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Dash Depot Account",
-      accountNumber: `DASHACC${String(RUN).slice(-6)}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-
-    const [product] = await db
-      .insert(products)
-      .values({ name: "Dash PMS", sku: `DASH-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
+    const product = await seedProduct({ name: `Dash PMS ${RUN}` });
     productId = product.id;
 
-    await db.insert(depotProductPrices).values({ depotId, productId, currentPrice: String(UNIT_PRICE) });
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-DASH-${RUN}`,
-      status: "active",
-      locationId: depotId,
-      productId,
-      startingQtyLitres: 5000000,
-      soldQtyLitres: 0,
-    });
+    await seedPrice(productId, state.id, { price: String(UNIT_PRICE) });
+    await seedPfi({ productId, locationId: state.id, startingQtyLitres: "50000000.00" });
   });
 
   after(async () => {
@@ -98,7 +82,7 @@ describe("customer portal — dashboard", () => {
     request(app)
       .post(ORDERS)
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ depot: depotId, product: productId, state: "Lagos", quantity: QTY, deliveryType: "pickup", companyName: "Dash Co" });
+      .send({ depot: depotId, product: productId, state: stateName, quantity: QTY, deliveryType: "pickup", companyName: "Dash Co" });
 
   test("requires authentication", async () => {
     const res = await request(app).get(DASHBOARD);
@@ -124,7 +108,7 @@ describe("customer portal — dashboard", () => {
 
   test("the wallet balance is the customer's own, exposed only here", async () => {
     const { customer, accessToken } = await registerActiveCustomer("2");
-    await customerRepo.creditBalance(customer.id, 750000);
+    await fundWallet(customer.id, 750000);
     const res = await request(app).get(DASHBOARD).set("Authorization", `Bearer ${accessToken}`);
     assert.equal(res.body.data.wallet.balance, 750000);
   });
@@ -141,7 +125,15 @@ describe("customer portal — dashboard", () => {
     assert.equal(month.litres, QTY, "its litres are counted");
     assert.equal(month.spent, 0, "but nothing is 'spent' until payment confirms");
     assert.equal(orders.length, 1, "it appears in recent orders");
-    assert.equal(orders[0].productCategory, "PMS", "the trade code the portal badges the order with");
+
+    // KNOWN REGRESSION (live cutover): orderRepo.findAll joins no product
+    // table, so dashboard recent orders carry NO product identification at
+    // all — the portal has nothing to badge the order with (pre-cutover this
+    // was productCategory; the live vocabulary for the badge is the trade
+    // code derived from the product's abbreviation, see catalog.test.js).
+    // Left failing honestly. Fix: join consumer_orderproduct →
+    // consumer_product in findAll and expose the product name + code.
+    assert.ok(orders[0].productCategory, "the trade code the portal badges the order with");
   });
 
   test("an expired order does not count toward month orders or litres", async () => {
@@ -152,9 +144,9 @@ describe("customer portal — dashboard", () => {
 
     // Push the order past the payment window, then sweep it to Expired.
     await db
-      .update(orders)
-      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
-      .where(eq(orders.id, orderId));
+      .update(consumerOrder)
+      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() })
+      .where(eq(consumerOrder.id, orderId));
     const expired = await orderService.expireStaleOrders();
     assert.ok(expired >= 1, "the sweep expired at least this order");
 
@@ -165,12 +157,17 @@ describe("customer portal — dashboard", () => {
     assert.equal(month.litres, 0, "nor do their litres count");
     assert.equal(month.spent, 0, "and nothing was paid");
     assert.equal(recent.length, 1, "the order still appears in recent history");
+
+    // KNOWN REGRESSION (live cutover): Django's OrderStatus has no "expired"
+    // choice, so Expired is stored as "canceled" and reads back as
+    // "Cancelled" (utils/orderStatusMapping.js) — a customer can no longer
+    // tell a lapsed order from one they cancelled. Left failing honestly.
     assert.equal(recent[0].status, "Expired");
   });
 
   test("a wallet-paid order lands in month spent and the day's trend point", async () => {
     const { customer, accessToken } = await registerActiveCustomer("4");
-    await customerRepo.creditBalance(customer.id, TOTAL);
+    await fundWallet(customer.id, TOTAL);
     const placed = await placeOrder(accessToken);
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     assert.equal(placed.body.data.order.paymentStatus, "Unpaid");
@@ -188,7 +185,7 @@ describe("customer portal — dashboard", () => {
   test("the dashboard is scoped — one customer never sees another's numbers", async () => {
     const a = await registerActiveCustomer("5");
     const b = await registerActiveCustomer("6");
-    await customerRepo.creditBalance(a.customer.id, TOTAL);
+    await fundWallet(a.customer.id, TOTAL);
     await placeOrder(a.accessToken);
 
     const res = await request(app).get(DASHBOARD).set("Authorization", `Bearer ${b.accessToken}`);

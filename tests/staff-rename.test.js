@@ -12,6 +12,18 @@ const app = require("../app");
 const { staffToken, closeDb } = require("./helpers");
 
 // every authenticated GET the dashboard relies on
+//
+// KNOWN BUGS (live cutover) — two routes here 500 for real and the smoke
+// checks are left failing on purpose until the production code is fixed:
+//  - /api/pfis: repositories/pfiExpense.repository.js still runs raw SQL
+//    against the old clean-room tables (pfi_expenses, pfi_movements,
+//    order_pfi_allocations, expense_categories, orders, customers, staff,
+//    pfis) — none exist in the live DB. aggregatesFor() throws
+//    'relation "order_pfi_allocations" does not exist' via
+//    pfi.controller.js's list.
+//  - /api/dashboard/stats: dashboard.controller.js counts
+//    COUNT(DISTINCT products.category), but consumer_product has no
+//    category column, so drizzle emits "COUNT(DISTINCT )" — a syntax error.
 const READ_ROUTES = [
   "/api/customers",
   "/api/products",

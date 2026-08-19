@@ -6,16 +6,15 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis } = require("../db/schema");
-const { customerRepo, orderTruckRepo, ticketRepo, auditLogRepo, bankAccountRepo } = require("../repositories");
+const { customerRepo, orderTruckRepo, ticketRepo, auditLogRepo } = require("../repositories");
 const orderService = require("../services/order.service");
 const { staffTokenWithRoles, NATIVE_TRANSPORT, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi } = require("./liveFixtures");
 
 /**
  * Pay an order from the customer's wallet — the manual "Pay Now" action that
- * moves Pending → Paid. Orders are created Unpaid; releasing and gating need a
- * Paid order, so tests that reach the gate pay first.
+ * moves Pending → Paid. Post-cutover, payment IS the release
+ * (orderStatus.releaseOnPayment): a paid order lands already Released.
  */
 const payFromWallet = (orderId) =>
   orderService.payOrder({ orderId, actor: { type: "system" } });
@@ -36,65 +35,38 @@ async function activeFundedCustomer(tag, litres) {
     .send({ phone, code: DEV_CODE });
   assert.equal(ver.status, 200, JSON.stringify(ver.body));
   const customer = await customerRepo.findByPhone(phone);
-  await customerRepo.update(customer.id, {
-    virtualAccountNumber: `VP${tag}${String(RUN).slice(-6)}`,
-    virtualAccountBank: "Test Bank",
-    virtualAccountName: `SOROMANNIGERI/ P${tag}`,
+  // No DVA seeding — wallet funding is manual-deposit-only now, recorded as a
+  // credit-ledger entry (consumer_customer stores no balance column at all).
+  await customerRepo.recordCreditEntry(customer.id, UNIT_PRICE * litres, {
+    description: `test wallet deposit (${tag})`,
   });
-  await customerRepo.creditBalance(customer.id, UNIT_PRICE * litres);
   return { customer, accessToken: ver.body.data.accessToken };
 }
 
 describe("pickup trucks — declared at order, editable at the gate and at ticketing", () => {
   let depotId;
   let productId;
+  let stateName;
   let release;
   let entry;
   let ticketing;
 
   before(async () => {
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: "Pickup Depot",
-        code: `PCK${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Lagos",
-        state: "Lagos",
-        country: "NG",
-        postcode: "100001",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
-    depotId = depot.id;
+    // Live model: pricing/stock are STATE-scoped; the depot joins via
+    // location === state name; sellable stock is the state's active PFI.
+    const state = await seedState({ name: `Pickup State ${RUN}` });
+    stateName = state.name;
 
     // placeOrder pays into the depot's own bank account (manual deposit
     // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Pickup Depot Account",
-      accountNumber: `PCKACC${String(RUN).slice(-6)}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
+    const depot = await seedDepot({ name: `Pickup Depot ${RUN}`, location: state.name, bankAccount: true });
+    depotId = depot.id;
 
-    const [product] = await db
-      .insert(products)
-      .values({ name: "Pickup PMS", sku: `PCK-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
+    const product = await seedProduct({ name: `Pickup PMS ${RUN}` });
     productId = product.id;
 
-    await db.insert(depotProductPrices).values({ depotId, productId, currentPrice: String(UNIT_PRICE) });
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-PCK-${RUN}`,
-      status: "active",
-      locationId: depotId,
-      productId,
-      startingQtyLitres: 2000000,
-      soldQtyLitres: 0,
-    });
+    await seedPrice(productId, state.id, { price: String(UNIT_PRICE) });
+    await seedPfi({ productId, locationId: state.id, startingQtyLitres: "2000000.00" });
 
     release = await staffTokenWithRoles(["release"], "test-pck-release@soroman.test");
     entry = await staffTokenWithRoles(["security_entry"], "test-pck-entry@soroman.test");
@@ -108,7 +80,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
   const body = (extra) => ({
     depot: depotId,
     product: productId,
-    state: "Lagos",
+    state: stateName,
     quantity: extra.quantity,
     deliveryType: "pickup",
     companyName: "Pickup Co",
@@ -134,21 +106,26 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(res.status, 201, JSON.stringify(res.body));
     const orderId = res.body.data.order.id;
 
+    // Live rows (consumer_truckallocation): the plate is `plateNumber`,
+    // `truckNumber` is the ordinal, and the allocation's own lifecycle lives
+    // in `ticketStatus` (pending until ticketing).
     const loads = await orderTruckRepo.findByOrder(orderId);
     assert.equal(loads.length, 2, "one load per declared truck");
     assert.deepEqual(
-      loads.map((l) => [l.truckNumber, Number(l.quantity), l.status]),
+      loads.map((l) => [l.plateNumber, Number(l.quantity), l.ticketStatus]),
       [
         ["PK-AAA", 60000, "pending"],
         ["PK-BBB", 40000, "pending"],
       ],
-      "plate + per-truck quantity captured, awaiting the gate"
+      "plate + per-truck quantity captured, awaiting ticketing"
     );
+    assert.deepEqual(loads.map((l) => l.truckNumber), [1, 2], "ordinals assigned in declaration order");
     assert.equal(loads[0].orderId, orderId);
 
-    // Placement no longer debits the wallet; paying the order does.
+    // Placement no longer debits the wallet; paying the order does (a hold
+    // against the credit ledger — balance is computed, never stored).
     await payFromWallet(orderId);
-    assert.equal((await customerRepo.findById(customer.id)).balance, "0.00", "wallet paid the order");
+    assert.equal(await customerRepo.getBalance(customer.id), 0, "wallet paid the order");
   });
 
   test("the truck quantities must sum to the order quantity", async () => {
@@ -190,6 +167,13 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(loads.length, 0, "no loads until declared or gated in");
   });
 
+  // KNOWN CUTOVER REGRESSION (expected failure): the gate flow (gate-in /
+  // load / gate-out) has NOT been migrated to the live schema — see the
+  // FLAGGED block in controllers/administration/order.controller.js:25-60.
+  // gateInTruck reads a `status` column consumer_truckallocation does not
+  // have, so every gate-in of an existing load early-returns as
+  // "alreadyEntered" without recording anything, and the plate-correction
+  // audit never happens. Left failing deliberately.
   test("security correcting the plate at gate-in is recorded as a correction", async () => {
     const { accessToken } = await activeFundedCustomer("5", 30000);
     const placed = await request(app)
@@ -199,19 +183,18 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(placed.status, 201, JSON.stringify(placed.body));
     const orderId = placed.body.data.order.id;
 
-    await payFromWallet(orderId);
-    await request(app)
-      .post(`/api/orders/${orderId}/release`)
-      .set("Authorization", `Bearer ${release.accessToken}`)
-      .send({});
-
+    await payFromWallet(orderId); // payment IS the release now
     const [load] = await orderTruckRepo.findByOrder(orderId);
     const res = await request(app)
       .post(`/api/orders/${orderId}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
       .send({ loadId: load.id, truckNumber: "PK-ACTUAL" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.data.truck.truckNumber, "PK-ACTUAL", "the arriving plate replaced the declared one");
+    assert.equal(
+      res.body.data.truck.plateNumber ?? res.body.data.truck.truckNumber,
+      "PK-ACTUAL",
+      "the arriving plate replaced the declared one"
+    );
 
     const events = await auditLogRepo.findByEntity("order_truck", load.id);
     const corrected = events.find((e) => e.action === "order_truck.plate_corrected");
@@ -220,6 +203,10 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(corrected.metadata.to, "PK-ACTUAL");
   });
 
+  // KNOWN CUTOVER REGRESSION (expected failure): same un-migrated gate flow
+  // as above — markTruckLoaded writes plate strings into the live integer
+  // `truck_number` ordinal and reads a nonexistent `status` column, so the
+  // gantry swap can neither persist nor audit. Left failing deliberately.
   test("a truck swapped at the gantry is recorded and the ticket names the new truck", async () => {
     const { accessToken } = await activeFundedCustomer("6", 30000);
     const placed = await request(app)
@@ -228,11 +215,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
       .send(body({ quantity: 30000, trucks: [{ truckNumber: "PK-FIRST", quantity: 30000 }] }));
     const orderId = placed.body.data.order.id;
 
-    await payFromWallet(orderId);
-    await request(app)
-      .post(`/api/orders/${orderId}/release`)
-      .set("Authorization", `Bearer ${release.accessToken}`)
-      .send({});
+    await payFromWallet(orderId); // payment IS the release now
     const [load] = await orderTruckRepo.findByOrder(orderId);
     await request(app)
       .post(`/api/orders/${orderId}/gate-in`)
@@ -245,7 +228,11 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
       .set("Authorization", `Bearer ${ticketing.accessToken}`)
       .send({ truckNumber: "PK-SECOND" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.data.truck.truckNumber, "PK-SECOND", "the actual loaded truck");
+    assert.equal(
+      res.body.data.truck.plateNumber ?? res.body.data.truck.truckNumber,
+      "PK-SECOND",
+      "the actual loaded truck"
+    );
 
     const events = await auditLogRepo.findByEntity("order_truck", load.id);
     const swapped = events.find((e) => e.action === "order_truck.truck_swapped");
@@ -253,13 +240,14 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(swapped.metadata.from, "PK-FIRST");
     assert.equal(swapped.metadata.to, "PK-SECOND");
 
-    const ticket = await ticketRepo.findByOrderTruck(load.id);
+    // Live tickets (consumer_truckticket) key on (orderId, truckNumber) —
+    // there is no orderTruckId column linking a ticket to an allocation row.
+    const ticket = await ticketRepo.findByOrderAndTruckNumber(orderId, load.truckNumber);
     assert.ok(ticket, "a ticket was issued");
-    assert.equal(ticket.orderTruckId, load.id, "the ticket is bound to this load");
-    // The plate lives on the load (single source of truth); the ticket names the
-    // truck through that link, and the load now carries the swapped-in truck.
+    // The plate lives on the load (single source of truth); the load now
+    // carries the swapped-in truck.
     const reloaded = await orderTruckRepo.findById(load.id);
-    assert.equal(reloaded.truckNumber, "PK-SECOND", "the load the ticket points at is the truck that loaded");
+    assert.equal(reloaded.plateNumber, "PK-SECOND", "the load the ticket points at is the truck that loaded");
   });
 
   test("a customer can fill in a plate on a pending pickup declaration via the portal", async () => {
@@ -273,7 +261,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
 
     const before = await orderTruckRepo.findByOrder(placed.body.data.order.id);
     assert.equal(before.length, 1);
-    assert.equal(before[0].truckNumber, null, "plate was left blank at order");
+    assert.equal(before[0].plateNumber, null, "plate was left blank at order");
 
     const res = await request(app)
       .patch(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/trucks`)
@@ -289,7 +277,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
 
     const after = await orderTruckRepo.findByOrder(placed.body.data.order.id);
     assert.equal(after.length, 1);
-    assert.equal(after[0].truckNumber, "PK-LATER");
+    assert.equal(after[0].plateNumber, "PK-LATER");
     assert.equal(after[0].driverName, "Musa");
   });
 
@@ -313,7 +301,7 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     assert.equal(res.body.data.order.trucks[0].plate, "PK-NEW");
   });
 
-  test("customer truck update is refused once a load has gated in", async () => {
+  test("customer truck update is refused once a load has been ticketed", async () => {
     const { accessToken } = await activeFundedCustomer("0", 30000);
     const placed = await request(app)
       .post(ORDERS)
@@ -325,17 +313,14 @@ describe("pickup trucks — declared at order, editable at the gate and at ticke
     const load = (await orderTruckRepo.findByOrder(orderId))[0];
 
     await payFromWallet(orderId);
-    const releaseRes = await request(app)
-      .post(`/api/orders/${orderId}/release`)
-      .set("Authorization", `Bearer ${release.accessToken}`)
-      .send({});
-    assert.equal(releaseRes.status, 200, JSON.stringify(releaseRes.body));
 
-    const gate = await request(app)
-      .post(`/api/orders/${orderId}/gate-in`)
-      .set("Authorization", `Bearer ${entry.accessToken}`)
-      .send({ loadId: load.id });
-    assert.equal(gate.status, 200, JSON.stringify(gate.body));
+    // The live lock keys on the allocation's ticketStatus: once past
+    // "pending" the declaration is no longer the customer's to rewrite
+    // (services/order.service.js updatePickupTrucks). Progressed directly
+    // here because the gate-in endpoint itself is still un-migrated (see the
+    // FLAGGED block in controllers/administration/order.controller.js) —
+    // when that pass lands, this can go back through the real gate.
+    await orderTruckRepo.update(load.id, { ticketStatus: "generated" });
 
     const res = await request(app)
       .patch(`${ORDERS}/by-ref/${encodeURIComponent(ref)}/trucks`)

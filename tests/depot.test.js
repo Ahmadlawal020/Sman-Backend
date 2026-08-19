@@ -9,13 +9,14 @@ const { eq } = require("drizzle-orm");
 const app = require("../app");
 const { db } = require("../config/db");
 const {
-  depots,
-  products,
+  consumerDepots,
+  consumerProduct,
   depotProductCapacities,
   depotStaff,
 } = require("../db/schema");
 const { staffRepo } = require("../repositories");
 const { staffToken, closeDb } = require("./helpers");
+const { seedProduct } = require("./liveFixtures");
 
 /**
  * Guards two regressions that both had the same shape — a write field that the
@@ -29,6 +30,21 @@ const { staffToken, closeDb } = require("./helpers");
  *
  * Both are asserted against the database, not just the response body, so a
  * future re-break cannot pass by echoing the request back.
+ *
+ * KNOWN PRODUCTION BUGS (post-cutover) — every test below fails on them until
+ * controllers/administration/depot.controller.js catches up with the migrated
+ * depot repository:
+ *
+ *  a. createDepot (depot.controller.js:96) never supplies `location`, which
+ *     is NOT NULL on consumer_depots (the live table has ONLY
+ *     id/name/location) — POST /api/depots dies on 23502 (surfaced as a 400
+ *     "A required field is missing") before anything persists. The controller
+ *     needs to map the write shape's `state` (or an explicit location) onto
+ *     it. Every test here fails at that first POST.
+ *  b. upsertProductPrice is called as (depot.id, productId, price)
+ *     (depot.controller.js:125,193,262) but the live signature is
+ *     (stateId, productId, price) — a depot id lands where a consumer_states
+ *     id belongs, silently pricing the wrong (or no) state.
  */
 describe("depot writes — capacities and staff actually persist", () => {
   const suffix = Date.now().toString(36);
@@ -40,14 +56,12 @@ describe("depot writes — capacities and staff actually persist", () => {
   before(async () => {
     token = await staffToken(request, app);
 
-    [product] = await db
-      .insert(products)
-      .values({
-        name: `Depot Test Product ${suffix}`,
-        sku: `DTP-${suffix}`,
-        category: "Fuel",
-      })
-      .returning();
+    // Live products are consumer_product (no sku/category columns — the trade
+    // code lives in `abbreviation`).
+    product = await seedProduct({
+      name: `Depot Test Product ${suffix}`,
+      abbreviation: `DTP${suffix}`.slice(0, 10),
+    });
 
     assignableStaff = await staffRepo.create({
       firstName: "Depot",
@@ -62,11 +76,12 @@ describe("depot writes — capacities and staff actually persist", () => {
   });
 
   after(async () => {
-    // Depot delete cascades to depot_product_capacities and depot_staff.
+    // Depot delete cascades to sman.depot_product_capacities/depot_staff/
+    // depot_extras (all FK ON DELETE CASCADE to consumer_depots).
     for (const id of createdDepotIds) {
-      await db.delete(depots).where(eq(depots.id, id));
+      await db.delete(consumerDepots).where(eq(consumerDepots.id, id));
     }
-    await db.delete(products).where(eq(products.id, product.id));
+    await db.delete(consumerProduct).where(eq(consumerProduct.id, product.id));
     await staffRepo.deleteById(assignableStaff.id);
     await closeDb();
   });

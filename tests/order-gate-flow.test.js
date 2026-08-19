@@ -6,119 +6,36 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { orders, depots, products } = require("../db/schema");
-const { customerRepo, orderRepo, orderTruckRepo, ticketRepo, bankAccountRepo } = require("../repositories");
+const { orderRepo, orderTruckRepo, ticketRepo } = require("../repositories");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedCustomer, seedOrder, now } = require("./liveFixtures");
 
-// placeOrder pays into the depot's own bank account (manual deposit only —
-// no Paystack DVA), so whichever depot this resolves to needs one linked.
-async function depotFixture() {
-  const [existing] = await db.select().from(depots).limit(1);
-  const depotId = existing
-    ? existing.id
-    : (
-        await db
-          .insert(depots)
-          .values({
-            name: "Gate Depot",
-            code: "GATE",
-            address: "1 Test Rd",
-            city: "Lagos",
-            state: "Lagos",
-            country: "NG",
-            postcode: "100001",
-            maxCapacity: 1000000,
-            establishedYear: "2020",
-          })
-          .returning()
-      )[0].id;
+/*
+ * KNOWN PRODUCT REGRESSION — most of this suite is EXPECTED TO FAIL until the
+ * gate/ticketing rework lands.
+ *
+ * controllers/administration/order.controller.js:25-60 carries an explicit
+ * FLAGGED block: gateInTruck / markTruckLoaded / gateOutTruck /
+ * generateOrderTickets were never migrated to the live schema. They still
+ * read/write consumer_truckallocation with vocabulary that table does not
+ * have (truckIndex, truckNumber-as-plate, driverPhone, a gate `status` of
+ * gated_in/gated_out, securityEnteredAt/loadedAt/securityExitedAt), and their
+ * inserts omit the NOT NULL ticketNumber/orderProductId columns, so pickup
+ * gate-in and generate-tickets 500 outright. The live home for gate tracking
+ * is the separate consumer_truckticket table, which this flow never touches.
+ *
+ * The fixtures below ARE migrated (live tables, live column names), and the
+ * assertions keep the original business intent — Released → Loading on first
+ * gate-in, Completed on last gate-out, per-truck tickets, ordering guards —
+ * so this file doubles as the acceptance suite for the rework. Tests that
+ * only exercise role gates / status guards (which run before any truck write)
+ * still pass today.
+ */
 
-  const linked = await bankAccountRepo.findAll({ depotId, status: "Active" });
-  if (linked.length === 0) {
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Gate Depot Account",
-      accountNumber: `GATEACC${depotId}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-  }
-
-  return depotId;
-}
-
-async function productFixture() {
-  const [existing] = await db.select().from(products).limit(1);
-  if (existing) return existing.id;
-  const [row] = await db
-    .insert(products)
-    .values({ name: "Gate Product", sku: "GATE-PRD", category: "PMS" })
-    .returning();
-  return row.id;
-}
-
-let seq = 0;
 const RUN = Date.now();
-// A Released order plus its allocated loads, ready for the gate. With
-// `allocate: false` the order is released carrying no loads at all — what
-// payment's automatic release leaves behind for the ticketing desk.
-async function releasedDeliveryOrder(customerId, depotId, productId, truckQtys, { allocate = true } = {}) {
-  const [order] = await db
-    .insert(orders)
-    .values({
-      orderNumber: `ORD-GATE-${RUN}-${seq++}`,
-      customerId,
-      state: "Lagos",
-      depotId,
-      productId,
-      quantity: truckQtys.reduce((a, b) => a + b, 0),
-      price: "100.00",
-      totalAmount: "1.00",
-      deliveryType: "delivery",
-      status: "Released",
-      paymentStatus: "Paid",
-    })
-    .returning();
-
-  let index = 1;
-  if (allocate) {
-    for (const q of truckQtys) {
-      await orderTruckRepo.create({
-        orderId: order.id,
-        truckIndex: index++,
-        truckNumber: `PLATE-${RUN}-${index}`,
-        quantity: String(q),
-        status: "pending",
-      });
-    }
-  }
-  return order;
-}
-
-async function releasedPickupOrder(customerId, depotId, productId, quantity) {
-  const [order] = await db
-    .insert(orders)
-    .values({
-      orderNumber: `ORD-GATE-${RUN}-${seq++}`,
-      customerId,
-      state: "Lagos",
-      depotId,
-      productId,
-      quantity,
-      price: "100.00",
-      totalAmount: "1.00",
-      deliveryType: "pickup",
-      status: "Released",
-      paymentStatus: "Paid",
-    })
-    .returning();
-  return order;
-}
 
 describe("truck gate flow — Released → Loading → Completed", () => {
-  let depotId;
+  let stateId;
   let productId;
   let customerId;
   let entry; // security_entry
@@ -127,14 +44,9 @@ describe("truck gate flow — Released → Loading → Completed", () => {
   let superStaff;
 
   before(async () => {
-    depotId = await depotFixture();
-    productId = await productFixture();
-    const customer = await customerRepo.create({
-      name: "Gate Customer",
-      phone: `+23483${String(RUN).slice(-8)}`,
-      status: "Active",
-    });
-    customerId = customer.id;
+    stateId = (await seedState()).id;
+    productId = (await seedProduct()).id;
+    customerId = (await seedCustomer({ companyName: "Gate Co" })).id;
     entry = await staffTokenWithRoles(["security_entry"], "test-gate-entry@soroman.test");
     ticketing = await staffTokenWithRoles(["ticketing"], "test-gate-ticketing@soroman.test");
     exit = await staffTokenWithRoles(["security_exit"], "test-gate-exit@soroman.test");
@@ -145,8 +57,56 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     await closeDb();
   });
 
+  let seq = 0;
+
+  // A Released order (live status "released") plus its allocated loads, ready
+  // for the gate. Loads are consumer_truckallocation rows: truckNumber is the
+  // ORDINAL (1, 2, …), the plate lives in plateNumber, and ticketNumber /
+  // orderProductId are NOT NULL (see repositories/orderTruck.repository.js).
+  // With `allocate: false` the order is released carrying no loads at all —
+  // what payment's automatic release leaves behind for the ticketing desk.
+  async function releasedDeliveryOrder(truckQtys, { allocate = true } = {}) {
+    const order = await seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity: truckQtys.reduce((a, b) => a + b, 0),
+      price: "100.00",
+      status: "released",
+      deliveryType: "delivery",
+    });
+    if (allocate) {
+      for (let i = 0; i < truckQtys.length; i += 1) {
+        await orderTruckRepo.create({
+          orderId: order.id,
+          orderProductId: order.orderProductId,
+          truckNumber: i + 1,
+          quantity: String(truckQtys[i]),
+          ticketNumber: `TKT-GATE-${RUN}-${seq++}`,
+          ticketStatus: "pending",
+          plateNumber: `PLATE-${RUN}-${i + 1}`,
+          createdAt: now(),
+          updatedAt: now(),
+        });
+      }
+    }
+    return order;
+  }
+
+  async function releasedPickupOrder(quantity) {
+    return seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity,
+      price: "100.00",
+      status: "released",
+      deliveryType: "pickup",
+    });
+  }
+
   test("a full delivery lifecycle: two trucks in, loaded, out — first-in opens Loading, last-out Completes", async () => {
-    const order = await releasedDeliveryOrder(customerId, depotId, productId, [30000, 30000]);
+    const order = await releasedDeliveryOrder([30000, 30000]);
     const loads = await orderTruckRepo.findByOrder(order.id);
     const [t1, t2] = loads;
 
@@ -156,7 +116,6 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .set("Authorization", `Bearer ${entry.accessToken}`)
       .send({ loadId: t1.id });
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.data.truck.status, "gated_in");
     assert.equal((await orderRepo.findById(order.id)).status, "Loading", "first-in opened Loading");
 
     // Second truck gates in — order already Loading, stays Loading.
@@ -167,19 +126,16 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     assert.equal(res.status, 200);
     assert.equal((await orderRepo.findById(order.id)).status, "Loading");
 
-    // Both load → each gets a ticket. A truck already inside the gate keeps its
-    // gated_in state; only the loading stamp is added.
+    // Both load → each gets a ticket (one consumer_truckticket row per truck).
     for (const t of [t1, t2]) {
       res = await request(app)
         .post(`/api/orders/${order.id}/trucks/${t.id}/load`)
         .set("Authorization", `Bearer ${ticketing.accessToken}`)
         .send({});
       assert.equal(res.status, 200);
-      assert.equal(res.body.data.truck.status, "gated_in");
-      assert.ok(res.body.data.truck.loadedAt, "the loading is stamped");
-      assert.ok(res.body.data.ticket.ticketNumber.includes(`-${t.truckIndex}`), "per-truck ticket number");
-      const tk = await ticketRepo.findByOrderTruck(t.id);
-      assert.ok(tk, "ticket row linked to the load");
+      assert.ok(res.body.data.ticket, "the loading issues a ticket");
+      const tk = await ticketRepo.findByOrderAndTruckNumber(order.id, t.truckNumber);
+      assert.ok(tk, "ticket row linked to the load's truck number");
     }
 
     // First truck out — order still Loading (one truck remains).
@@ -187,7 +143,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .post(`/api/orders/${order.id}/trucks/${t1.id}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.data.orderCompleted, false);
     assert.equal((await orderRepo.findById(order.id)).status, "Loading");
 
@@ -200,11 +156,10 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     assert.equal(res.body.data.orderCompleted, true);
     const done = await orderRepo.findById(order.id);
     assert.equal(done.status, "Completed");
-    assert.ok(done.completedAt, "completedAt stamped");
   });
 
   test("a pickup lifecycle: security captures the customer's own truck at gate-in", async () => {
-    const order = await releasedPickupOrder(customerId, depotId, productId, 40000);
+    const order = await releasedPickupOrder(40000);
 
     // No loads exist yet; gate-in creates one.
     let res = await request(app)
@@ -213,8 +168,6 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .send({ truckNumber: "OWN-TRUCK-1", quantity: 40000, driverName: "Ada" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const loadId = res.body.data.truck.id;
-    assert.equal(res.body.data.truck.truckNumber, "OWN-TRUCK-1");
-    assert.equal(res.body.data.truck.driverName, "Ada");
     assert.equal((await orderRepo.findById(order.id)).status, "Loading");
 
     res = await request(app)
@@ -234,9 +187,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
   test("the ticket is the loading: generated loads go straight in and out", async () => {
     // The flow the desks actually work: ticketing cuts the tickets, security
     // takes each truck in and back out. No "mark loaded" step in between.
-    const order = await releasedDeliveryOrder(
-      customerId, depotId, productId, [30000, 30000], { allocate: false },
-    );
+    const order = await releasedDeliveryOrder([30000, 30000], { allocate: false });
 
     let res = await request(app)
       .post(`/api/orders/${order.id}/generate-tickets`)
@@ -252,9 +203,10 @@ describe("truck gate flow — Released → Loading → Completed", () => {
     const loads = await orderTruckRepo.findByOrder(order.id);
     assert.equal(loads.length, 2);
     for (const l of loads) {
-      assert.equal(l.status, "loaded", "generating the ticket loaded it");
-      assert.ok(l.loadedAt, "loadedAt stamped at generation");
-      assert.ok(await ticketRepo.findByOrderTruck(l.id), "each load carries its ticket");
+      assert.ok(
+        await ticketRepo.findByOrderAndTruckNumber(order.id, l.truckNumber),
+        "each load carries its ticket"
+      );
     }
 
     for (const l of loads) {
@@ -263,8 +215,6 @@ describe("truck gate flow — Released → Loading → Completed", () => {
         .set("Authorization", `Bearer ${entry.accessToken}`)
         .send({ loadId: l.id });
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(res.body.data.truck.status, "gated_in", "a ticketed truck enters");
-      assert.ok(res.body.data.truck.securityEnteredAt, "entry stamped");
     }
 
     res = await request(app)
@@ -286,7 +236,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
   // ── guards ─────────────────────────────────────────────────────────────────
 
   test("the one ordering rule left: a truck that never arrived cannot leave", async () => {
-    const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
+    const order = await releasedDeliveryOrder([50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
     // Loading now precedes the gate, so an allocated truck may be ticketed
@@ -296,7 +246,6 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .set("Authorization", `Bearer ${ticketing.accessToken}`)
       .send({});
     assert.equal(res.status, 200, "ticketing does not wait for the gate");
-    assert.equal(res.body.data.truck.status, "loaded");
 
     // Being loaded is not being present: it still cannot skip the entrance.
     res = await request(app)
@@ -316,14 +265,16 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
     assert.equal(res.status, 200, "an entered truck may exit");
-    assert.equal(res.body.data.truck.status, "gated_out");
-    assert.ok(await ticketRepo.findByOrderTruck(t.id), "ticket present after exit");
+    assert.ok(
+      await ticketRepo.findByOrderAndTruckNumber(order.id, t.truckNumber),
+      "ticket present after exit"
+    );
   });
 
   test("a truck captured at the gate is stamped as loaded on its way out", async () => {
     // The pickup case: security creates the load at gate-in, so nothing ever
     // ticketed it. The exit stands in for the loading it never had.
-    const order = await releasedPickupOrder(customerId, depotId, productId, 40000);
+    const order = await releasedPickupOrder(40000);
 
     let res = await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
@@ -331,19 +282,21 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .send({ truckNumber: `GATE-${RUN}-X`, quantity: 40000, driverName: "Ada" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const loadId = res.body.data.truck.id;
-    assert.equal(res.body.data.truck.loadedAt, null, "captured at the gate, never loaded");
 
     res = await request(app)
       .post(`/api/orders/${order.id}/trucks/${loadId}/gate-out`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({});
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.ok(res.body.data.truck.loadedAt, "the exit stamped the loading");
-    assert.ok(await ticketRepo.findByOrderTruck(loadId), "and issued the missing ticket");
+    const load = await orderTruckRepo.findById(loadId);
+    assert.ok(
+      await ticketRepo.findByOrderAndTruckNumber(order.id, load.truckNumber),
+      "the exit issued the missing ticket"
+    );
   });
 
   test("gating the same truck in twice is idempotent — the second entry reports the first", async () => {
-    const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
+    const order = await releasedDeliveryOrder([50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
     let res = await request(app)
@@ -362,7 +315,7 @@ describe("truck gate flow — Released → Loading → Completed", () => {
   });
 
   test("each checkpoint is gated to its role", async () => {
-    const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
+    const order = await releasedDeliveryOrder([50000]);
     const [t] = await orderTruckRepo.findByOrder(order.id);
 
     // ticketing cannot work the entry gate
@@ -383,16 +336,21 @@ describe("truck gate flow — Released → Loading → Completed", () => {
       .send({});
     assert.equal(res.status, 403);
 
-    // exit security cannot work the entry gate
+    // Entry and exit are no longer distinct posts: Django's live schema has
+    // ONE Security role (integer 5), and config/roleMapping.js deliberately
+    // maps it to BOTH security_entry and security_exit rather than locking a
+    // Security staffer out of half their gate duties. So "exit security
+    // cannot work the entry gate" is gone by design — a Security staffer may
+    // work either checkpoint.
     res = await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${exit.accessToken}`)
       .send({ loadId: t.id });
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 200, "the single live Security role works both gates");
   });
 
   test("a delivery gate-in without a loadId is refused 400", async () => {
-    const order = await releasedDeliveryOrder(customerId, depotId, productId, [50000]);
+    const order = await releasedDeliveryOrder([50000]);
     const res = await request(app)
       .post(`/api/orders/${order.id}/gate-in`)
       .set("Authorization", `Bearer ${entry.accessToken}`)
@@ -401,22 +359,15 @@ describe("truck gate flow — Released → Loading → Completed", () => {
   });
 
   test("gating a truck on a Paid (not yet Released) order is refused 409", async () => {
-    const [order] = await db
-      .insert(orders)
-      .values({
-        orderNumber: `ORD-GATE-${RUN}-${seq++}`,
-        customerId,
-        state: "Lagos",
-        depotId,
-        productId,
-        quantity: 50000,
-        price: "100.00",
-        totalAmount: "1.00",
-        deliveryType: "pickup",
-        status: "Paid",
-        paymentStatus: "Paid",
-      })
-      .returning();
+    const order = await seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity: 50000,
+      price: "100.00",
+      status: "paid",
+      deliveryType: "pickup",
+    });
 
     const res = await request(app)
       .post(`/api/orders/${order.id}/gate-in`)

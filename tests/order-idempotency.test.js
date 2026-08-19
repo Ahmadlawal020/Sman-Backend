@@ -5,11 +5,12 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis, orders } = require("../db/schema");
+const { consumerOrder } = require("../db/schema");
 const { eq } = require("drizzle-orm");
-const { customerRepo, pfiRepo, orderRepo, bankAccountRepo } = require("../repositories");
+const { pfiRepo, orderRepo } = require("../repositories");
 const { placeOrder } = require("../services/order.service");
 const { closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi, seedCustomer } = require("./liveFixtures");
 
 const RUN = Date.now();
 const UNIT_PRICE = 100;
@@ -19,66 +20,31 @@ describe("placeOrder idempotency — a redelivered request must not order twice"
   let depotId;
   let productId;
   let pfiId;
+  let stateName;
 
   before(async () => {
-    const [depot] = await db
-      .insert(depots)
-      .values({
-        name: "Idem Depot",
-        code: `IDM${String(RUN).slice(-5)}`,
-        address: "1 Rd",
-        city: "Lagos",
-        state: "Lagos",
-        country: "NG",
-        postcode: "100001",
-        maxCapacity: 10000000,
-        establishedYear: "2020",
-      })
-      .returning();
+    // Live model: pricing and sellable stock are STATE-scoped. The depot joins
+    // via location === state name and needs an Active bank account (manual
+    // deposit only — placeOrder refuses depots without one).
+    const state = await seedState();
+    stateName = state.name;
+
+    const depot = await seedDepot({ location: state.name, bankAccount: true });
     depotId = depot.id;
 
-    // placeOrder pays into the depot's own bank account (manual deposit
-    // only — no Paystack DVA), so every order-placing test depot needs one.
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Idem Depot Account",
-      accountNumber: `IDMACC${String(RUN).slice(-6)}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-
-    const [product] = await db
-      .insert(products)
-      .values({ name: "Idem PMS", sku: `IDM-PMS-${String(RUN).slice(-5)}`, category: "PMS" })
-      .returning();
+    const product = await seedProduct();
     productId = product.id;
 
-    await db.insert(depotProductPrices).values({ depotId, productId, currentPrice: String(UNIT_PRICE) });
-    const [pfi] = await db
-      .insert(pfis)
-      .values({
-        pfiNumber: `PFI-IDM-${RUN}`,
-        status: "active",
-        locationId: depotId,
-        productId,
-        startingQtyLitres: 2000000,
-        soldQtyLitres: 0,
-      })
-      .returning();
+    await seedPrice(productId, state.id, { price: String(UNIT_PRICE) });
+
+    // Sold quantity is computed from consumer_pfimovement rows — there is no
+    // soldQtyLitres column live (see repositories/pfi.repository.js).
+    const pfi = await seedPfi({ productId, locationId: state.id, startingQtyLitres: "2000000.00" });
     pfiId = pfi.id;
 
-    // Balance 0: the wallet hold fails cleanly and the order stays Pending —
-    // no ticket generation, no wallet noise; virtual account pre-set so the
-    // service never reaches for Paystack.
-    const customer = await customerRepo.create({
-      name: "Idem Customer",
-      phone: `+234816${String(RUN).slice(-6)}9`,
-      status: "Active",
-      virtualAccountNumber: `VIDM${String(RUN).slice(-6)}`,
-      virtualAccountBank: "Test Bank",
-      virtualAccountName: "SOROMANNIGERI/ IC",
-    });
+    // Orders are always created Pending/Unpaid now (payment is a separate
+    // explicit step), so no wallet/virtual-account setup is needed at all.
+    const customer = await seedCustomer();
     customerId = customer.id;
   });
 
@@ -89,7 +55,7 @@ describe("placeOrder idempotency — a redelivered request must not order twice"
   const order = (overrides = {}) =>
     placeOrder({
       customerId,
-      state: "Lagos",
+      state: stateName,
       depotId,
       productId,
       quantity: 5000,
@@ -104,17 +70,19 @@ describe("placeOrder idempotency — a redelivered request must not order twice"
     assert.ok(first.order.id, "first call created an order");
     assert.ok(!first.alreadyProcessed);
 
-    const soldAfterFirst = Number((await pfiRepo.findById(pfiId)).soldQtyLitres);
+    const soldAfterFirst = await pfiRepo.getSoldQty(pfiId);
 
     const second = await order({ idempotencyKey: key });
     assert.equal(second.order.id, first.order.id, "same order back, not a duplicate");
     assert.equal(second.alreadyProcessed, true);
     assert.equal(second.payment.accountNumber, first.payment.accountNumber);
 
-    const soldAfterSecond = Number((await pfiRepo.findById(pfiId)).soldQtyLitres);
+    const soldAfterSecond = await pfiRepo.getSoldQty(pfiId);
     assert.equal(soldAfterSecond, soldAfterFirst, "no additional stock reserved by the replay");
 
-    const rows = await db.select().from(orders).where(eq(orders.idempotencyKey, key));
+    // idempotencyKey lives on as consumer_order.order_fingerprint (plus the
+    // enforcing sman.order_idempotency row) — see order.repository.js.
+    const rows = await db.select().from(consumerOrder).where(eq(consumerOrder.orderFingerprint, key));
     assert.equal(rows.length, 1, "exactly one order carries the key");
   });
 
@@ -128,7 +96,7 @@ describe("placeOrder idempotency — a redelivered request must not order twice"
     const a = await order();
     const b = await order();
     assert.notEqual(a.order.id, b.order.id);
-    assert.equal(a.order.idempotencyKey ?? null, null);
+    assert.equal(a.order.orderFingerprint ?? null, null);
   });
 
   test("concurrent same-key calls: exactly one order wins the race", async () => {
@@ -136,7 +104,7 @@ describe("placeOrder idempotency — a redelivered request must not order twice"
     const [a, b] = await Promise.all([order({ idempotencyKey: key }), order({ idempotencyKey: key })]);
     assert.equal(a.order.id, b.order.id, "both callers got the same order");
     assert.ok(a.alreadyProcessed || b.alreadyProcessed, "one of the two was a replay");
-    const rows = await db.select().from(orders).where(eq(orders.idempotencyKey, key));
+    const rows = await db.select().from(consumerOrder).where(eq(consumerOrder.orderFingerprint, key));
     assert.equal(rows.length, 1);
   });
 

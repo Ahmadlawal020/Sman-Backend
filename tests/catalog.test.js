@@ -6,65 +6,47 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis } = require("../db/schema");
 const { closeDb } = require("./helpers");
+const { seedState, seedProduct, seedPrice, seedDepot, seedPfi } = require("./liveFixtures");
 
 const CATALOG = "/api/catalog";
 const RUN = Date.now();
 
-const seedDepot = async (name, code) => {
-  const [depot] = await db
-    .insert(depots)
-    .values({
-      name,
-      code,
-      address: "1 Rd",
-      city: "Lagos",
-      state: "Lagos",
-      country: "NG",
-      postcode: "100001",
-      maxCapacity: 10000000,
-      establishedYear: "2020",
-    })
-    .returning();
-  return depot;
-};
-
 describe("public catalog — what anyone may see before signing in", () => {
   let stockedDepotId;
   let emptyDepotId;
+  let stockedStateName;
   let productId;
 
   before(async () => {
-    const stocked = await seedDepot("Catalog Stocked Depot", `CAT${String(RUN).slice(-5)}`);
+    // Live model: pricing and stock are STATE-scoped (consumer_productprice
+    // per product+state, stock from active PFIs whose locationId is a state),
+    // and a depot joins the catalog via location === state name. Two states:
+    // both priced, only one with an active PFI — so only the depot in the
+    // stocked state is orderable.
+    const stockedState = await seedState({ name: `Catalog Stocked State ${RUN}` });
+    const emptyState = await seedState({ name: `Catalog Empty State ${RUN}` });
+    stockedStateName = stockedState.name;
+
+    const stocked = await seedDepot({ name: "Catalog Stocked Depot", location: stockedState.name });
     stockedDepotId = stocked.id;
-    const empty = await seedDepot("Catalog Empty Depot", `CAE${String(RUN).slice(-5)}`);
+    const empty = await seedDepot({ name: "Catalog Empty Depot", location: emptyState.name });
     emptyDepotId = empty.id;
 
-    const [product] = await db
-      .insert(products)
-      // `category` is a real classification, not the trade code — that is the
-      // shape production has had since categories were normalised, and the
-      // fixture has to match it or the badge assertion below proves nothing.
-      .values({ name: "Catalog PMS", sku: `CAT-PMS-${String(RUN).slice(-5)}`, category: "Fuel" })
-      .returning();
+    // `abbreviation` is the live home of the trade code the portal shows as a
+    // badge (there is no sku column — catalog.service derives sku/code from
+    // abbreviation). The dashes prove the badge strips punctuation.
+    const product = await seedProduct({
+      name: "Catalog PMS",
+      abbreviation: `CAT-PMS-${String(RUN).slice(-5)}`,
+    });
     productId = product.id;
 
-    // Both depots carry a price; only the stocked one has an active PFI, so
-    // only the stocked one is orderable.
-    await db.insert(depotProductPrices).values([
-      { depotId: stockedDepotId, productId, currentPrice: "150" },
-      { depotId: emptyDepotId, productId, currentPrice: "150" },
-    ]);
-    await db.insert(pfis).values({
-      pfiNumber: `PFI-CAT-${RUN}`,
-      status: "active",
-      locationId: stockedDepotId,
-      productId,
-      startingQtyLitres: 500000,
-      soldQtyLitres: 0,
-    });
+    await seedPrice(productId, stockedState.id, { price: "150.00" });
+    await seedPrice(productId, emptyState.id, { price: "150.00" });
+
+    // Only the stocked state gets an active PFI — the sellable-stock source.
+    await seedPfi({ productId, locationId: stockedState.id, status: "active" });
   });
 
   after(async () => {
@@ -95,7 +77,7 @@ describe("public catalog — what anyone may see before signing in", () => {
     const res = await request(app).get(CATALOG);
     const depot = res.body.data.depots.find((d) => d.id === stockedDepotId);
     assert.ok(depot, "the stocked depot is in the catalog");
-    assert.equal(depot.state, "Lagos");
+    assert.equal(depot.state, stockedStateName);
 
     const product = depot.products.find((p) => p.id === productId);
     assert.ok(product, "its priced product is listed");
@@ -103,13 +85,14 @@ describe("public catalog — what anyone may see before signing in", () => {
     assert.equal(product.unit, "Liters");
     assert.equal(product.name, "Catalog PMS");
 
-    // The badge comes from the sku, punctuation stripped — never from the
-    // category. Sending the category here is exactly the regression that made
-    // the mobile app show a product called Petrol with a badge reading "Fuel".
+    // The badge comes from the abbreviation, punctuation stripped — never
+    // from a category. Sending a classification here is exactly the
+    // regression that made the mobile app show a product called Petrol with
+    // a badge reading "Fuel".
     const expectedCode = `CATPMS${String(RUN).slice(-5)}`;
     assert.equal(product.code, expectedCode, "the trade code the portal shows as a badge");
-    assert.equal(product.sku, `CAT-PMS-${String(RUN).slice(-5)}`, "the raw sku is exposed too");
-    assert.notEqual(product.code, "Fuel", "the badge must never be the product's category");
+    assert.equal(product.sku, `CAT-PMS-${String(RUN).slice(-5)}`, "the raw abbreviation is exposed as sku");
+    assert.notEqual(product.code, "Fuel", "the badge must never be a product classification");
     // Legacy alias kept for shipped mobile builds that still read `category`.
     assert.equal(product.category, expectedCode, "category mirrors the code for old clients");
   });

@@ -6,85 +6,26 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 
 const app = require("../app");
-const { db } = require("../config/db");
-const { orders, depots, products } = require("../db/schema");
-const { orderRepo, customerRepo, auditLogRepo, bankAccountRepo } = require("../repositories");
+const { orderRepo, auditLogRepo } = require("../repositories");
+const customerRepo = require("../repositories/customer.repository");
 const walletService = require("../services/wallet.service");
 const { staffTokenWithRoles, closeDb } = require("./helpers");
+const { seedState, seedProduct, seedCustomer, seedOrder } = require("./liveFixtures");
 
-// depot/product are notNull FKs on orders — reuse an existing row or make one.
-// placeOrder pays into the depot's own bank account (manual deposit only —
-// no Paystack DVA), so whichever depot this resolves to needs one linked.
-async function depotFixture() {
-  const [existing] = await db.select().from(depots).limit(1);
-  const depotId = existing
-    ? existing.id
-    : (
-        await db
-          .insert(depots)
-          .values({
-            name: "Endpoint Depot",
-            code: "ENDP",
-            address: "1 Test Rd",
-            city: "Lagos",
-            state: "Lagos",
-            country: "NG",
-            postcode: "100001",
-            maxCapacity: 1000000,
-            establishedYear: "2020",
-          })
-          .returning()
-      )[0].id;
+// Sman starting status -> the live consumer_order values that read back as it
+// (see utils/orderStatusMapping.js). Orders have no depotId and no stored
+// paymentStatus — "Paid" is derived from status alone.
+const LIVE_SEED = Object.freeze({
+  Pending: { status: "pending" },
+  Paid: { status: "paid" },
+  Released: { status: "released" },
+  Cancelled: { status: "canceled" },
+});
 
-  const linked = await bankAccountRepo.findAll({ depotId, status: "Active" });
-  if (linked.length === 0) {
-    await bankAccountRepo.create({
-      bankName: "Test Bank",
-      accountName: "Endpoint Depot Account",
-      accountNumber: `ENDPACC${depotId}`,
-      depotIds: [depotId],
-      status: "Active",
-      isDefault: true,
-    });
-  }
-
-  return depotId;
-}
-
-async function productFixture() {
-  const [existing] = await db.select().from(products).limit(1);
-  if (existing) return existing.id;
-  const [row] = await db
-    .insert(products)
-    .values({ name: "Endpoint Product", sku: "ENDP-PRD", category: "PMS" })
-    .returning();
-  return row.id;
-}
-
-let seq = 0;
 const RUN = Date.now();
-async function makeOrder(customerId, depotId, productId, { status, paymentStatus } = {}) {
-  const [row] = await db
-    .insert(orders)
-    .values({
-      orderNumber: `ORD-ENDP-${RUN}-${seq++}`,
-      customerId,
-      state: "Lagos",
-      depotId,
-      productId,
-      quantity: 1000,
-      price: "100.00",
-      totalAmount: "100000.00",
-      deliveryType: "pickup",
-      status: status || "Pending",
-      paymentStatus: paymentStatus || "Unpaid",
-    })
-    .returning();
-  return row;
-}
 
 describe("order lifecycle endpoints — role gates + state machine", () => {
-  let depotId;
+  let stateId;
   let productId;
   let customerId;
   let releaseStaff; // role: release
@@ -93,14 +34,9 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   let superStaff; // role: super_admin — passes both gates
 
   before(async () => {
-    depotId = await depotFixture();
-    productId = await productFixture();
-    const customer = await customerRepo.create({
-      name: "Endpoint Customer",
-      phone: `+23481${String(RUN).slice(-8)}`,
-      status: "Active",
-    });
-    customerId = customer.id;
+    stateId = (await seedState()).id;
+    productId = (await seedProduct()).id;
+    customerId = (await seedCustomer({ companyName: "Endpoint Co" })).id;
 
     releaseStaff = await staffTokenWithRoles(["release"], "test-ep-release@soroman.test");
     financeStaff = await staffTokenWithRoles(["finance"], "test-ep-finance@soroman.test");
@@ -112,13 +48,28 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
     await closeDb();
   });
 
+  const makeOrder = (status = "Pending") =>
+    seedOrder({
+      customerId,
+      stateId,
+      productId,
+      quantity: 1000,
+      price: "100.00",
+      ...LIVE_SEED[status],
+    });
+
   // ── release ────────────────────────────────────────────────────────────────
 
+  // KNOWN PRODUCT BUG (left failing on purpose): the manual release endpoint
+  // 500s on the live schema. controllers/administration/order.controller.js:196
+  // passes `releasedAt: new Date()` into consumer_order.released_at, which is
+  // declared timestamp mode:'string' — postgres-js serialises the Date via
+  // toString() ("Wed Aug 19 2026 … (West Africa Time)") and Postgres rejects
+  // the UPDATE. It also writes the old `releasedBy` key instead of the live
+  // released_by_id column (silently dropped). Payment auto-release works
+  // (releaseOnPayment passes an ISO string) — only this desk endpoint is broken.
   test("the release desk moves a Paid order to Released, stamping who + when", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Paid",
-      paymentStatus: "Paid",
-    });
+    const order = await makeOrder("Paid");
 
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
@@ -131,7 +82,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
     const after = await orderRepo.findById(order.id);
     assert.equal(after.status, "Released");
     assert.ok(after.releasedAt, "releasedAt stamped");
-    assert.equal(after.releasedBy, releaseStaff.staff.id);
+    assert.equal(after.releasedById, releaseStaff.staff.id, "released_by_id stamped on the order");
 
     const events = await auditLogRepo.findByEntity("order", order.id);
     const released = events.find((e) => e.newState === "Released");
@@ -139,11 +90,9 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
     assert.equal(released.actorStaffId, releaseStaff.staff.id);
   });
 
+  // Fails with the same released_at Date-serialisation 500 as above.
   test("super_admin may also release", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Paid",
-      paymentStatus: "Paid",
-    });
+    const order = await makeOrder("Paid");
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${superStaff.accessToken}`)
@@ -152,10 +101,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   });
 
   test("a role without the release gate is refused 403", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Paid",
-      paymentStatus: "Paid",
-    });
+    const order = await makeOrder("Paid");
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${adminStaff.accessToken}`)
@@ -167,10 +113,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   });
 
   test("releasing an order that is not Paid is refused by the state machine (409)", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Pending",
-      paymentStatus: "Unpaid",
-    });
+    const order = await makeOrder("Pending");
     const res = await request(app)
       .post(`/api/orders/${order.id}/release`)
       .set("Authorization", `Bearer ${releaseStaff.accessToken}`)
@@ -181,20 +124,18 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   // ── cancel ───────────────────────────────────────────────────────────────
 
   test("finance cancels a Paid order and the held funds are returned", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Paid",
-      paymentStatus: "Paid",
-    });
-    const amount = Number(order.totalAmount);
+    const order = await makeOrder("Paid");
+    const amount = Number(order.totalPrice);
 
-    // A Paid order holds the customer's funds. makeOrder's raw insert doesn't
+    // A Paid order holds the customer's funds. seedOrder's insert doesn't
     // place the hold, so do it here — that's what cancel releases. Fund the
-    // wallet first so the hold can be taken.
-    await customerRepo.creditBalance(customerId, amount);
-    const startBalance = Number((await customerRepo.findById(customerId)).balance);
+    // wallet first so the hold can be taken. (Balance is computed from the
+    // sman credit ledger minus active holds — no stored balance column.)
+    await walletService.credit({ customerId, amount, description: "test funding", reference: `EPCAN-${RUN}-${order.id}` });
+    const startBalance = await customerRepo.getBalance(customerId);
     await walletService.placeHold({ customerId, orderId: order.id, amount, description: "test" });
     assert.equal(
-      Number((await customerRepo.findById(customerId)).balance),
+      await customerRepo.getBalance(customerId),
       startBalance - amount,
       "funds are held while the order is Paid"
     );
@@ -209,13 +150,21 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
 
     const after = await orderRepo.findById(order.id);
     assert.equal(after.status, "Cancelled");
-    assert.equal(after.cancelledBy, financeStaff.staff.id);
-    assert.equal(after.cancellationReason, "customer changed their mind");
+    assert.ok(after.cancelledAt, "cancellation moment surfaced (derived — no live column)");
+
+    // consumer_order has no cancelledBy/cancellationReason columns —
+    // cancellation is status='canceled', and who/why live ONLY in the audit
+    // row now (see repositories/order.repository.js header).
+    const events = await auditLogRepo.findByEntity("order", order.id);
+    const cancelled = events.find((e) => e.newState === "Cancelled");
+    assert.ok(cancelled, "cancel audit row written");
+    assert.equal(cancelled.actorStaffId, financeStaff.staff.id, "who cancelled is in the audit trail");
+    assert.equal(cancelled.metadata?.reason, "customer changed their mind", "the reason is in the audit trail");
 
     // releaseHold returns the held money — balance back to before the hold, and
     // no debit/credit ledger churn (the hold is the record).
     assert.equal(
-      Number((await customerRepo.findById(customerId)).balance),
+      await customerRepo.getBalance(customerId),
       startBalance,
       "the held funds were returned on cancel"
     );
@@ -224,10 +173,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   });
 
   test("a role without the finance gate cannot cancel (403)", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Paid",
-      paymentStatus: "Paid",
-    });
+    const order = await makeOrder("Paid");
     const res = await request(app)
       .post(`/api/orders/${order.id}/cancel`)
       .set("Authorization", `Bearer ${adminStaff.accessToken}`)
@@ -239,10 +185,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   });
 
   test("cancelling an already-cancelled order is refused 409, so no double refund", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Cancelled",
-      paymentStatus: "Paid",
-    });
+    const order = await makeOrder("Cancelled");
     const res = await request(app)
       .post(`/api/orders/${order.id}/cancel`)
       .set("Authorization", `Bearer ${financeStaff.accessToken}`)
@@ -253,9 +196,7 @@ describe("order lifecycle endpoints — role gates + state machine", () => {
   // ── H1: the raw status setter is gone ──────────────────────────────────────
 
   test("the removed raw PUT status setter is not routable", async () => {
-    const order = await makeOrder(customerId, depotId, productId, {
-      status: "Pending",
-    });
+    const order = await makeOrder("Pending");
     const res = await request(app)
       .put(`/api/orders/${order.id}`)
       .set("Authorization", `Bearer ${superStaff.accessToken}`)

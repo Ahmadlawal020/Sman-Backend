@@ -11,7 +11,10 @@ const { eq } = require("drizzle-orm");
 
 const app = require("../app");
 const { db } = require("../config/db");
-const { customerIdentities, customerTrustedDevices, customerOtps, customers } = require("../db/schema");
+// Live schema: the old clean-room `customers` table is gone — customer rows
+// live in Django's consumer_customer (see repositories/customer.repository.js).
+// The identity/OTP/device tables are Sman-owned and unchanged (sman schema).
+const { customerIdentities, customerTrustedDevices, customerOtps, consumerCustomer } = require("../db/schema");
 const { customerRepo, customerIdentityRepo } = require("../repositories");
 const { closeDb } = require("./helpers");
 
@@ -62,7 +65,7 @@ describe("customer identity — password, PIN, provider login", () => {
     await db.delete(customerTrustedDevices).where(eq(customerTrustedDevices.customerId, customer.id));
     await db.delete(customerIdentities).where(eq(customerIdentities.customerId, customer.id));
     await db.delete(customerOtps).where(eq(customerOtps.customerId, customer.id));
-    await db.delete(customers).where(eq(customers.id, customer.id));
+    await db.delete(consumerCustomer).where(eq(consumerCustomer.id, customer.id));
   });
 
   test("email+password: set, then unrecognized device requires OTP step-up", async () => {
@@ -260,7 +263,6 @@ describe("customer identity — Google sign-in (JWKS-mocked)", () => {
 
     const created = await customerRepo.findByPhone(phone);
     assert.ok(created, "customer row created");
-    assert.equal(created.status, "Pending");
 
     const identity = await customerIdentityRepo.findByCustomerAndProvider(created.id, "google");
     assert.ok(identity, "google identity linked even before phone verification");
@@ -284,7 +286,14 @@ describe("customer identity — Google sign-in (JWKS-mocked)", () => {
 
     await db.delete(customerIdentities).where(eq(customerIdentities.customerId, created.id));
     await db.delete(customerOtps).where(eq(customerOtps.customerId, created.id));
-    await db.delete(customers).where(eq(customers.id, created.id));
+    await db.delete(consumerCustomer).where(eq(consumerCustomer.id, created.id));
+
+    // KNOWN REGRESSION (live cutover): consumer_customer has no status
+    // column, so the Pending-until-phone-verified state a provider
+    // registration used to create is not representable — customerRepo
+    // silently discards `status`. Fails honestly until status tracking gets
+    // a live home. Asserted last so the live-behavior checks above still run.
+    assert.equal(created.status, "Pending", "KNOWN REGRESSION: customer status column gone with live cutover");
   });
 
   test("a tampered ID token (wrong signing key) is rejected uniformly", async () => {
@@ -355,7 +364,7 @@ describe("customer identity — passkeys (contract only, no real authenticator)"
 
   after(async () => {
     await db.delete(customerIdentities).where(eq(customerIdentities.customerId, customer.id));
-    await db.delete(customers).where(eq(customers.id, customer.id));
+    await db.delete(consumerCustomer).where(eq(consumerCustomer.id, customer.id));
     await closeDb();
   });
 
