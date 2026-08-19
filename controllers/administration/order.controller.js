@@ -193,7 +193,10 @@ const releaseOrder = asyncHandler(async (req, res) => {
         : await orderStatus.transition(orderId, "Released", {
             tx,
             actor: { type: "staff", staffId: req.user.id },
-            set: { releasedAt: new Date(), releasedBy: req.user.id },
+            // released_at is drizzle timestamp mode:'string' — a Date object
+            // reaches Postgres as its unparseable toString() form and 500s
+            // the whole release. The FK column is released_by_id.
+            set: { releasedAt: new Date().toISOString(), releasedById: req.user.id },
             metadata: { truckCount: isDelivery ? trucks.length : 0 },
             ipAddress: req.ip,
             userAgent: req.headers["user-agent"],

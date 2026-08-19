@@ -95,6 +95,11 @@ const createDepot = asyncHandler(async (req, res) => {
 
   const depot = await depotRepo.create({
     name,
+    // consumer_depots.location is NOT NULL and is how a depot joins the
+    // state-scoped catalog (location === consumer_states.name) — the write
+    // shape's `state` is exactly that value. Without it every POST /api/depots
+    // died on the NOT NULL constraint.
+    location: state || city || "",
     code,
     address,
     city,
@@ -122,7 +127,7 @@ const createDepot = asyncHandler(async (req, res) => {
   // Set product prices
   if (productPrices && productPrices.length > 0) {
     for (const pp of productPrices) {
-      await depotRepo.upsertProductPrice(depot.id, pp.product, pp.currentPrice);
+      await depotRepo.upsertProductPriceForDepot(depot.id, pp.product, pp.currentPrice);
     }
   }
 
@@ -190,7 +195,7 @@ const updateDepot = asyncHandler(async (req, res) => {
   // Update product prices if provided
   if (req.body.productPrices !== undefined) {
     for (const pp of req.body.productPrices) {
-      await depotRepo.upsertProductPrice(depot.id, pp.product, pp.currentPrice);
+      await depotRepo.upsertProductPriceForDepot(depot.id, pp.product, pp.currentPrice);
     }
   }
 
@@ -259,7 +264,7 @@ const updateProductPrice = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Depot not found" });
   }
 
-  await depotRepo.upsertProductPrice(depot.id, productId, numericPrice);
+  await depotRepo.upsertProductPriceForDepot(depot.id, productId, numericPrice);
 
   const [capacities, prices, staff] = await Promise.all([
     depotRepo.getProductCapacities(depot.id),

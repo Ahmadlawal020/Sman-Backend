@@ -45,8 +45,12 @@ const confirmAllocation = async (allocationId, { actor }) => {
 
   const updated = await deliveryInventoryRepo.update(allocationId, {
     releaseStatus: "confirmed",
+    // confirmedBy/confirmedAt have no live columns (drizzle drops them —
+    // the who/when of confirmation is currently recorded nowhere; needs a
+    // sman extras table). ISO string form kept so nothing chokes if a
+    // column ever appears.
     confirmedBy: actor?.name || "",
-    confirmedAt: new Date(),
+    confirmedAt: new Date().toISOString(),
   });
 
   emitEvent("delivery.confirmed", {
@@ -77,10 +81,13 @@ const releaseAllocation = async (allocationId, { actor }) => {
 
   const updated = await deliveryInventoryRepo.update(allocationId, {
     releaseStatus: "released",
+    // releasedBy/releasedAt: same no-live-column situation as confirmedAt
+    // above. ticket_generated_at IS a real mode:'string' column — a raw
+    // Date here made the driver reject the whole UPDATE (every release 500'd).
     releasedBy: actor?.name || "",
-    releasedAt: new Date(),
+    releasedAt: new Date().toISOString(),
     ticketNumber,
-    ticketGeneratedAt: allocation.ticketGeneratedAt || new Date(),
+    ticketGeneratedAt: allocation.ticketGeneratedAt || new Date().toISOString(),
   });
 
   emitEvent("delivery.released", {

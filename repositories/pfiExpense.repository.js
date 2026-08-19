@@ -1,15 +1,15 @@
 const { client } = require("../db");
-const { REVENUE_STATUSES } = require("../lib/pfiFinance");
 const { OPEN_STATES } = require("../lib/expenseChain");
 
 /**
  * The figure a total should use.
  *
- * A paid request counts for what actually cleared the bank; anything earlier
- * counts for what it asked for. `amount_paid` is null on rows settled before it
- * existed, hence the fallback — without it, historical spend would vanish.
+ * consumer_pfiexpense (the live Django table) has no amount_paid column —
+ * the requested amount IS the paid amount there. The old clean-room
+ * cleared-vs-requested distinction has no live backing, so spend is simply
+ * e.amount at every stage.
  */
-const SPEND = client`CASE WHEN e.status = 'paid' THEN COALESCE(e.amount_paid, e.amount) ELSE e.amount END`;
+const SPEND = client`e.amount`;
 
 /**
  * Aggregates for many PFIs at once.
@@ -46,38 +46,40 @@ const aggregatesFor = async (ids) => {
     // A request that has not been paid must never move a cargo's cost, profit
     // or landing price. `open` is the committed-but-not-yet-out figure, which
     // the UI shows beside the cost and never inside it.
+    // Live tables throughout (consumer_pfiexpense / consumer_order /
+    // consumer_pfimovement) — the clean-room names these queries used to hit
+    // (pfi_expenses / orders / pfi_movements / order_pfi_allocations) do not
+    // exist on soroman_db and 500'd every GET /api/pfis. Expense statuses
+    // are already Django's lowercase vocabulary (lib/expenseChain.js).
     client`
       SELECT e.pfi_id,
              COALESCE(SUM(${SPEND}) FILTER (WHERE e.status = 'paid'), 0)::text AS total,
              COUNT(*) FILTER (WHERE e.status = 'paid')::int AS lines,
              COALESCE(SUM(e.amount) FILTER (WHERE e.status = ANY(${OPEN_STATES})), 0)::text AS open_total,
              COUNT(*) FILTER (WHERE e.status = ANY(${OPEN_STATES}))::int AS open_lines
-      FROM pfi_expenses e
+      FROM consumer_pfiexpense e
       WHERE e.pfi_id = ANY(${list}) AND e.deleted_at IS NULL
       GROUP BY e.pfi_id
     `,
+    // Revenue statuses translated to the live lowercase set: Paid -> paid,
+    // Released -> released, Loading/Completed -> loaded (utils/orderStatusMapping.js).
     client`
-      SELECT pfi_id, COALESCE(SUM(total_amount), 0)::text AS total, COUNT(*)::int AS orders
-      FROM orders
-      WHERE pfi_id = ANY(${list}) AND status = ANY(${REVENUE_STATUSES})
+      SELECT pfi_id, COALESCE(SUM(total_price), 0)::text AS total, COUNT(*)::int AS orders
+      FROM consumer_order
+      WHERE pfi_id = ANY(${list}) AND status = ANY(${["paid", "released", "loaded"]})
       GROUP BY pfi_id
     `,
     // The append-only ledger is the source of truth for released stock.
     client`
       SELECT pfi_id, COALESCE(SUM(qty_litres), 0)::bigint AS qty
-      FROM pfi_movements
+      FROM consumer_pfimovement
       WHERE pfi_id = ANY(${list})
       GROUP BY pfi_id
     `,
-    // Delivery allocations are a second way stock leaves a batch, and they
-    // count toward sold alongside releases — a litre allocated to a delivery
-    // is no longer available to sell.
-    client`
-      SELECT pfi_id, COALESCE(SUM(quantity), 0)::bigint AS qty
-      FROM order_pfi_allocations
-      WHERE pfi_id = ANY(${list})
-      GROUP BY pfi_id
-    `,
+    // order_pfi_allocations has no live counterpart — delivery-allocation
+    // litres are not separately tracked on soroman_db, so allocationQty
+    // stays 0 rather than being guessed from another table.
+    Promise.resolve([]),
   ]);
 
   for (const r of expenses) {

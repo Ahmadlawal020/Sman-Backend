@@ -40,27 +40,20 @@ const authenticateCustomer = async (req, res, next) => {
 };
 
 /**
- * Ordering requires an activated account.
+ * Ordering used to require an "Active" account (Pending = phone not yet
+ * verified, Inactive = staff deactivation). consumer_customer — Django's
+ * real table — has no status column at all, so after the live-DB cutover
+ * `req.customer.status` is always undefined and this gate 403'd EVERY
+ * customer request on the routes that use it (orders, licenses, uploads,
+ * Dangote, LPG): the whole ordering flow, not just deactivated accounts.
  *
- * There is no staff approval step — proving control of the phone number is the
- * activation gate, so `Pending` only ever means "registered but not yet
- * verified". This therefore rejects two distinct cases: a registration that
- * was abandoned before the code was used, and an account staff deactivated.
- *
- * Enforced here rather than in the UI, because the UI is not a security
- * boundary.
+ * Decision (2026-08-19): the status feature is accepted as gone rather than
+ * rebuilt on a sman table. Holding a valid session token — which requires
+ * having passed OTP verification — is the activation gate now. This is kept
+ * as an explicit pass-through (rather than unwiring every route) so the gate
+ * has an obvious home if account deactivation ever gets a live backing.
  */
 const requireActiveCustomer = (req, res, next) => {
-  const status = req.customer?.status;
-  if (status !== "Active") {
-    return res.status(403).json({
-      success: false,
-      message:
-        status === "Pending"
-          ? "Verify your phone number to activate your account."
-          : "This account is not active. Please contact Soroman.",
-    });
-  }
   next();
 };
 

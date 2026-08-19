@@ -91,27 +91,94 @@ const findAll = async ({ search, page = 1, limit = 50 } = {}) => {
   };
 };
 
+/**
+ * Translates the old clean-room caller shape into administration_user's
+ * columns. Every existing creation path (staff.controller, tests/helpers)
+ * still sends firstName/surname/isPasswordSet/passwordResetToken — none of
+ * which exist on the live table (see the header above). Drizzle silently
+ * drops unknown keys, so without this the insert dies on the fullName /
+ * password NOT NULL constraints instead.
+ *
+ *  - firstName/otherNames/surname collapse into fullName.
+ *  - roles may arrive as Sman strings (["admin"]) or Django ints ([1]);
+ *    the column is Django's integer[], so strings go through
+ *    mapRolesToDjango. `role` (single, NOT NULL) defaults to roles[0].
+ *  - isPasswordSet is derived, not stored: a staff row with no usable
+ *    password gets Django's own "unusable password" convention — a hash
+ *    starting with "!" that check_password()/verifyDjangoPassword can never
+ *    match — exactly what set_unusable_password() writes.
+ *  - passwordResetToken/passwordResetExpires land in
+ *    sman.staff_password_resets (the table that replaced those columns).
+ */
+const normalizeShape = (data) => {
+  const { firstName, surname, otherNames, isPasswordSet, passwordResetToken, passwordResetExpires, profilePictureUrl, profilePicturePublicId, ...out } = data;
+  if (!out.fullName) {
+    const joined = [firstName, otherNames, surname].filter(Boolean).join(" ").trim();
+    if (joined) out.fullName = joined;
+  }
+  if (Array.isArray(out.roles) && out.roles.some((r) => typeof r === "string")) {
+    const { mapRolesToDjango } = require("../config/roleMapping");
+    const strings = out.roles.filter((r) => typeof r === "string");
+    const ints = out.roles.filter((r) => typeof r === "number");
+    out.roles = [...new Set([...ints, ...mapRolesToDjango(strings)])];
+  }
+  return { normalized: out, passwordResetToken, passwordResetExpires };
+};
+
+/** Django's set_unusable_password(): "!" + random suffix; never verifiable. */
+const unusablePassword = () => "!" + require("crypto").randomBytes(20).toString("hex");
+
 const create = async (data) => {
-  const insertData = { ...data };
-  if (insertData.password) {
-    insertData.password = await hashDjangoPassword(insertData.password);
-  }
-  if (insertData.email) {
-    insertData.email = insertData.email.toLowerCase();
-  }
+  const { normalized: insertData, passwordResetToken, passwordResetExpires } = normalizeShape(data);
+
+  insertData.password = insertData.password ? await hashDjangoPassword(insertData.password) : unusablePassword();
+  if (insertData.email) insertData.email = insertData.email.toLowerCase();
+
+  // NOT NULL columns with no DB default — Django fills these app-side.
+  const now = new Date().toISOString();
+  insertData.fullName = insertData.fullName ?? "";
+  insertData.dateJoined = insertData.dateJoined ?? now;
+  insertData.lastLogin = insertData.lastLogin ?? now;
+  insertData.isSuperuser = insertData.isSuperuser ?? false;
+  insertData.isStaff = insertData.isStaff ?? true;
+  insertData.isActive = insertData.isActive ?? true;
+  insertData.emailVerified = insertData.emailVerified ?? false;
+  insertData.suspended = insertData.suspended ?? false;
+  insertData.canViewAllLocations = insertData.canViewAllLocations ?? false;
+  insertData.roles = insertData.roles?.length ? insertData.roles : [1]; // 1 = admin
+  insertData.role = insertData.role ?? insertData.roles[0];
+
   const [row] = await db.insert(administrationUser).values(insertData).returning();
+
+  if (passwordResetToken && passwordResetExpires) {
+    await db.insert(staffPasswordResets).values({
+      staffId: row.id,
+      tokenHash: passwordResetToken,
+      expiresAt: passwordResetExpires,
+    });
+  }
   return row;
 };
 
 const update = async (id, data) => {
-  const updateData = { ...data };
+  const { normalized: updateData, passwordResetToken, passwordResetExpires } = normalizeShape(data);
   if (updateData.password) {
     updateData.password = await hashDjangoPassword(updateData.password);
   }
   if (updateData.email) {
     updateData.email = updateData.email.toLowerCase();
   }
-  const [row] = await db.update(administrationUser).set(updateData).where(eq(administrationUser.id, id)).returning();
+  const [row] = Object.keys(updateData).length
+    ? await db.update(administrationUser).set(updateData).where(eq(administrationUser.id, id)).returning()
+    : [await findById(id)];
+
+  if (row && passwordResetToken && passwordResetExpires) {
+    await db.insert(staffPasswordResets).values({
+      staffId: row.id,
+      tokenHash: passwordResetToken,
+      expiresAt: passwordResetExpires,
+    });
+  }
   return row || null;
 };
 

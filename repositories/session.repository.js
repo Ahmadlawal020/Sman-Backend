@@ -119,7 +119,20 @@ const findWithPrincipal = async (realm, id) => {
     .where(and(eq(sessions.id, id), eq(sessions.principalType, realm)))
     .limit(1);
 
-  return row || null;
+  if (!row) return null;
+
+  // consumer_customer has no name/phone columns — customer.repository stamps
+  // display aliases (name = first+last, phone = phoneNumber) on every row it
+  // returns, and the whole app reads customer.name/customer.phone. This is
+  // the one query that loads a customer without going through that repo, and
+  // an unstamped principal here means req.customer.phone is undefined on
+  // EVERY authenticated request (which silently broke deletion OTPs,
+  // demo-account checks, and every notification that reads the principal).
+  if (realm === "customer") {
+    const { withDisplay } = require("./customer.repository");
+    return { ...row, principal: withDisplay(row.principal) };
+  }
+  return row;
 };
 
 /** Live sessions only — the "your devices" list. */

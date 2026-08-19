@@ -349,6 +349,19 @@ const upsertProductPrice = async (stateId, productId, price) => {
   return row;
 };
 
+/**
+ * Depot-scoped write twin of getProductPrices: resolves the depot's state
+ * first (live prices are per product+state). Callers passing a depot id
+ * straight into upsertProductPrice were writing prices against whatever
+ * state happened to share the depot's numeric id. No state on the depot
+ * means nowhere to price — returns null so the controller can surface it.
+ */
+const upsertProductPriceForDepot = async (depotId, productId, price) => {
+  const stateId = await getStateIdForDepot(depotId);
+  if (!stateId) return null;
+  return upsertProductPrice(stateId, productId, price);
+};
+
 const getPriceHistory = async (depotProductPriceId) => {
   return db
     .select()
@@ -376,5 +389,6 @@ module.exports = {
   getProductPrices,
   getProductPrice,
   upsertProductPrice,
+  upsertProductPriceForDepot,
   getPriceHistory,
 };

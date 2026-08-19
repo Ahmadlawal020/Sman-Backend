@@ -109,16 +109,72 @@ const findAll = async ({ search, searchType, page = 1, limit = 50 } = {}) => {
   };
 };
 
+/**
+ * Accepts both the live-column shape (firstName/lastName/phoneNumber) and the
+ * old clean-room caller shape (`name`, `phone`) that every existing creation
+ * path still sends (portal register, admin create, identity claim). Drizzle
+ * silently drops unknown keys, so without this translation those callers
+ * insert a row with no first_name at all and die on the NOT NULL constraint.
+ *
+ * Old-only fields with no live column (status, address, balance, deposit,
+ * previousDeposit, createdVia, marketingOptOut) are consciously discarded —
+ * see the header above: consumer_customer simply has nowhere to put them,
+ * and balance is derived from sman.customer_credits, never stored.
+ *
+ * first_name/last_name/created_at are NOT NULL with no DB default (Django
+ * fills them app-side), so they are always supplied here.
+ */
 const create = async (data) => {
-  const insertData = { ...data };
+  // status/address/balance/deposit/previousDeposit/createdVia/marketingOptOut
+  // are pulled out solely so they never reach the insert.
+  const { name, phone, status, address, balance, deposit, previousDeposit, createdVia, marketingOptOut, ...insertData } = data;
+
+  if (name && !insertData.firstName && !insertData.lastName) {
+    const parts = String(name).trim().split(/\s+/);
+    insertData.firstName = parts[0] || "";
+    insertData.lastName = parts.slice(1).join(" ");
+  }
+  if (phone && !insertData.phoneNumber) insertData.phoneNumber = phone;
+
+  insertData.firstName = insertData.firstName ?? "";
+  insertData.lastName = insertData.lastName ?? "";
+  insertData.createdAt = insertData.createdAt ?? new Date().toISOString();
   if (insertData.email) insertData.email = insertData.email.toLowerCase();
+
   const [row] = await db.insert(consumerCustomer).values(insertData).returning();
   return withDisplay(row);
 };
 
+/**
+ * Same legacy-shape translation as create(). Dead fields (status, address,
+ * balance, …) are stripped rather than passed through: drizzle drops unknown
+ * keys itself, but an update whose keys were ALL dead produced an empty SET
+ * clause — a Postgres syntax error, i.e. a 500 on any such call. When
+ * nothing survives the strip, the row is returned unchanged instead.
+ */
+// The only writable live columns. A whitelist, not a dead-key blacklist:
+// the blacklist kept leaking (virtualAccount*, paystackCustomerId, …) and
+// any leaked key drizzle drops still counts toward "something to update",
+// producing an empty SET clause — a Postgres syntax error — when it was the
+// only key. createdAt deliberately excluded: nothing should rewrite it.
+const UPDATABLE_COLUMNS = ["firstName", "lastName", "companyName", "email", "phoneNumber"];
+
 const update = async (id, data, tx = db) => {
-  const updateData = { ...data };
+  const { name, phone } = data;
+  const updateData = {};
+  for (const key of UPDATABLE_COLUMNS) {
+    if (data[key] !== undefined) updateData[key] = data[key];
+  }
+  if (name && updateData.firstName === undefined && updateData.lastName === undefined) {
+    const parts = String(name).trim().split(/\s+/);
+    updateData.firstName = parts[0] || "";
+    updateData.lastName = parts.slice(1).join(" ");
+  }
+  if (phone && updateData.phoneNumber === undefined) updateData.phoneNumber = phone;
   if (updateData.email) updateData.email = updateData.email.toLowerCase();
+
+  if (Object.keys(updateData).length === 0) return findById(id, tx);
+
   const [row] = await tx.update(consumerCustomer).set(updateData).where(eq(consumerCustomer.id, id)).returning();
   return withDisplay(row) || null;
 };
@@ -300,6 +356,10 @@ const findForSegment = async ({ depotId, minOrders, sinceDays, inactiveSinceDays
 };
 
 module.exports = {
+  // Exported for the one place that loads customer rows without going
+  // through this repository: session.repository's principal join. Everything
+  // else should use the finders below, which stamp it automatically.
+  withDisplay,
   findById,
   findByPhone,
   findByEmail,

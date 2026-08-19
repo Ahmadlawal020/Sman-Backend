@@ -83,7 +83,9 @@ const create = async (data) => {
 const update = async (id, data) => {
   const [row] = await db
     .update(deliveryInventory)
-    .set({ ...data, updatedAt: new Date() })
+    // mode:'string' timestamp — a Date object makes the driver throw
+    // ERR_INVALID_ARG_TYPE before the query even runs.
+    .set({ ...data, updatedAt: new Date().toISOString() })
     .where(eq(deliveryInventory.id, id))
     .returning();
   return row || null;

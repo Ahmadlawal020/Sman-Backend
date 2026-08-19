@@ -27,6 +27,10 @@ const withExtras = (row) =>
     litresSold: row.administration_staffdailysalesreport.litresSoldToday,
     carriedOverLoading: row.administration_staffdailysalesreport.yesterdayCarriedOverLoading,
     truckCount: row.administration_staffdailysalesreport.numTrucksSold,
+    // dailyReport.service reads .submittedBy for the amend-ownership and
+    // self-review guards; without this alias both were dead post-cutover —
+    // a filer could approve their own report.
+    submittedBy: row.administration_staffdailysalesreport.submittedById,
   };
 
 const baseQuery = () =>

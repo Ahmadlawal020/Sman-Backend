@@ -85,6 +85,17 @@ const formatOrderRow = (row) => {
     // as stateName above; aliased here so the existing frontend fallback
     // actually finds it instead of showing blank.
     state: row.stateName,
+    // Money + pay-into aliases. The WhatsApp copy (whatsapp/copy.js
+    // orderCreated), the engine's ORDER_CREATED payload, and the customer
+    // portal all read .totalAmount and .virtualAccount* off order objects —
+    // pre-cutover column names. Without these, every WhatsApp order
+    // confirmation rendered "*Total: ₦0* … Bank: undefined". The paidTo*
+    // columns are the depot's bank account (manual-deposit-only model), which
+    // is exactly what "virtual account" means to those callers now.
+    totalAmount: row.totalPrice,
+    virtualAccountBank: row.paidToBankName,
+    virtualAccountNumber: row.paidToAccountNumber,
+    virtualAccountName: row.paidToAccountName,
   };
 };
 
@@ -198,6 +209,10 @@ const findAll = async ({ search, status, customer, dateFrom, dateTo, page = 1, l
         orderType: consumerOrder.orderType,
         pfiId: consumerOrder.pfiId,
         stateId: consumerOrder.stateId,
+        // Without this, formatOrderRow's customerId alias is undefined on
+        // every list row — the joined display fields were selected but the
+        // owning FK itself was not.
+        userId: consumerOrder.userId,
         createdAt: consumerOrder.createdAt,
         updatedAt: consumerOrder.updatedAt,
         customerName: consumerCustomer.firstName,

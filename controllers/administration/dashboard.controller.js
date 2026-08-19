@@ -188,7 +188,11 @@ const getStats = asyncHandler(async (req, res) => {
       .where(sql`${drivers.status}::text = 'Off Duty'`),
     db.select({ totalDepots: count() }).from(depots),
     db.select({ totalProducts: count() }).from(products),
-    db.select({ count: sql`COUNT(DISTINCT ${products.category})` }).from(products),
+    // consumer_product has no category column — interpolating the missing
+    // column produced `COUNT(DISTINCT )`, a syntax error that 500'd the whole
+    // stats endpoint. The trade code (abbreviation: PMS/AGO/LPG) is the
+    // closest live analogue of a product category.
+    db.select({ count: sql`COUNT(DISTINCT ${products.abbreviation})` }).from(products),
   ]);
 
   res.json({

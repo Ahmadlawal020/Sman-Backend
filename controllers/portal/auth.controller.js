@@ -175,10 +175,11 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
   const customer = await customerRepo.findByPhone(e164);
   if (!customer) return reject();
 
-  // A deactivated account must not be able to authenticate at all. Checked
-  // before the code is consumed, so a suspended customer's code is not burned,
-  // and answered with the same rejection so nothing is disclosed.
-  if (customer.status === "Inactive") return reject();
+  // The old "deactivated account cannot authenticate" check stood here
+  // (customer.status === "Inactive"). consumer_customer has no status column,
+  // so the condition could never fire post-cutover. Decision (2026-08-19):
+  // account deactivation is accepted as gone rather than rebuilt on a sman
+  // table — the dead check is removed instead of silently never firing.
 
   const verified = await otpService.verifyCode(customer.id, code, otpService.PURPOSE_AUTH);
   if (!verified.ok) return reject();

@@ -87,9 +87,18 @@ const findExpiringCompliance = async (byDate) => {
 
 const createLedgerEntry = async (data) => {
   const { entryDate, notes, ...rest } = data;
+  // created_at/updated_at are NOT NULL with no DB default (Django stamps
+  // them app-side), and the service whitelist means no caller supplies them.
+  const now = new Date().toISOString();
   const [row] = await db
     .insert(consumerFleetledgerentry)
-    .values({ ...rest, date: entryDate ?? data.date, description: notes ?? data.description })
+    .values({
+      createdAt: now,
+      updatedAt: now,
+      ...rest,
+      date: entryDate ?? data.date,
+      description: notes ?? data.description,
+    })
     .returning();
   return row;
 };
