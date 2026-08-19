@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { consumerOrder, consumerOrderproduct, consumerCustomer, consumerProduct, consumerPfi, consumerStates, customerCredits, walletHolds } = require("../db/schema");
+const { consumerOrder, consumerOrderproduct, consumerCustomer, consumerProduct, consumerPfi, consumerStates, customerCredits, walletHolds, consumerOrderpaymentrecord, administrationUser } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 const { fromLiveStatus, STATUS_TO_LIVE } = require("../utils/orderStatusMapping");
 
@@ -240,6 +240,188 @@ const findAll = async ({ search, status, customer, dateFrom, dateTo, page = 1, l
 };
 
 /**
+ * Every confirmed payment, order by order, with the deposit(s) that funded
+ * it — controllers/administration/financeReport.controller.js's
+ * getFinanceReport called this and it never existed (relation/function
+ * missing, 500 on every call). Funding comes from sman.customer_credits:
+ * a negative entry with orderId set is credit applied to that order, and
+ * its paymentRecordId (when set) points at the real
+ * consumer_orderpaymentrecord row for reference/bank details. There is no
+ * live distinction between Paystack and manual funding — Paystack is
+ * disabled (see services/payment.service.js) — so paystackDetails is always
+ * null; every real entry here is a manual bank deposit.
+ *
+ * `fundingTracked` is false for an order with zero customer_credits rows: it
+ * was paid before (or outside) the credit ledger, not an error. For a
+ * tracked order, `unattributedAmount` is what's left of the order total once
+ * its tracked funding is subtracted — never negative, and always 0 for an
+ * untracked order (nothing to compare against).
+ */
+const findFinanceReport = async ({
+  search,
+  paymentStatus,
+  dateFrom,
+  dateTo,
+  scopeUser,
+  page = 1,
+  limit = 50,
+} = {}) => {
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = [];
+  if (search) {
+    const possibleId = parseOrderReference(search);
+    if (possibleId) {
+      conditions.push(eq(consumerOrder.id, possibleId));
+    } else {
+      const term = `%${search}%`;
+      conditions.push(
+        or(
+          ilike(consumerCustomer.firstName, term),
+          ilike(consumerCustomer.lastName, term),
+          ilike(consumerCustomer.companyName, term)
+        )
+      );
+    }
+  }
+  // "Paid" in Sman vocabulary is any of paid/released/loaded live (see
+  // utils/orderStatusMapping.js) — matches revenueSummary's own definition.
+  if (paymentStatus === "Paid") {
+    conditions.push(sql`${consumerOrder.status} IN ('paid', 'released', 'loaded')`);
+  } else if (paymentStatus === "Unpaid") {
+    conditions.push(sql`${consumerOrder.status} NOT IN ('paid', 'released', 'loaded')`);
+  }
+  if (dateFrom) conditions.push(gte(consumerOrder.createdAt, new Date(dateFrom).toISOString()));
+  if (dateTo) {
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? `${dateTo}T23:59:59.999Z` : dateTo;
+    conditions.push(lte(consumerOrder.createdAt, new Date(end).toISOString()));
+  }
+  // PFI-scoped staff only see orders tied to a PFI in their scope — see
+  // repositories/pfiExpense.repository.js's header comment for why this is
+  // narrower than the old depot/LPG-implied scope rather than a guess at one.
+  if (scopeUser && !scopeUser.canViewAllLocations) {
+    const { pfiIds = [] } = scopeUser.scope || {};
+    conditions.push(inArray(consumerOrder.pfiId, pfiIds.length ? pfiIds : [-1]));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [rows, [{ total }], allMatching] = await Promise.all([
+    db
+      .select({
+        id: consumerOrder.id,
+        userId: consumerOrder.userId,
+        quantity: consumerOrder.quantity,
+        totalPrice: consumerOrder.totalPrice,
+        status: consumerOrder.status,
+        releaseType: consumerOrder.releaseType,
+        paidToAccountName: consumerOrder.paidToAccountName,
+        paidToAccountNumber: consumerOrder.paidToAccountNumber,
+        paidToBankName: consumerOrder.paidToBankName,
+        paymentConfirmedAt: consumerOrder.paymentConfirmedAt,
+        createdAt: consumerOrder.createdAt,
+        customerName: consumerCustomer.firstName,
+        customerLastName: consumerCustomer.lastName,
+        customerEmail: consumerCustomer.email,
+        customerPhone: consumerCustomer.phoneNumber,
+        customerCompanyName: consumerCustomer.companyName,
+        productName: consumerProduct.name,
+      })
+      .from(consumerOrder)
+      .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+      .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, consumerOrder.id))
+      .leftJoin(consumerProduct, eq(consumerOrderproduct.productId, consumerProduct.id))
+      .where(whereClause)
+      .orderBy(desc(consumerOrder.createdAt))
+      .limit(limitNum)
+      .offset(offset),
+    db.select({ total: count() }).from(consumerOrder).leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id)).where(whereClause),
+    // Full filtered set (unpaginated) just for the totals — same reasoning
+    // as listExpenses: the summary must never disagree with the filter.
+    db
+      .select({ id: consumerOrder.id, totalPrice: consumerOrder.totalPrice })
+      .from(consumerOrder)
+      .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+      .where(whereClause),
+  ]);
+
+  const orderIds = rows.map((r) => r.id);
+  const fundingRows = orderIds.length
+    ? await db
+        .select({
+          orderId: customerCredits.orderId,
+          depositId: customerCredits.id,
+          amount: customerCredits.amount,
+          depositReference: customerCredits.reference,
+          depositCreatedAt: customerCredits.createdAt,
+          recorderName: administrationUser.fullName,
+          paymentRecordReference: consumerOrderpaymentrecord.transactionReference,
+        })
+        .from(customerCredits)
+        .leftJoin(administrationUser, eq(customerCredits.createdBy, administrationUser.id))
+        .leftJoin(consumerOrderpaymentrecord, eq(customerCredits.paymentRecordId, consumerOrderpaymentrecord.id))
+        .where(inArray(customerCredits.orderId, orderIds))
+    : [];
+
+  const fundingByOrder = new Map();
+  for (const f of fundingRows) {
+    if (!fundingByOrder.has(f.orderId)) fundingByOrder.set(f.orderId, []);
+    // administration_user has one fullName column, not first/last — split on
+    // the first space as the closest available approximation.
+    const [recorderFirstName, ...rest] = (f.recorderName || "").split(" ");
+    fundingByOrder.get(f.orderId).push({
+      depositId: f.depositId,
+      amount: f.amount,
+      depositReference: f.paymentRecordReference || f.depositReference || null,
+      depositCreatedAt: f.depositCreatedAt,
+      paystackDetails: null,
+      recorderFirstName: recorderFirstName || null,
+      recorderSurname: rest.join(" ") || null,
+    });
+  }
+
+  const orders = rows.map((row) => {
+    const funding = fundingByOrder.get(row.id) || [];
+    const fundingTracked = funding.length > 0;
+    const fundedAmount = funding.reduce((sum, f) => sum + Math.abs(Number(f.amount) || 0), 0);
+    const unattributedAmount = fundingTracked
+      ? Math.max(0, Number(row.totalPrice) - fundedAmount)
+      : 0;
+    const formatted = formatOrderRow(row);
+    return {
+      ...formatted,
+      customerVirtualAccountNumber: null,
+      customerVirtualAccountBank: null,
+      virtualAccountNumber: row.paidToAccountNumber,
+      virtualAccountBank: row.paidToBankName,
+      virtualAccountName: row.paidToAccountName,
+      funding,
+      fundingTracked,
+      unattributedAmount,
+    };
+  });
+
+  // trackedCount/notTrackedCount below are computed from the current page
+  // only — fundingByOrder was only populated for this page's order ids.
+  // An accurate full-filtered-set split would need a second funding query
+  // against every matching order id, not just the page's.
+  const totalAmount = allMatching.reduce((sum, o) => sum + Number(o.totalPrice || 0), 0);
+
+  return {
+    orders,
+    totals: {
+      count: Number(total),
+      totalAmount,
+      trackedCount: orders.filter((o) => o.fundingTracked).length,
+      notTrackedCount: orders.filter((o) => !o.fundingTracked).length,
+    },
+    pagination: { total: Number(total), page: pageNum, limit: limitNum, pages: Math.ceil(Number(total) / limitNum) },
+  };
+};
+
+/**
  * Creates the order row AND its single consumer_orderproduct line item in
  * one call, keeping the two in sync per the note at the top of this file.
  * `data` takes the same product/quantity/price fields the old orders table
@@ -396,6 +578,7 @@ module.exports = {
   findByIdFull,
   findByNumberFull,
   findAll,
+  findFinanceReport,
   create,
   update,
   getLineItemId,
