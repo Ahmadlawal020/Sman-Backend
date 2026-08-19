@@ -1,4 +1,5 @@
-const { bigint, serial, decimal, varchar, text, timestamp, index } = require("drizzle-orm/pg-core");
+const { bigint, serial, decimal, varchar, text, timestamp, index, uniqueIndex } = require("drizzle-orm/pg-core");
+const { sql } = require("drizzle-orm");
 const { smanSchema } = require("./enums");
 const { consumerCustomer } = require("../consumerCustomer");
 const { consumerOrder } = require("../consumerOrder");
@@ -46,6 +47,14 @@ const customerCredits = smanSchema.table(
   (table) => [
     index("customer_credits_customer_idx").on(table.customerId, table.createdAt),
     index("customer_credits_order_idx").on(table.orderId),
+    // wallet.service.credit()'s duplicate-reference guard catches a unique
+    // violation on reference — this index is what makes that guard real.
+    // Without it two racing credits with the same reference BOTH insert
+    // (double-credit). Partial: empty references (the default) are not
+    // deposits with an external ref and must never collide with each other.
+    uniqueIndex("customer_credits_reference_uniq")
+      .on(table.reference)
+      .where(sql`reference <> ''`),
   ]
 );
 

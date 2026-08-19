@@ -5,26 +5,42 @@ schema. See `docs/LIVE_DB_CUTOVER.md` §4 for what's here and why.
 
 ## Making a schema change here
 
-There is deliberately no `db/migrations.sman/` tracked in this repo — the
-folder was used transiently while building this schema out and then removed.
-Because of that, `drizzle-kit migrate` has no local baseline to diff
-incrementally against, and regenerating one from scratch produces a
-full "create everything" migration that conflicts with what's already live.
+`db/migrations.sman/` is tracked, with a journal — `drizzle.sman.config.js`
+points at exactly the schema files in this folder and diffs incrementally
+against that baseline. (An earlier revision of this README said the folder was
+deliberately untracked; that changed when the baseline was committed during
+the cutover stabilization.)
 
-For any future addition here:
+For any future change:
 
-1. Write the new table(s) in a temp file whose `require`s are minimal (don't
-   pull in `./enums.js` unless the new table actually uses one of its enums —
-   otherwise drizzle-kit tries to `CREATE TYPE` for enums that already exist).
-2. Point a throwaway `drizzle.*.config.js` at just that file, with a fresh
-   `out` folder, `dbCredentials.url` = `LIVE_DATABASE_URL`.
-3. `drizzle-kit generate` — review the SQL. It should be additive only:
-   new `CREATE TABLE`/`CREATE TYPE`/`ALTER TABLE ... ADD CONSTRAINT`, nothing
-   touching `public.*` beyond bare `REFERENCES`.
-4. `drizzle-kit migrate` with that same config.
-5. Delete the throwaway config/schema/migration files, add the real table to
-   its permanent file + `db/schema/sman/index.js`.
+1. Edit/add the table in its permanent file here + `db/schema/sman/index.js`.
+2. `LIVE_DATABASE_URL=<url> npx drizzle-kit generate --config=drizzle.sman.config.js`
+   — generate never connects, but the config refuses to load without the env
+   var. Review the SQL it writes: it must be additive only — new
+   `CREATE TABLE`/`CREATE TYPE`/`CREATE INDEX`/`ALTER TABLE ... ADD`, nothing
+   touching `public.*` beyond bare `REFERENCES` clauses.
+3. Apply the reviewed file to the target with plain `psql -f`, or
+   `drizzle-kit migrate` with the same config. For production, treat any
+   migration that adds a constraint over existing data (unique indexes
+   especially) as a data question first — see the header comments inside the
+   migration files.
 
-`drizzle-kit push` is the other option but prompts interactively, which
-doesn't work well non-interactively — the scoped-increment approach above is
-easier to review and reason about.
+**Never run `drizzle-kit push` against anything real.** Push treats the whole
+database as managed by the config's schema list and DROPS every table it
+doesn't know about — with `--force` it does so without asking. This was
+verified the hard way against a throwaway local DB (it deleted all 81 Django
+`public` tables). The generate-review-apply flow above is the only safe path.
+
+## Provisioning a local/CI test database
+
+Both schemas are needed:
+
+1. `psql $TEST_DATABASE_URL -f docs/live_schema.sql` — the 81 Django
+   `public` tables (schema-only dump, includes identity sequences).
+2. `LIVE_DATABASE_URL=$TEST_DATABASE_URL npx drizzle-kit migrate
+   --config=drizzle.sman.config.js` — the `sman` tables from the tracked
+   migrations.
+
+Django fills its NOT NULL columns app-side, so the dump has almost no DB
+defaults — raw test inserts must supply them. Use `tests/liveFixtures.js`
+factories instead of raw inserts.

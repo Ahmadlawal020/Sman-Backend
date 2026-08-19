@@ -1,0 +1,12 @@
+-- Makes wallet.service.credit()'s duplicate-reference guard real: it catches
+-- a unique violation on customer_credits.reference, but no such constraint
+-- existed — two racing credits with the same reference both inserted
+-- (double-credit). Partial: empty references (the column default) are not
+-- external deposit refs and must never collide.
+--
+-- BEFORE running against production: check for existing duplicates —
+--   SELECT reference, COUNT(*) FROM sman.customer_credits
+--   WHERE reference <> '' GROUP BY reference HAVING COUNT(*) > 1;
+-- Any rows returned are potential real double-credits: reconcile them
+-- (a money decision, not a migration's) before this index can be created.
+CREATE UNIQUE INDEX "customer_credits_reference_uniq" ON "sman"."customer_credits" USING btree ("reference") WHERE reference <> '';
