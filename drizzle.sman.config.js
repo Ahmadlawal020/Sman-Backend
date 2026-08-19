@@ -36,6 +36,7 @@ module.exports = defineConfig({
     "./db/schema/sman/webhookEvent.js",
     "./db/schema/sman/expectedPayment.js",
     "./db/schema/sman/orderDepositAllocation.js",
+    "./db/schema/sman/orderIdempotency.js",
     "./db/schema/sman/commission.js",
     "./db/schema/sman/vendor.js",
     "./db/schema/sman/pfiExpenseExtras.js",

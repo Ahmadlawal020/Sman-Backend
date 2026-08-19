@@ -32,19 +32,22 @@ const { generateOrderReference, parseOrderReference } = require("../utils/helper
  */
 
 // Per-truck movement, in words. Driver details are deliberately absent — a
-// plate is on a public road, a driver's name and phone are not.
+// plate is on a public road, a driver's name and phone are not. Keyed on
+// consumer_truckallocation.ticket_status's real enum (pending/generated/
+// printed/loaded/completed) — gated_in/gated_out were the old clean-room
+// schema's vocabulary and never appear on this live column.
 const TRUCK_STATUS_LABEL = {
   pending: "Assigned",
-  // A ticketed truck is cleared to load but has not reached the gate yet, so
-  // this names the paperwork rather than claiming work already done.
-  loaded: "Ticket issued",
-  gated_in: "At the depot",
-  gated_out: "Departed",
+  generated: "Ticket issued",
+  printed: "Ticket printed",
+  loaded: "Loaded",
+  completed: "Departed",
 };
 
-// Counted off the gate, not off the ticket: a truck that has driven back out is
-// the only one certainly carrying product.
-const loadedCount = (trucks) => trucks.filter((t) => t.status === "gated_out").length;
+// "completed" is this table's own terminal ticket_status — the closest live
+// signal to "this truck is certainly done", since the actual gate-exit
+// timestamp lives on the separate consumer_truckticket row (not joined here).
+const loadedCount = (trucks) => trucks.filter((t) => t.status === "completed").length;
 
 const NOTE = {
   received: () => "Order received — awaiting payment.",

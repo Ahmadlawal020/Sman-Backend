@@ -1,9 +1,10 @@
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders, customers } = require("../db/schema");
+const { consumerOrder: orders, consumerCustomer: customers } = require("../db/schema");
 const { auditLogRepo, customerRepo } = require("../repositories");
 const { notify } = require("../notifications");
 const { generateOrderReference } = require("../utils/helpers");
+const { STATUS_TO_LIVE, fromLiveStatus, completedReleaseStatus } = require("../utils/orderStatusMapping");
 
 /**
  * The order state machine — the ONE place order.status changes.
@@ -15,17 +16,49 @@ const { generateOrderReference } = require("../utils/helpers");
  * its stage columns and one audit_logs row inside a single transaction, and
  * takes a row lock so two concurrent transitions on the same order cannot both
  * win — the loser re-reads the new status and finds its move no longer legal.
+ *
+ * STATUS MODEL, LIVE SCHEMA: Django's consumer_order.status is its own
+ * six-value enum (pending/paid/released/loaded/sold/canceled — see
+ * soroman_backend-2/consumer/models.py's OrderStatus), not Sman's seven
+ * (Pending/Paid/Released/Loading/Completed/Cancelled/Expired). Verified
+ * against the actual Django trigger code, not inferred from the enum labels:
+ *
+ *  - administration/views.py:2255 flips released -> loaded the moment the
+ *    FIRST ticket is generated ("Transition order to loaded on first ticket
+ *    generation") — that is Sman's Released -> Loading instant, not
+ *    "finished loading". Django's `loaded` covers both Sman's Loading AND
+ *    Completed; there is no further main-status value after it for a
+ *    regular order.
+ *  - 'sold' (views.py:2596) is exclusively for order_type='in_house' — a
+ *    different, special-case admin sale flow this codebase's placeOrder
+ *    never creates ("Only in-house orders can be sold via this endpoint").
+ *    Not used for the regular customer order pipeline at all.
+ *  - Django's SEPARATE release_status field (OrderReleseStatus:
+ *    pending/delivered/picked) is what actually distinguishes "still
+ *    loading" from "done" — Sman's Completed maps to release_status
+ *    becoming delivered (deliveryType delivery) or picked (pickup), with
+ *    the main status staying at `loaded`. So Loading and Completed are
+ *    the SAME live `status` value, disambiguated by `release_status` —
+ *    see toLiveStatus/fromLive below.
+ *  - No `canceled`-adjacent value for Expired either. Both write live
+ *    `canceled`; which one it was survives only in sman.audit_logs'
+ *    metadata.reason (already how the expiry sweep records "unpaid past
+ *    expiry window") — a human reading Django's own admin sees a plain
+ *    cancellation, which is the truthful, available-on-the-live-schema
+ *    story.
+ *
+ * Every OTHER file in this app (order.service.js, the portal, WhatsApp,
+ * every frontend) keeps seeing exactly the same seven Sman-vocabulary
+ * strings as before — the translation happens only at this boundary and in
+ * order.repository.js's read-side decoration, not by touching every caller.
  */
 
-// from → [legal to]. Loading/Completed are driven by truck gate actions, which
-// call transition() when the first/last truck moves.
+// from → [legal to], in Sman vocabulary — unchanged from before the cutover.
 const TRANSITIONS = Object.freeze({
-  // Expired is only reachable from Pending: once an order is Paid it has been
-  // funded and can never lapse.
   Pending: ["Paid", "Cancelled", "Expired"],
   Paid: ["Released", "Cancelled"],
-  Released: ["Loading", "Cancelled"], // cancel allowed THROUGH Released
-  Loading: ["Completed"], // no cancel once a truck has gated in
+  Released: ["Loading", "Cancelled"],
+  Loading: ["Completed"],
   Completed: [],
   Cancelled: [],
   Expired: [],
@@ -34,35 +67,34 @@ const TRANSITIONS = Object.freeze({
 const isLegal = (from, to) => (TRANSITIONS[from] || []).includes(to);
 
 /**
- * Stamp the customer-facing reference onto a raw order row.
- *
- * Mirrors `formatOrderRow` in repositories/order.repository.js — the reference
- * is computed, never stored, so a row that reached the caller through
- * `.returning()` rather than a repository read still carries the internal
- * ORD-… value in `orderNumber` and must be corrected before anyone shows it.
- *
- * The customer lookup is not optional. `orders.company_name` is empty on 330 of
- * 778 rows today, and the repository falls back to the CUSTOMER's company in
- * that case — so computing from the order row alone yields "SO1" where every
- * screen shows "GL1". Reading it back through the caller's own transaction
- * keeps this identical to the repository, and costs one indexed lookup only
- * when the order carries no company of its own.
+ * Stamp the customer-facing reference and the Sman-vocabulary status onto a
+ * raw live order row. Mirrors `formatOrderRow` in
+ * repositories/order.repository.js — every read path in this file goes
+ * through here so a row that reached the caller via `.returning()` rather
+ * than a repository read still carries the ORD-… value corrected and the
+ * live status translated, exactly like a normal repository read would.
  */
 const decorateWithin = async (row, tx) => {
   if (!row) return row;
 
   let company = row.companyName || "";
-  if (!company && row.customerId) {
+  if (!company && row.userId) {
     const [c] = await tx
       .select({ companyName: customers.companyName })
       .from(customers)
-      .where(eq(customers.id, row.customerId))
+      .where(eq(customers.id, row.userId))
       .limit(1);
     company = c?.companyName || "";
   }
 
   const ref = generateOrderReference(company, row.id);
-  return { ...row, orderNumber: ref, reference: ref };
+  return {
+    ...row,
+    orderNumber: ref,
+    reference: ref,
+    customerId: row.userId,
+    status: fromLiveStatus(row),
+  };
 };
 
 /**
@@ -110,10 +142,10 @@ async function announce(order, toStatus, opts) {
         orderId: order.id,
         orderNumber: order.orderNumber,
         reference,
-        customerName: customer.name,
+        customerName: `${customer.firstName || ""} ${customer.lastName || ""}`.trim(),
         quantity: order.quantity,
-        totalAmount: order.totalAmount,
-        amountPaid: opts.metadata?.amountPaid ?? order.totalAmount,
+        totalAmount: order.totalPrice,
+        amountPaid: opts.metadata?.amountPaid ?? order.totalPrice,
         truckNumber: opts.metadata?.truckNumber,
         reason: opts.metadata?.reason,
       },
@@ -128,8 +160,8 @@ async function announce(order, toStatus, opts) {
           orderId: order.id,
           orderNumber: order.orderNumber,
           reference,
-          customerName: customer.name,
-          amountPaid: opts.metadata?.amountPaid ?? order.totalAmount,
+          customerName: `${customer.firstName || ""} ${customer.lastName || ""}`.trim(),
+          amountPaid: opts.metadata?.amountPaid ?? order.totalPrice,
         },
       });
     }
@@ -143,7 +175,9 @@ function httpError(status, message) {
 }
 
 /**
- * Apply a status transition atomically.
+ * Apply a status transition atomically. `toStatus` and the order's current
+ * status are both Sman vocabulary throughout — translated to/from the live
+ * columns only where they touch the database.
  *
  * @param {number} orderId
  * @param {string} toStatus
@@ -169,16 +203,22 @@ async function transition(orderId, toStatus, opts = {}) {
 
     if (!order) throw httpError(404, "Order not found");
 
-    if (order.status === toStatus) {
+    const fromStatus = fromLiveStatus(order);
+    if (fromStatus === toStatus) {
       throw httpError(409, `Order is already ${toStatus}`);
     }
-    if (!isLegal(order.status, toStatus)) {
-      throw httpError(409, `An order cannot move from ${order.status} to ${toStatus}`);
+    if (!isLegal(fromStatus, toStatus)) {
+      throw httpError(409, `An order cannot move from ${fromStatus} to ${toStatus}`);
+    }
+
+    const liveSet = { status: STATUS_TO_LIVE[toStatus], ...(opts.set || {}) };
+    if (toStatus === "Completed") {
+      liveSet.releaseStatus = completedReleaseStatus(order.releaseType);
     }
 
     const [updated] = await tx
       .update(orders)
-      .set({ status: toStatus, ...(opts.set || {}), updatedAt: new Date() })
+      .set(liveSet)
       .where(eq(orders.id, orderId))
       .returning();
 
@@ -187,7 +227,7 @@ async function transition(orderId, toStatus, opts = {}) {
         entityType: "order",
         entityId: orderId,
         action: opts.action || `order.${toStatus.toLowerCase()}`,
-        prevState: order.status,
+        prevState: fromStatus,
         newState: toStatus,
         actor: opts.actor,
         metadata: opts.metadata ?? null,
@@ -245,9 +285,9 @@ async function releaseOnPayment(orderId, opts = {}) {
   return transition(orderId, "Released", {
     ...opts,
     actor: opts.actor || { type: "system" },
-    set: { releasedAt: new Date(), ...(opts.set || {}) },
+    set: { releasedAt: new Date().toISOString(), ...(opts.set || {}) },
     metadata: { trigger: "payment", ...(opts.metadata || {}) },
   });
 }
 
-module.exports = { TRANSITIONS, isLegal, transition, releaseOnPayment, httpError };
+module.exports = { TRANSITIONS, isLegal, transition, releaseOnPayment, httpError, fromLiveStatus, STATUS_TO_LIVE };

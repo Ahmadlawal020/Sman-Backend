@@ -2,6 +2,7 @@ const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require
 const { db } = require("../config/db");
 const { consumerOrder, consumerOrderproduct, consumerCustomer, consumerProduct, consumerPfi, consumerStates, customerCredits, walletHolds } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+const { fromLiveStatus, STATUS_TO_LIVE } = require("../utils/orderStatusMapping");
 
 /**
  * consumer_order is Django's real order table (74 columns) — see
@@ -53,7 +54,32 @@ const formatOrderRow = (row) => {
   if (!row) return null;
   const company = row.companyName || row.customerCompanyName || "";
   const ref = generateOrderReference(company, row.id);
-  return { ...row, orderNumber: ref, reference: ref };
+  // status/paymentStatus: Sman vocabulary throughout the rest of the app —
+  // see utils/orderStatusMapping.js and orderStatus.service.js's header
+  // comment for why. customerId: consumer_order's FK column is userId
+  // despite the name.
+  return {
+    ...row,
+    orderNumber: ref,
+    reference: ref,
+    customerId: row.userId,
+    status: fromLiveStatus(row),
+    paymentStatus: ["Paid", "Released", "Loading", "Completed"].includes(fromLiveStatus(row)) ? "Paid" : "Unpaid",
+    // deliveryType is Sman vocabulary for release_type — every caller
+    // (email, SMS, tracking, WhatsApp) reads .deliveryType, never .releaseType.
+    deliveryType: row.releaseType,
+    // tracking.service.js's buildReached/currentStage read these Sman-vocabulary
+    // stage-timestamp names on every order object, not just the raw select
+    // trackByRef builds by hand — aliased here too so the customer portal's
+    // own order-detail view (which reads through formatOrderRow) gets the
+    // same stage timeline the public tracking feed does. No live cancelledAt
+    // column exists (see this file's header comment) — updatedAt is the best
+    // available stand-in for "when it left Pending", not a guess at a real
+    // cancellation timestamp.
+    loadingStartedAt: row.loadingDatetime,
+    completedAt: row.securityExitedAt,
+    cancelledAt: row.status === "canceled" ? row.updatedAt : null,
+  };
 };
 
 const findById = async (id, tx = db) => {
@@ -92,6 +118,7 @@ const FULL_ORDER_COLUMNS = {
   customerBalance: BALANCE_SQL,
   productName: consumerProduct.name,
   productUnit: consumerProduct.unit,
+  productSku: consumerProduct.abbreviation,
   pfiNumber: consumerPfi.pfiNumber,
   stateName: consumerStates.name,
 };
@@ -131,7 +158,19 @@ const findAll = async ({ search, status, customer, dateFrom, dateTo, page = 1, l
     const possibleId = parseOrderReference(search);
     if (possibleId) conditions.push(eq(consumerOrder.id, possibleId));
   }
-  if (status) conditions.push(eq(consumerOrder.status, status));
+  // `status` arrives in Sman vocabulary (Pending/Paid/Released/Loading/
+  // Completed/Cancelled/Expired) from every caller — translate for the live
+  // column. Loading and Completed share the live "loaded" value, so those
+  // two also need release_status to tell them apart (see
+  // utils/orderStatusMapping.js).
+  if (status && STATUS_TO_LIVE[status]) {
+    conditions.push(eq(consumerOrder.status, STATUS_TO_LIVE[status]));
+    if (status === "Loading") {
+      conditions.push(sql`(${consumerOrder.releaseStatus} IS NULL OR ${consumerOrder.releaseStatus} = 'pending')`);
+    } else if (status === "Completed") {
+      conditions.push(sql`${consumerOrder.releaseStatus} IN ('delivered', 'picked')`);
+    }
+  }
   if (customer) conditions.push(eq(consumerOrder.userId, Number(customer)));
   if (dateFrom) conditions.push(gte(consumerOrder.createdAt, new Date(dateFrom).toISOString()));
   if (dateTo) {
@@ -194,16 +233,41 @@ const create = async (data, tx = db) => {
     .values({ ...orderData, quantity, totalPrice: totalPrice != null ? String(totalPrice) : undefined })
     .returning();
 
+  // Every order in production has exactly one consumer_orderproduct line
+  // item (see this file's header comment) — its id is what
+  // consumer_truckallocation.order_product_id needs, so it's stamped onto
+  // the returned order (additive, like customerId/status/deliveryType)
+  // rather than making every caller re-query for it.
+  let orderProductId = null;
   if (productId != null) {
-    await tx.insert(consumerOrderproduct).values({
-      orderId: row.id,
-      productId,
-      quantity,
-      price: String(price ?? 0),
-    });
+    const [lineItem] = await tx
+      .insert(consumerOrderproduct)
+      .values({
+        orderId: row.id,
+        productId,
+        quantity,
+        price: String(price ?? 0),
+      })
+      .returning();
+    orderProductId = lineItem?.id ?? null;
   }
 
-  return formatOrderRow(row);
+  return { ...formatOrderRow(row), orderProductId };
+};
+
+/**
+ * The order's single consumer_orderproduct line-item id — what
+ * consumer_truckallocation.order_product_id needs. create() above stamps
+ * this onto its own return value; callers with only an order id (not the
+ * freshly-created row) look it up here instead of re-querying by hand.
+ */
+const getLineItemId = async (orderId, tx = db) => {
+  const [row] = await tx
+    .select({ id: consumerOrderproduct.id })
+    .from(consumerOrderproduct)
+    .where(eq(consumerOrderproduct.orderId, orderId))
+    .limit(1);
+  return row?.id ?? null;
 };
 
 const update = async (id, data, tx = db) => {
@@ -313,6 +377,7 @@ module.exports = {
   findAll,
   create,
   update,
+  getLineItemId,
   findUnpaidByCustomer,
   findOpenByCustomer,
   countByPfi,

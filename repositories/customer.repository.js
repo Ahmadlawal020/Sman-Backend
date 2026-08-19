@@ -23,16 +23,30 @@ const { consumerCustomer, consumerOrder, customerCredits, walletHolds } = requir
  *  - No unique constraint on phone_number or email on the live schema,
  *    unlike the old table — findByPhone/findByEmail/existsBy* can no longer
  *    assume at most one match.
+ *
+ * `name`/`phone` are stamped onto every row returned below, alongside (never
+ * replacing) the real firstName/lastName/phoneNumber columns — every caller
+ * across the app (invoice email, SMS, notify() payloads, WhatsApp) was
+ * already reading customer.name/customer.phone, which the live table has
+ * never had under those names. Additive, so nothing that already reads the
+ * real column names can regress.
  */
+
+const withDisplay = (row) =>
+  row && {
+    ...row,
+    name: `${row.firstName || ""} ${row.lastName || ""}`.trim(),
+    phone: row.phoneNumber || "",
+  };
 
 const findById = async (id, tx = db) => {
   const [row] = await tx.select().from(consumerCustomer).where(eq(consumerCustomer.id, id)).limit(1);
-  return row || null;
+  return withDisplay(row) || null;
 };
 
 const findByPhone = async (phone) => {
   const [row] = await db.select().from(consumerCustomer).where(eq(consumerCustomer.phoneNumber, phone)).limit(1);
-  return row || null;
+  return withDisplay(row) || null;
 };
 
 const findByEmail = async (email) => {
@@ -41,7 +55,7 @@ const findByEmail = async (email) => {
     .from(consumerCustomer)
     .where(eq(consumerCustomer.email, email.toLowerCase()))
     .limit(1);
-  return row || null;
+  return withDisplay(row) || null;
 };
 
 const findAll = async ({ search, searchType, page = 1, limit = 50 } = {}) => {
@@ -86,7 +100,7 @@ const findAll = async ({ search, searchType, page = 1, limit = 50 } = {}) => {
   ]);
 
   return {
-    customers: rows,
+    customers: rows.map(withDisplay),
     pagination: {
       total: Number(total),
       page: pageNum,
@@ -99,14 +113,14 @@ const create = async (data) => {
   const insertData = { ...data };
   if (insertData.email) insertData.email = insertData.email.toLowerCase();
   const [row] = await db.insert(consumerCustomer).values(insertData).returning();
-  return row;
+  return withDisplay(row);
 };
 
 const update = async (id, data, tx = db) => {
   const updateData = { ...data };
   if (updateData.email) updateData.email = updateData.email.toLowerCase();
   const [row] = await tx.update(consumerCustomer).set(updateData).where(eq(consumerCustomer.id, id)).returning();
-  return row || null;
+  return withDisplay(row) || null;
 };
 
 // ── Balance: sman.customer_credits (pre-order float) + sman.wallet_holds ──
@@ -153,6 +167,23 @@ const getCreditTotal = async (customerId, tx = db) => {
     .select({ total: sql`COALESCE(SUM(${customerCredits.amount}::numeric), 0)::float` })
     .from(customerCredits)
     .where(eq(customerCredits.customerId, customerId));
+  return Number(row?.total || 0);
+};
+
+/**
+ * Lifetime deposits: the sum of positive customer_credits entries only
+ * (deposits, overpayment carried forward) — never netted against spends or
+ * holds. Old clean-room `customers.deposit` was a stored running total with
+ * no live equivalent (consumer_customer has no balance/deposit column at
+ * all, see this file's header comment); this is the same figure
+ * reconstructed from the ledger dashboard.service.js's own "vs. balance"
+ * card needs.
+ */
+const getDepositTotal = async (customerId, tx = db) => {
+  const [row] = await tx
+    .select({ total: sql`COALESCE(SUM(${customerCredits.amount}::numeric), 0)::float` })
+    .from(customerCredits)
+    .where(and(eq(customerCredits.customerId, customerId), sql`${customerCredits.amount}::numeric > 0`));
   return Number(row?.total || 0);
 };
 
@@ -265,7 +296,7 @@ const findForSegment = async ({ depotId, minOrders, sinceDays, inactiveSinceDays
     db.select({ total: count() }).from(consumerCustomer).where(whereClause),
   ]);
 
-  return { customers: rows, count: Number(total) };
+  return { customers: rows.map(withDisplay), count: Number(total) };
 };
 
 module.exports = {
@@ -277,6 +308,7 @@ module.exports = {
   update,
   recordCreditEntry,
   getCreditTotal,
+  getDepositTotal,
   getActiveHoldTotal,
   getBalance,
   findWithPositiveBalance,

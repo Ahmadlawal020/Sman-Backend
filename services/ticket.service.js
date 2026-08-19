@@ -1,4 +1,3 @@
-const QRCode = require("qrcode");
 const { db } = require("../config/db");
 const { orderRepo, ticketRepo, customerRepo } = require("../repositories");
 const { sendTicketEmail } = require("./email.service");
@@ -6,37 +5,51 @@ const { sendTicketSummarySMS } = require("./sms.service");
 const { notify } = require("../notifications");
 
 /**
+ * consumer_truckticket (live) has no ticketNumber/qrCodeDataUrl/orderTruckId/
+ * status columns at all — see repositories/ticket.repository.js's header
+ * comment. It's keyed on (orderId, truckNumber) instead, with its own
+ * ticketStatus enum (pending/generated/printed/loaded/completed) and no QR
+ * backing whatsoever. Both functions below now write only columns that
+ * actually exist; the QR code and a display "ticket number" are synthesised
+ * in JS from the row's id/orderId rather than stored, since Sman's customer-
+ * facing digital ticket (this file) is a value-add layered on top of a live
+ * table Django itself never gave a code or QR image.
+ */
+
+const displayTicketNumber = (orderId, truckNumber) => `TCK-${orderId}-${truckNumber}`;
+
+const buildQrCodeDataUrl = async (ticketId) => {
+  const QRCode = require("qrcode");
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+  return QRCode.toDataURL(`${clientUrl}/ticket/details?id=${ticketId}`, { margin: 1, width: 300 });
+};
+
+/**
  * Issue the ticket for a single truck load, idempotently, inside the caller's
- * transaction (the "mark loaded" step). One ticket per load, numbered
- * TCK-<orderSuffix>-<truckIndex>, linked by order_truck_id. Kept lean — no
- * email/SMS here; those are the per-order buyer notifications. Returns the
- * existing ticket if this load already has one, so a repeated load call is safe.
+ * transaction (the "mark loaded" step). One consumer_truckticket row per
+ * (order, truckNumber) — `load` is a consumer_truckallocation row (see
+ * repositories/orderTruck.repository.js), so its plate/driver copy straight
+ * across. Returns the existing ticket if this load already has one, so a
+ * repeated load call is safe.
  */
 const generateTicketForTruck = async (order, load, tx = db) => {
-  const existing = await ticketRepo.findByOrderTruck(load.id, tx);
+  const existing = await ticketRepo.findByOrderAndTruckNumber(order.id, load.truckNumber, tx);
   if (existing) return existing;
 
-  const suffix = order.id;
-  const ticketNumber = `TCK-${suffix}-${load.truckIndex}`;
-
-  const created = await ticketRepo.create(
+  const now = new Date().toISOString();
+  return ticketRepo.create(
     {
-      ticketNumber,
       orderId: order.id,
-      orderTruckId: load.id,
-      status: "Active",
-      qrCodeDataUrl: "placeholder",
+      truckNumber: load.truckNumber,
+      quantityLitres: String(load.quantity),
+      driverName: load.driverName || null,
+      plateNumber: load.plateNumber || null,
+      ticketStatus: "pending",
+      createdAt: now,
+      updatedAt: now,
     },
     tx
   );
-
-  const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
-  const qrCodeDataUrl = await QRCode.toDataURL(`${clientUrl}/ticket/details?id=${created.id}`, {
-    margin: 1,
-    width: 300,
-  });
-
-  return ticketRepo.update(created.id, { qrCodeDataUrl }, tx);
 };
 
 const generateTicketForOrder = async (orderIdOrDoc) => {
@@ -52,33 +65,29 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
       throw new Error("Order not found");
     }
 
-    const existingTicket = await ticketRepo.findByOrder(order.id);
+    // The order-level digital ticket always occupies truckNumber 1 — a single
+    // slot covering the whole order's quantity, distinct from the per-truck
+    // tickets the gate/loading flow issues later via generateTicketForTruck
+    // (which use the real declared truckNumbers for a pickup order).
+    const TRUCK_NUMBER = 1;
+    const existingTicket = await ticketRepo.findByOrderAndTruckNumber(order.id, TRUCK_NUMBER);
     if (existingTicket) {
       return { success: true, ticket: existingTicket, message: "Ticket already generated" };
     }
 
-    const suffix = order.id;
-    const ticketNumber = `TCK-${suffix}`;
-
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
-
-    // Create ticket with placeholder QR
+    const now = new Date().toISOString();
     const savedTicket = await ticketRepo.create({
-      ticketNumber,
       orderId: order.id,
-      status: "Active",
-      qrCodeDataUrl: "placeholder",
+      truckNumber: TRUCK_NUMBER,
+      quantityLitres: String(order.quantity),
+      ticketStatus: "pending",
+      createdAt: now,
+      updatedAt: now,
     });
 
-    const qrCodeUrl = `${clientUrl}/ticket/details?id=${savedTicket.id}`;
-    const qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl, {
-      margin: 1,
-      width: 300,
-    });
-
-    const updatedTicket = await ticketRepo.update(savedTicket.id, {
-      qrCodeDataUrl,
-    });
+    const qrCodeDataUrl = await buildQrCodeDataUrl(savedTicket.id);
+    const updatedTicket = await ticketRepo.update(savedTicket.id, { ticketStatus: "generated" });
+    const ticketNumber = displayTicketNumber(order.id, TRUCK_NUMBER);
 
     const customer = await customerRepo.findById(order.customerId);
     if (!customer) {
@@ -86,7 +95,7 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
     }
 
     const ticketData = {
-      ticketNumber: updatedTicket.ticketNumber,
+      ticketNumber,
       qrCodeDataUrl,
       customerName: customer.name,
       companyName: customer.companyName || "",
@@ -103,11 +112,11 @@ const generateTicketForOrder = async (orderIdOrDoc) => {
       depotName: order.depotName || "N/A",
       depotCode: order.depotCode || "",
       depotAddress: order.depotAddress || "",
-      state: order.state,
-      totalAmount: order.totalAmount,
+      state: order.stateName || "",
+      totalAmount: order.totalPrice,
       deliveryType: order.deliveryType,
-      virtualAccountNumber: order.virtualAccountNumber || "",
-      virtualAccountBank: order.virtualAccountBank || "",
+      virtualAccountNumber: order.paidToAccountNumber || "",
+      virtualAccountBank: order.paidToBankName || "",
     };
 
     if (customer.email) {

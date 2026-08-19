@@ -35,7 +35,7 @@ const findByIdWithItems = async (id) => {
       id: offlineSaleItems.id,
       productId: offlineSaleItems.productId,
       productName: products.name,
-      productSku: products.sku,
+      productSku: products.abbreviation,
       quantity: offlineSaleItems.quantity,
     })
     .from(offlineSaleItems)
@@ -57,8 +57,8 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, ord
     const pattern = `%${search}%`;
     conditions.push(or(ilike(offlineSales.staff, pattern), ilike(offlineSales.notes, pattern)));
   }
-  if (dateFrom) conditions.push(gte(offlineSales.createdAt, new Date(dateFrom)));
-  if (dateTo) conditions.push(lte(offlineSales.createdAt, new Date(dateTo)));
+  if (dateFrom) conditions.push(gte(offlineSales.createdAt, new Date(dateFrom).toISOString()));
+  if (dateTo) conditions.push(lte(offlineSales.createdAt, new Date(dateTo).toISOString()));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -83,9 +83,11 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, ord
 };
 
 const update = async (id, data) => {
+  // updatedAt is timestamp(mode: 'string') — postgres.js rejects a raw Date
+  // for a string-mode column.
   const [row] = await db
     .update(offlineSales)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...data, updatedAt: new Date().toISOString() })
     .where(eq(offlineSales.id, id))
     .returning();
   return row || null;

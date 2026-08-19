@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const { orderRepo } = require("../../repositories");
+const { orderRepo, orderTruckRepo } = require("../../repositories");
 const { placeOrder, updatePickupTrucks, payOrder, cancelOrder, withExpiresAt } = require("../../services/order.service");
 const {
   buildReached,
@@ -7,28 +7,35 @@ const {
   stageNote,
 } = require("../../services/tracking.service");
 
-// Per-truck movement in words, for the order owner's own detail view. Mirrors
-// the public tracking labels (tracking.service.js) so the two surfaces read
-// the same, but the owner's view additionally carries driver contact and gate
-// stamps — details the public feed withholds.
+// Per-truck movement in words, for the order owner's own detail view. Keyed
+// on consumer_truckallocation.ticket_status (pending/generated/printed/
+// loaded/completed — see repositories/orderTruck.repository.js), not the
+// old gated_in/gated_out vocabulary, which this live column never holds.
 const TRUCK_STATUS_LABEL = {
   pending: "Assigned",
-  loaded: "Ticket issued",
-  gated_in: "At the depot",
-  gated_out: "Departed",
+  generated: "Ticket issued",
+  printed: "Ticket printed",
+  loaded: "Loaded",
+  completed: "Departed",
 };
 
+// enteredAt/loadedAt/exitedAt gate stamps have no equivalent on
+// consumer_truckallocation at all — that timeline lives on the separate
+// consumer_truckticket row created later (see ticket.service.js), which
+// isn't joined here yet. Left null rather than reading columns that don't
+// exist; wiring the real gate timeline in is part of the still-open
+// gate/ticketing rework flagged in controllers/administration/order.controller.js.
 const toOwnerTruck = (t) => ({
-  index: t.truckIndex,
-  plate: t.truckNumber || null,
+  index: t.truckNumber,
+  plate: t.plateNumber || null,
   quantity: Number(t.quantity),
-  status: t.status,
-  statusLabel: TRUCK_STATUS_LABEL[t.status] || t.status,
+  status: t.ticketStatus,
+  statusLabel: TRUCK_STATUS_LABEL[t.ticketStatus] || t.ticketStatus,
   driverName: t.driverName || null,
-  driverPhone: t.driverPhone || null,
-  enteredAt: t.securityEnteredAt || null,
-  loadedAt: t.loadedAt || null,
-  exitedAt: t.securityExitedAt || null,
+  driverPhone: null,
+  enteredAt: null,
+  loadedAt: null,
+  exitedAt: null,
 });
 
 /**
@@ -39,7 +46,7 @@ const toOwnerTruck = (t) => ({
  * there is no public stage for a cancellation.
  */
 const withOwnerDetail = async (order) => {
-  const trucks = (await orderRepo.findTrucksByOrderId(order.id)).map(toOwnerTruck);
+  const trucks = (await orderTruckRepo.findByOrder(order.id)).map(toOwnerTruck);
   order.trucks = trucks;
   order.reached = buildReached(order);
   if (order.status === "Cancelled") {

@@ -80,7 +80,7 @@ async function getDailyRevenueTrend(dateFrom, dateTo) {
     db
       .select({
         date: sql`DATE(${offlineSales.createdAt})`.mapWith(String),
-        total: sql`COALESCE(SUM(${offlineSales.totalAmount}), 0)`.mapWith(Number),
+        total: sql`COALESCE(SUM(${offlineSales.totalPrice}), 0)`.mapWith(Number),
       })
       .from(offlineSales)
       .where(

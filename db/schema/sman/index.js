@@ -34,6 +34,7 @@ const walletHoldSchema = require("./walletHold");
 const webhookEventSchema = require("./webhookEvent");
 const expectedPaymentSchema = require("./expectedPayment");
 const orderDepositAllocationSchema = require("./orderDepositAllocation");
+const orderIdempotencySchema = require("./orderIdempotency");
 
 // Commissions
 const commissionSchema = require("./commission");
@@ -98,6 +99,7 @@ module.exports = {
   ...webhookEventSchema,
   ...expectedPaymentSchema,
   ...orderDepositAllocationSchema,
+  ...orderIdempotencySchema,
   ...commissionSchema,
   ...vendorSchema,
   ...pfiExpenseExtrasSchema,

@@ -54,8 +54,8 @@ const findById = async (id) => {
 };
 
 /** No stored ticket_number live — TruckTicket has no equivalent code column, only order_id + truck_number. */
-const findByOrderAndTruckNumber = async (orderId, truckNumber) => {
-  const [row] = await db
+const findByOrderAndTruckNumber = async (orderId, truckNumber, tx = db) => {
+  const [row] = await tx
     .select()
     .from(consumerTruckticket)
     .where(and(eq(consumerTruckticket.orderId, orderId), eq(consumerTruckticket.truckNumber, truckNumber)))

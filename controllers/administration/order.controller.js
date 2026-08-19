@@ -22,6 +22,43 @@ function httpErr(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
+/* --- FLAGGED — the gate/release/ticketing flow below has NOT been migrated
+ * to the live schema, and needs its own dedicated pass, not a quick
+ * find-and-replace. releaseOrder's truck allocation, gateInTruck,
+ * markTruckLoaded, gateOutTruck, generateOrderTickets and
+ * getTruckTicketPrintData all still write/read orderTruckRepo
+ * (consumer_truckallocation) using vocabulary that table no longer has:
+ * truckIndex (-> truckNumber), truckNumber-as-plate (-> plateNumber),
+ * truckId (dropped, no live column), driverPhone (dropped, no live column),
+ * a generic status field using gated_in/gated_out/loaded (-> ticketStatus,
+ * whose real enum is pending/generated/printed/loaded/completed — gated_in/
+ * gated_out don't exist in it at all). ticketNumber (NOT NULL UNIQUE,
+ * app-generated — see order.service.js's truckAllocationTicketNumber) and
+ * orderProductId (NOT NULL FK) are never supplied at any of this file's
+ * orderTruckRepo.create() call sites, so every one of those inserts would
+ * violate a live constraint as written today.
+ *
+ * More fundamentally: consumer_truckallocation has NO gate-tracking columns
+ * at all (no securityEnteredAt/By, securityExitedAt/By, loadedAt/By, gantry,
+ * loaderName, entryDriverName/Phone) — those all live on the SEPARATE
+ * consumer_truckticket table (see repositories/ticket.repository.js and
+ * services/ticket.service.js's generateTicketForTruck), created explicitly
+ * per Django's own TruckTicket docstring ("created after an order is
+ * released... generated explicitly by an admin via the generate-tickets
+ * endpoint"). The real fix is architectural, not a rename: gate-in/load/
+ * gate-out should read and write consumer_truckticket rows (via ticketRepo),
+ * with orderTruckRepo/consumer_truckallocation staying scoped to what it
+ * actually is live — the order-time truck manifest, nothing past it.
+ *
+ * Deliberately not attempted in this pass — it touches release, gate
+ * security and depot loading simultaneously, each with its own operational
+ * risk, and deserves focused verification against the sandbox on its own,
+ * the same way placeOrder/payOrder/orderStatus.service.js got theirs. Every
+ * function in this file from releaseOrder's truck-allocation loop onward
+ * should be treated as broken against the live schema until that pass
+ * happens.
+ * --------------------------------------------------------------------- */
+
 const getOrders = asyncHandler(async (req, res) => {
   const { page = 1, limit = 50, search, status, customer, depot, dateFrom, dateTo, payable } = req.query;
 

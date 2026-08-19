@@ -1,6 +1,6 @@
 const { eq, desc } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
+const { consumerOrder } = require("../db/schema");
 const { orderRepo, waMessageRepo } = require("../repositories");
 const { loadCatalog } = require("../services/catalog.service");
 const { computeExpiresAt } = require("../services/order.service");
@@ -33,10 +33,10 @@ const loadLastOrder = async (customerId, lastOrderId) => {
   let orderId = lastOrderId;
   if (!orderId && customerId) {
     const [latest] = await db
-      .select({ id: orders.id })
-      .from(orders)
-      .where(eq(orders.customerId, customerId))
-      .orderBy(desc(orders.createdAt))
+      .select({ id: consumerOrder.id })
+      .from(consumerOrder)
+      .where(eq(consumerOrder.userId, customerId))
+      .orderBy(desc(consumerOrder.createdAt))
       .limit(1);
     orderId = latest?.id;
   }
@@ -48,16 +48,21 @@ const loadLastOrder = async (customerId, lastOrderId) => {
     id: full.id,
     orderNumber: full.orderNumber,
     status: full.status,
+    // consumer_order has no depotId column at all (see
+    // order.repository.js's header comment) — always undefined here until
+    // that gap gets a resolution, not guessed at.
     depotId: full.depotId,
     productId: full.productId,
     quantity: full.quantity,
     deliveryType: full.deliveryType,
     productName: full.productName || "product",
     depotName: full.depotName || "depot",
-    totalAmount: full.totalAmount,
-    // For "Finish payment" on an unpaid last order.
-    virtualAccountBank: full.virtualAccountBank,
-    virtualAccountNumber: full.virtualAccountNumber,
+    totalAmount: full.totalPrice,
+    // For "Finish payment" on an unpaid last order — paidToBankName/Number
+    // is where WE told the customer to pay (the depot's bank account), the
+    // live equivalent of the old customer-DVA fields.
+    virtualAccountBank: full.paidToBankName,
+    virtualAccountNumber: full.paidToAccountNumber,
     // Payment window — same deadline the portal countdown uses.
     expiresAt: computeExpiresAt(full),
     expiryHours: orderExpiryHours(),

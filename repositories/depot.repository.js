@@ -258,6 +258,23 @@ const getStateIdForDepot = async (depotId) => {
   return state?.id || null;
 };
 
+/**
+ * Same by-name lookup, for a caller (placeOrder) that has a free-text state
+ * name of its own — the customer's declared delivery state — rather than a
+ * depot to resolve one from. consumer_order.state_id is a real FK, unlike
+ * consumer_depots' free-text location, so this is the one place order
+ * placement needs to turn a name into that id.
+ */
+const findStateIdByName = async (name) => {
+  if (!name) return null;
+  const [state] = await db
+    .select({ id: consumerStates.id })
+    .from(consumerStates)
+    .where(eq(consumerStates.name, name))
+    .limit(1);
+  return state?.id || null;
+};
+
 const getProductPricesByState = async (stateId) => {
   const rows = await db
     .select({
@@ -342,6 +359,7 @@ module.exports = {
   setProductCapacities,
   upsertProductCapacity,
   getStateIdForDepot,
+  findStateIdByName,
   getProductPricesByState,
   getProductPrice,
   upsertProductPrice,

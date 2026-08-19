@@ -1,8 +1,9 @@
 const { and, eq, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
-const { orderRepo } = require("../repositories");
+const { consumerOrder } = require("../db/schema");
+const { orderRepo, customerRepo } = require("../repositories");
 const { withExpiresAt } = require("./order.service");
+const { fromLiveStatus } = require("../utils/orderStatusMapping");
 
 /**
  * The signed-in customer's home screen, in one payload. Everything here is
@@ -51,25 +52,32 @@ const toISODate = (d) => {
 const loadMonth = async (customerId) => {
   const monthStart = startOfMonth();
 
+  // consumer_order has no separate paymentStatus axis and no customerId
+  // column (the FK is userId despite the name) — status/releaseStatus are
+  // read raw and translated per row with the same fromLiveStatus() every
+  // other read path uses (see utils/orderStatusMapping.js), rather than
+  // duplicating that mapping as a second, raw-SQL version here.
   const rows = await db
     .select({
-      createdAt: orders.createdAt,
-      quantity: orders.quantity,
-      amount: sql`${orders.totalAmount}`.mapWith(Number),
-      status: orders.status,
-      paymentStatus: orders.paymentStatus,
+      createdAt: consumerOrder.createdAt,
+      quantity: consumerOrder.quantity,
+      amount: sql`${consumerOrder.totalPrice}`.mapWith(Number),
+      status: consumerOrder.status,
+      releaseStatus: consumerOrder.releaseStatus,
     })
-    .from(orders)
-    .where(and(eq(orders.customerId, customerId), gte(orders.createdAt, monthStart)));
+    .from(consumerOrder)
+    .where(and(eq(consumerOrder.userId, customerId), gte(consumerOrder.createdAt, monthStart.toISOString())));
 
   const month = { orders: 0, litres: 0, spent: 0 };
   const spentByDay = new Map();
   for (const r of rows) {
-    if (r.status !== "Cancelled" && r.status !== "Expired") {
+    const smanStatus = fromLiveStatus(r);
+    const paymentStatus = ["Paid", "Released", "Loading", "Completed"].includes(smanStatus) ? "Paid" : "Unpaid";
+    if (smanStatus !== "Cancelled" && smanStatus !== "Expired") {
       month.orders += 1;
       month.litres += Number(r.quantity);
     }
-    if (r.paymentStatus === "Paid") {
+    if (paymentStatus === "Paid") {
       month.spent += r.amount;
       const key = toISODate(new Date(r.createdAt));
       spentByDay.set(key, (spentByDay.get(key) ?? 0) + r.amount);
@@ -88,14 +96,18 @@ const loadMonth = async (customerId) => {
 };
 
 /**
- * @param {{id: number, balance?: string, deposit?: string}} customer
- *        The authenticated customer row (req.customer) — already carries the
- *        wallet columns publicCustomer hides.
+ * @param {{id: number}} customer  The authenticated customer row (req.customer).
  */
 const getDashboard = async (customer) => {
-  const [{ month, trend }, recent] = await Promise.all([
+  // consumer_customer has no balance/deposit column at all — both are
+  // reconstructed from sman.customer_credits (+ sman.wallet_holds for the
+  // spendable balance), same ledger every other wallet read uses (see
+  // repositories/customer.repository.js's header comment).
+  const [{ month, trend }, recent, balance, deposit] = await Promise.all([
     loadMonth(customer.id),
     orderRepo.findAll({ customer: customer.id, page: 1, limit: RECENT_LIMIT }),
+    customerRepo.getBalance(customer.id),
+    customerRepo.getDepositTotal(customer.id),
   ]);
 
   // Same expiresAt enrichment the order list/detail endpoints attach — the
@@ -103,8 +115,8 @@ const getDashboard = async (customer) => {
   // the frontend used to mislabel unpaid invoices as price-expired).
   return {
     wallet: {
-      balance: Number(customer.balance || 0),
-      deposit: Number(customer.deposit || 0),
+      balance: Number(balance || 0),
+      deposit: Number(deposit || 0),
     },
     month,
     trend,
