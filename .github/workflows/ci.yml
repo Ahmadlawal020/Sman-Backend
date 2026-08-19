@@ -55,13 +55,29 @@ jobs:
       - name: Check migration consistency
         run: npm run db:check
 
-      # db:migrate is permanently disabled (see package.json /
-      # docs/LIVE_DB_CUTOVER.md) — soroman_db is shared production, owned and
-      # migrated by Django, and Drizzle must never run DDL against it. There
-      # is deliberately no "apply migrations" step here anymore: it could
-      # only ever fail, and did so as a false alarm rather than a real one.
-      # The ephemeral postgres service above is kept for when a real test-copy
-      # restore step (see LIVE_DB_CUTOVER.md §7) replaces it.
+      # Provision the live schema into the ephemeral postgres SERVICE
+      # CONTAINER above — localhost inside this runner, created per run and
+      # destroyed with the job. This step cannot reach any real database:
+      # both URLs below are pinned to the container, and the EC2 deploy
+      # workflow (deploy.yml) runs no DB commands at all.
+      #
+      # Two layers, mirroring db/schema/sman/README.md:
+      #  1. docs/live_schema.sql — the 81 Django-owned `public` tables
+      #     (Django migrates these in production; tests just need the shape).
+      #     The dump's \restrict/\unrestrict guards are stripped: they need a
+      #     recent psql minor and add nothing on a throwaway database.
+      #  2. drizzle-kit migrate with the sman config — Sman's own `sman`
+      #     schema from the tracked db/migrations.sman baseline, exactly what
+      #     production gets.
+      # (npm run db:migrate stays permanently disabled — that guard protects
+      # shared production soroman_db, which Django owns. This step is scoped
+      # to the container by construction, not by discipline.)
+      - name: Provision live-schema test database
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/soroman_test
+        run: |
+          sed '/^\\restrict/d;/^\\unrestrict/d' docs/live_schema.sql | psql "$PGURL" -v ON_ERROR_STOP=1 -q
+          LIVE_DATABASE_URL="$PGURL" npx drizzle-kit migrate --config=drizzle.sman.config.js
 
       - name: Test
         run: npm test
