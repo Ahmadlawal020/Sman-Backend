@@ -1,23 +1,21 @@
 const asyncHandler = require("express-async-handler");
 const { db } = require("../../config/db");
 const {
-  consumerFleettruck: trucks,
+  fleetTrucks: trucks,
   drivers,
-  consumerDepots: depots,
-  depotExtras,
-  consumerProduct: products,
-  consumerOrder: orders,
-  consumerCustomer: customers,
-  consumerOrderpaymentrecord: deposits,
-  administrationOfflinesales: offlineSales,
-  administrationDeliverysale: deliverySales,
-  administrationDeliverycustomer: deliveryCustomers,
+  depots,
+  products,
+  orders,
+  customers,
+  deposits,
+  offlineSales,
+  deliverySales,
+  deliveryCustomers,
   auditEvents,
   walletHolds,
   dangoteOrderRequests,
   lpgOrderRequests,
-  consumerLpgplant: lpgStations,
-  consumerStates,
+  lpgStations,
 } = require("../../db/schema");
 const { eq, and, not, count, sql, gte, lte, desc } = require("drizzle-orm");
 const {
@@ -62,31 +60,19 @@ function getPeriodDates(period) {
 async function getDailyRevenueTrend(dateFrom, dateTo) {
   const from = new Date(dateFrom);
   const to = new Date(dateTo);
-  // orders.createdAt / offlineSales.createdAt are mode:'string' timestamp
-  // columns — need ISO strings, not raw Date instances (see reporting.service.js's
-  // dateConditions for the same rule). deliverySales.dateLoaded is a DATE
-  // column — needs a plain YYYY-MM-DD string, which is why it's sliced below
-  // instead of passed as an ISO datetime.
-  const fromIso = from.toISOString();
-  const toIso = to.toISOString();
-  const fromDateOnly = fromIso.slice(0, 10);
-  const toDateOnly = toIso.slice(0, 10);
 
   const [paidOrders, approvedOffline, deliveryRows] = await Promise.all([
     db
       .select({
         date: sql`DATE(${orders.createdAt})`.mapWith(String),
-        // consumer_order has no paymentStatus/totalAmount columns — status
-        // is the real column, and "Paid" is Sman vocabulary computed from it
-        // (see utils/orderStatusMapping.js); totalPrice is the real amount column.
-        total: sql`COALESCE(SUM(${orders.totalPrice}::numeric), 0)`.mapWith(Number),
+        total: sql`COALESCE(SUM(${orders.totalAmount}), 0)`.mapWith(Number),
       })
       .from(orders)
       .where(
         and(
-          sql`${orders.status} IN ('paid', 'released', 'loaded')`,
-          gte(orders.createdAt, fromIso),
-          lte(orders.createdAt, toIso)
+          eq(orders.paymentStatus, "Paid"),
+          gte(orders.createdAt, from),
+          lte(orders.createdAt, to)
         )
       )
       .groupBy(sql`DATE(${orders.createdAt})`),
@@ -94,14 +80,14 @@ async function getDailyRevenueTrend(dateFrom, dateTo) {
     db
       .select({
         date: sql`DATE(${offlineSales.createdAt})`.mapWith(String),
-        total: sql`COALESCE(SUM(${offlineSales.totalPrice}::numeric), 0)`.mapWith(Number),
+        total: sql`COALESCE(SUM(${offlineSales.totalAmount}), 0)`.mapWith(Number),
       })
       .from(offlineSales)
       .where(
         and(
           eq(offlineSales.status, "approved"),
-          gte(offlineSales.createdAt, fromIso),
-          lte(offlineSales.createdAt, toIso)
+          gte(offlineSales.createdAt, from),
+          lte(offlineSales.createdAt, to)
         )
       )
       .groupBy(sql`DATE(${offlineSales.createdAt})`),
@@ -109,13 +95,13 @@ async function getDailyRevenueTrend(dateFrom, dateTo) {
     db
       .select({
         date: sql`${deliverySales.dateLoaded}`.mapWith(String),
-        total: sql`COALESCE(SUM(${deliverySales.paymentAmount}::numeric), 0)`.mapWith(Number),
+        total: sql`COALESCE(SUM(${deliverySales.paymentAmount}), 0)`.mapWith(Number),
       })
       .from(deliverySales)
       .where(
         and(
-          gte(deliverySales.dateLoaded, fromDateOnly),
-          lte(deliverySales.dateLoaded, toDateOnly)
+          gte(deliverySales.dateLoaded, dateFrom.slice(0, 10)),
+          lte(deliverySales.dateLoaded, dateTo.slice(0, 10))
         )
       )
       .groupBy(deliverySales.dateLoaded),
@@ -284,7 +270,7 @@ const getOverview = asyncHandler(async (req, res) => {
         db
           .select({ c: count() })
           .from(customers)
-          .where(gte(customers.createdAt, new Date(from).toISOString())),
+          .where(gte(customers.createdAt, new Date(from))),
       ]);
       return { total: total[0].c, newThisPeriod: newThisPeriod[0].c };
     })(),
@@ -303,34 +289,28 @@ const getOverview = asyncHandler(async (req, res) => {
       .limit(15),
     getDailyRevenueTrend(from, to),
 
-    // Leaderboard: orders grouped by state, ranked by revenue. Was written
-    // against a depotId column consumer_order has never had on the live
-    // schema (see repositories/order.repository.js's header comment) — no
-    // depot is tracked on an order at all, only a state (via stateId) and a
-    // PFI. Rebuilt around state, the grouping orders actually support; a
-    // real depot-level breakdown would need the gate/ticketing rework this
-    // codebase already has flagged as a separate, larger piece of work.
+    // Depot leaderboard: orders grouped by depot, ranked by revenue
     (async () => {
       const rows = await db
         .select({
-          id: consumerStates.id,
-          name: consumerStates.name,
+          id: depots.id,
+          name: depots.name,
           orderCount: sql`COUNT(${orders.id})::int`.mapWith(Number),
-          revenue: sql`COALESCE(SUM(${orders.totalPrice}::numeric), 0)`.mapWith(Number),
+          revenue: sql`COALESCE(SUM(${orders.totalAmount}), 0)`.mapWith(Number),
           volume: sql`COALESCE(SUM(${orders.quantity}), 0)::bigint`.mapWith(Number),
         })
-        .from(consumerStates)
+        .from(depots)
         .leftJoin(
           orders,
           and(
-            eq(orders.stateId, consumerStates.id),
-            sql`${orders.status} IN ('paid', 'released', 'loaded')`,
-            gte(orders.createdAt, new Date(from).toISOString()),
-            lte(orders.createdAt, new Date(to).toISOString())
+            eq(orders.depotId, depots.id),
+            eq(orders.paymentStatus, "Paid"),
+            gte(orders.createdAt, new Date(from)),
+            lte(orders.createdAt, new Date(to))
           )
         )
-        .groupBy(consumerStates.id, consumerStates.name)
-        .orderBy(desc(sql`COALESCE(SUM(${orders.totalPrice}::numeric), 0)`));
+        .groupBy(depots.id, depots.name)
+        .orderBy(desc(sql`COALESCE(SUM(${orders.totalAmount}), 0)`));
       return rows;
     })(),
 
@@ -384,12 +364,10 @@ const getOverview = asyncHandler(async (req, res) => {
           )
         );
 
-      // consumer_lpgplant has no status column — isActive (boolean) is the
-      // real live field.
       const [stationCounts] = await db
         .select({
           total: sql`COUNT(*)::int`.mapWith(Number),
-          active: sql`COUNT(*) FILTER (WHERE ${lpgStations.isActive} = true)::int`.mapWith(Number),
+          active: sql`COUNT(*) FILTER (WHERE ${lpgStations.status} = 'Active')::int`.mapWith(Number),
         })
         .from(lpgStations);
 

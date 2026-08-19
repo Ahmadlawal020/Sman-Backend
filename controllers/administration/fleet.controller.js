@@ -1,7 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const { db } = require("../../config/db");
-const { eq, desc, count: countFn } = require("drizzle-orm");
-const { consumerFleetledgerentry: ledgerEntries, consumerFleettruck: fleetTrucks } = require("../../db/schema");
+const { client } = require("../../db");
 const { fleetTruckRepo } = require("../../repositories");
 const fleetService = require("../../services/fleet.service");
 const { sendServiceResult } = require("../../utils/serviceResult");
@@ -58,29 +56,13 @@ const getLedgerEntries = asyncHandler(async (req, res) => {
 /** GET /api/fleet/ledger — every entry, for the Directory's money rollup. */
 const getAllLedgerEntries = asyncHandler(async (req, res) => {
   // Denormalised plate and driver ride on each row so the table renders in
-  // one pass without a second lookup per entry. consumer_fleetledgerentry /
-  // consumer_fleettruck are the live tables — this used to query
-  // fleet_ledger_entries / fleet_trucks, names from the old clean-room
-  // schema that were never carried onto the live one (relation does not
-  // exist, 500 on every call).
-  const rows = await db
-    .select({
-      id: ledgerEntries.id,
-      entryType: ledgerEntries.entryType,
-      category: ledgerEntries.category,
-      amount: ledgerEntries.amount,
-      date: ledgerEntries.date,
-      description: ledgerEntries.description,
-      truckId: ledgerEntries.truckId,
-      enteredBy: ledgerEntries.enteredBy,
-      createdAt: ledgerEntries.createdAt,
-      updatedAt: ledgerEntries.updatedAt,
-      truckPlate: fleetTrucks.plateNumber,
-      truckDriver: fleetTrucks.driverName,
-    })
-    .from(ledgerEntries)
-    .innerJoin(fleetTrucks, eq(fleetTrucks.id, ledgerEntries.truckId))
-    .orderBy(desc(ledgerEntries.date), desc(ledgerEntries.id));
+  // one pass without a second lookup per entry.
+  const rows = await client`
+    SELECT l.*, t.plate_number AS truck_plate, t.driver_name AS truck_driver
+    FROM fleet_ledger_entries l
+    JOIN fleet_trucks t ON t.id = l.truck_id
+    ORDER BY l.entry_date DESC, l.id DESC
+  `;
   res.json({ success: true, data: { entries: rows } });
 });
 
@@ -97,27 +79,31 @@ const updateLedgerEntry = asyncHandler(async (req, res) => {
   }
   // A bad truck id 404s rather than silently detaching the entry.
   if (truckId !== undefined) {
-    const [t] = await db.select({ id: fleetTrucks.id }).from(fleetTrucks).where(eq(fleetTrucks.id, Number(truckId))).limit(1);
+    const [t] = await client`SELECT id FROM fleet_trucks WHERE id = ${Number(truckId)}`;
     if (!t) return res.status(404).json({ success: false, message: "Truck not found" });
   }
 
-  const updateData = {};
-  if (truckId !== undefined) updateData.truckId = Number(truckId);
-  if (entryType !== undefined) updateData.entryType = entryType;
-  if (category !== undefined) updateData.category = category;
-  if (amount !== undefined) updateData.amount = String(amount);
-  if (entryDate !== undefined) updateData.date = entryDate;
-  if (description !== undefined) updateData.description = description;
-  updateData.updatedAt = new Date().toISOString();
-
-  const [row] = await db.update(ledgerEntries).set(updateData).where(eq(ledgerEntries.id, id)).returning();
+  const [row] = await client`
+    UPDATE fleet_ledger_entries SET
+      truck_id     = COALESCE(${truckId ?? null}::int, truck_id),
+      entry_type   = COALESCE(${entryType ?? null}, entry_type),
+      category     = COALESCE(${category ?? null}, category),
+      amount       = COALESCE(${amount ?? null}::numeric, amount),
+      entry_date   = COALESCE(${entryDate ?? null}::date, entry_date),
+      description  = COALESCE(${description ?? null}, description),
+      updated_at   = now()
+    WHERE id = ${id}
+    RETURNING *
+  `;
   if (!row) return res.status(404).json({ success: false, message: "Entry not found" });
   res.json({ success: true, message: "Entry updated", data: { entry: row } });
 });
 
 /** DELETE /api/fleet/ledger/:entryId */
 const deleteLedgerEntry = asyncHandler(async (req, res) => {
-  const [row] = await db.delete(ledgerEntries).where(eq(ledgerEntries.id, Number(req.params.entryId))).returning({ id: ledgerEntries.id });
+  const [row] = await client`
+    DELETE FROM fleet_ledger_entries WHERE id = ${Number(req.params.entryId)} RETURNING id
+  `;
   if (!row) return res.status(404).json({ success: false, message: "Entry not found" });
   res.json({ success: true, message: "Entry deleted", data: { id: row.id } });
 });
@@ -130,26 +116,24 @@ const deleteLedgerEntry = asyncHandler(async (req, res) => {
  */
 const deleteFleetTruck = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
-  const [{ entryCount }] = await db
-    .select({ entryCount: countFn() })
-    .from(ledgerEntries)
-    .where(eq(ledgerEntries.truckId, id));
+  const [{ count }] = await client`
+    SELECT count(*)::int AS count FROM fleet_ledger_entries WHERE truck_id = ${id}
+  `;
 
-  if (entryCount > 0) {
-    const [row] = await db
-      .update(fleetTrucks)
-      .set({ isActive: false, updatedAt: new Date().toISOString() })
-      .where(eq(fleetTrucks.id, id))
-      .returning({ id: fleetTrucks.id });
+  if (count > 0) {
+    const [row] = await client`
+      UPDATE fleet_trucks SET is_active = false, updated_at = now()
+      WHERE id = ${id} RETURNING id
+    `;
     if (!row) return res.status(404).json({ success: false, message: "Truck not found" });
     return res.json({
       success: true,
-      message: `Truck retired — ${entryCount} ledger entr${entryCount === 1 ? "y" : "ies"} kept`,
-      data: { id, softDeleted: true, entries: entryCount },
+      message: `Truck retired — ${count} ledger entr${count === 1 ? "y" : "ies"} kept`,
+      data: { id, softDeleted: true, entries: count },
     });
   }
 
-  const [row] = await db.delete(fleetTrucks).where(eq(fleetTrucks.id, id)).returning({ id: fleetTrucks.id });
+  const [row] = await client`DELETE FROM fleet_trucks WHERE id = ${id} RETURNING id`;
   if (!row) return res.status(404).json({ success: false, message: "Truck not found" });
   res.json({ success: true, message: "Truck deleted", data: { id, softDeleted: false } });
 });

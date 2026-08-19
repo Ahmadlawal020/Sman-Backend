@@ -1,7 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { productRepo, orderRepo, pfiRepo } = require("../../repositories");
 const { db } = require("../../config/db");
-const { consumerPfi: pfis, consumerOrderproduct, depotProductCapacities } = require("../../db/schema");
+const { pfis, orders, depotProductCapacities } = require("../../db/schema");
 const { eq, count } = require("drizzle-orm");
 
 const getProducts = asyncHandler(async (req, res) => {
@@ -98,9 +98,7 @@ const deleteProduct = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "Product not found" });
   }
 
-  // Order line items live in consumer_orderproduct now, not inline on
-  // consumer_order (see order.repository.js's header comment).
-  const [{ orderCount }] = await db.select({ orderCount: count() }).from(consumerOrderproduct).where(eq(consumerOrderproduct.productId, product.id));
+  const [{ orderCount }] = await db.select({ orderCount: count() }).from(orders).where(eq(orders.productId, product.id));
   const [{ pfiCount }] = await db.select({ pfiCount: count() }).from(pfis).where(eq(pfis.productId, product.id));
   const [{ depotCount }] = await db.select({ depotCount: count() }).from(depotProductCapacities).where(eq(depotProductCapacities.productId, product.id));
 

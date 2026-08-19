@@ -1,6 +1,6 @@
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { consumerTruckallocation: orderTrucks, consumerOrderproduct } = require("../db/schema");
+const { orderTrucks } = require("../db/schema");
 const commissionRepo = require("../repositories/commission.repository");
 const { orderRepo } = require("../repositories");
 const walletService = require("./wallet.service");
@@ -23,27 +23,6 @@ async function createForOrder(orderId) {
   const order = await orderRepo.findById(orderId);
   if (!order) return null;
 
-  // consumer_order has no depotId column at all (see
-  // order.repository.js's header comment) — sman.commissions.depotId is
-  // NOT NULL, so there is no safe value to write here yet. Throwing (rather
-  // than guessing a depot or writing a null) is deliberate: both callers of
-  // createForOrder already wrap it in a try/catch that logs and continues
-  // without blocking the payment, so this surfaces as a clear, findable log
-  // line instead of a commission silently attributed to the wrong depot.
-  if (!order.depotId) {
-    throw new Error(
-      `commission.createForOrder: order ${orderId} has no resolvable depotId on the live schema — commission not created, needs a depot-resolution decision (see order.service.js's flagged gap)`
-    );
-  }
-
-  // Line item lives in consumer_orderproduct now, not inline on the order.
-  const [lineItem] = await db
-    .select({ productId: consumerOrderproduct.productId })
-    .from(consumerOrderproduct)
-    .where(eq(consumerOrderproduct.orderId, orderId))
-    .limit(1);
-  const productId = lineItem?.productId;
-
   // Sum truck quantities, fallback to order.quantity
   const trucks = await db
     .select()
@@ -57,17 +36,15 @@ async function createForOrder(orderId) {
   }
 
   // Look up commission rate
-  const rateEntry = await commissionRepo.getRate(order.depotId, productId);
+  const rateEntry = await commissionRepo.getRate(order.depotId, order.productId);
   const commissionRate = rateEntry ? parseFloat(rateEntry.commissionRate) : 0;
   const commissionAmount = quantity * commissionRate;
 
   const commission = await commissionRepo.create({
     orderId: order.id,
-    // consumer_order's customer FK column is userId, not customerId, despite
-    // the name — see order.repository.js's header comment.
-    customerId: order.userId,
+    customerId: order.customerId,
     depotId: order.depotId,
-    productId,
+    productId: order.productId,
     quantity,
     commissionRate: String(commissionRate),
     commissionAmount: String(commissionAmount.toFixed(2)),

@@ -55,13 +55,8 @@ jobs:
       - name: Check migration consistency
         run: npm run db:check
 
-      # db:migrate is permanently disabled (see package.json /
-      # docs/LIVE_DB_CUTOVER.md) — soroman_db is shared production, owned and
-      # migrated by Django, and Drizzle must never run DDL against it. There
-      # is deliberately no "apply migrations" step here anymore: it could
-      # only ever fail, and did so as a false alarm rather than a real one.
-      # The ephemeral postgres service above is kept for when a real test-copy
-      # restore step (see LIVE_DB_CUTOVER.md §7) replaces it.
+      - name: Apply migrations
+        run: npm run db:migrate
 
       - name: Test
         run: npm test

@@ -1,89 +1,83 @@
 const { pfiRepo } = require("../repositories");
 
-/**
- * consumer_pfi (live) has no soldQtyLitres column — "sold" is
- * SUM(consumer_pfimovement.qty_litres) for that PFI, an append-only ledger
- * (see repositories/pfi.repository.js's header comment and getSoldQty).
- * Every "available = starting - sold" computation below now asks the ledger
- * instead of reading a stored counter.
- */
-
 async function getAvailableCapacity(depotId, productId) {
-  const activePfis = await pfiRepo.findActiveByLocationAndProduct(depotId, productId);
+  const activePfis = await pfiRepo.findActiveByDepotAndProduct(depotId, productId);
 
-  let total = 0;
-  for (const pfi of activePfis) {
-    const sold = await pfiRepo.getSoldQty(pfi.id);
-    total += Math.max(0, (pfi.startingQtyLitres || 0) - sold);
-  }
-  return total;
+  return activePfis.reduce((total, pfi) => {
+    const available = Math.max(
+      0,
+      (pfi.startingQtyLitres || 0) - (pfi.soldQtyLitres || 0)
+    );
+    return total + available;
+  }, 0);
 }
 
 async function getDepotCapacities(depotId) {
   const { db } = require("../config/db");
-  const { consumerPfi, consumerPfimovement } = require("../db/schema");
-  const { eq, and, sql } = require("drizzle-orm");
+  const { pfis } = require("../db/schema");
+  const { eq, and } = require("drizzle-orm");
 
   const numericDepotId = parseInt(depotId, 10);
   if (isNaN(numericDepotId)) return {};
 
-  // One query: starting stock per PFI minus its ledger sold total, grouped
-  // by product. consumer_pfi.locationId is actually a STATE id, not a
-  // depot id (see pfi.repository.js) — this function's name is now the old
-  // clean-room vocabulary for what's really "capacity for this state".
-  const rows = await db
+  const activePfis = await db
     .select({
-      productId: consumerPfi.productId,
-      available: sql`SUM(${consumerPfi.startingQtyLitres}::numeric - COALESCE((
-        SELECT SUM(${consumerPfimovement.qtyLitres}::numeric) FROM ${consumerPfimovement}
-        WHERE ${consumerPfimovement.pfiId} = ${consumerPfi.id}
-      ), 0))`.mapWith(Number),
+      productId: pfis.productId,
+      startingQtyLitres: pfis.startingQtyLitres,
+      soldQtyLitres: pfis.soldQtyLitres,
     })
-    .from(consumerPfi)
-    .where(and(eq(consumerPfi.locationId, numericDepotId), eq(consumerPfi.status, "active")))
-    .groupBy(consumerPfi.productId);
+    .from(pfis)
+    .where(and(eq(pfis.locationId, numericDepotId), eq(pfis.status, "active")));
 
   const capacityMap = {};
-  for (const row of rows) {
-    if (!row.productId) continue;
-    const available = Math.max(0, row.available || 0);
-    capacityMap[row.productId] = available;
-    capacityMap[String(row.productId)] = available;
+  for (const pfi of activePfis) {
+    const prodKey = pfi.productId;
+    if (!prodKey) continue;
+    const available = Math.max(
+      0,
+      Number(pfi.startingQtyLitres || 0) - Number(pfi.soldQtyLitres || 0)
+    );
+    capacityMap[prodKey] = (capacityMap[prodKey] || 0) + available;
+    capacityMap[String(prodKey)] = capacityMap[prodKey];
   }
+
   return capacityMap;
 }
 
 async function getMultiDepotCapacities(depotIds) {
   const { db } = require("../config/db");
-  const { consumerPfi, consumerPfimovement } = require("../db/schema");
-  const { eq, and, inArray, sql } = require("drizzle-orm");
+  const { pfis } = require("../db/schema");
+  const { eq, and, inArray } = require("drizzle-orm");
 
   const numericIds = (depotIds || []).map((id) => parseInt(id, 10)).filter((n) => !isNaN(n));
   if (numericIds.length === 0) return {};
 
-  const rows = await db
+  const activePfis = await db
     .select({
-      locationId: consumerPfi.locationId,
-      productId: consumerPfi.productId,
-      available: sql`SUM(${consumerPfi.startingQtyLitres}::numeric - COALESCE((
-        SELECT SUM(${consumerPfimovement.qtyLitres}::numeric) FROM ${consumerPfimovement}
-        WHERE ${consumerPfimovement.pfiId} = ${consumerPfi.id}
-      ), 0))`.mapWith(Number),
+      locationId: pfis.locationId,
+      productId: pfis.productId,
+      startingQtyLitres: pfis.startingQtyLitres,
+      soldQtyLitres: pfis.soldQtyLitres,
     })
-    .from(consumerPfi)
-    .where(and(inArray(consumerPfi.locationId, numericIds), eq(consumerPfi.status, "active")))
-    .groupBy(consumerPfi.locationId, consumerPfi.productId);
+    .from(pfis)
+    .where(and(inArray(pfis.locationId, numericIds), eq(pfis.status, "active")));
 
   const pfiCapacityMap = {};
-  for (const row of rows) {
-    if (!row.productId) continue;
-    const depotKey = row.locationId;
+  for (const pfi of activePfis) {
+    const depotKey = pfi.locationId;
+    const prodKey = pfi.productId;
+    if (!prodKey) continue;
     if (!pfiCapacityMap[depotKey]) pfiCapacityMap[depotKey] = {};
     if (!pfiCapacityMap[String(depotKey)]) pfiCapacityMap[String(depotKey)] = pfiCapacityMap[depotKey];
-    const available = Math.max(0, row.available || 0);
-    pfiCapacityMap[depotKey][row.productId] = available;
-    pfiCapacityMap[depotKey][String(row.productId)] = available;
+    const available = Math.max(
+      0,
+      Number(pfi.startingQtyLitres || 0) - Number(pfi.soldQtyLitres || 0)
+    );
+    pfiCapacityMap[depotKey][prodKey] =
+      (pfiCapacityMap[depotKey][prodKey] || 0) + available;
+    pfiCapacityMap[depotKey][String(prodKey)] = pfiCapacityMap[depotKey][prodKey];
   }
+
   return pfiCapacityMap;
 }
 
@@ -99,7 +93,7 @@ async function getMultiDepotCapacities(depotIds) {
  *   totalAvailableStock — sum of all available PFI stock (for error messages)
  */
 async function findPfiForOrder(depotId, productId, quantity) {
-  const activePfis = await pfiRepo.findActiveByLocationAndProduct(depotId, productId);
+  const activePfis = await pfiRepo.findActiveByDepotAndProduct(depotId, productId);
 
   const needed = Number(quantity);
   let remaining = needed;
@@ -108,8 +102,10 @@ async function findPfiForOrder(depotId, productId, quantity) {
 
   for (const pfi of activePfis) {
     if (remaining <= 0) break;
-    const sold = await pfiRepo.getSoldQty(pfi.id);
-    const available = Math.max(0, (pfi.startingQtyLitres || 0) - sold);
+    const available = Math.max(
+      0,
+      (pfi.startingQtyLitres || 0) - (pfi.soldQtyLitres || 0)
+    );
     if (available <= 0) continue;
     totalAvailableStock += available;
 

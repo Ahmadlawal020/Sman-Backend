@@ -1,22 +1,7 @@
 const { eq, and, inArray, arrayOverlaps } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { administrationUser: staff, consumerCustomer: customers } = require("../db/schema");
+const { staff, customers } = require("../db/schema");
 const { toPrincipal } = require("../utils/principal");
-const { mapRolesToDjango } = require("../config/roleMapping");
-
-/**
- * administration_user.roles (live) is an integer[] of Django's Roles.choices
- * (soroman_backend-2/administration/models.py), not the text[] of role-name
- * strings ("admin", "super_admin", "sales_manager", ...) every
- * `{ roles: [...] }` caller across this codebase passes. loadStaffByRoles
- * below translates through config/roleMapping.js's mapRolesToDjango before
- * querying, same as middleware/verifyStaff.js does for the read/authorization
- * side. A handful of caller strings (e.g. "finance_manager", "fleet_manager")
- * have no Django counterpart at all — those broadcasts resolve to zero role
- * matches (not an error, not new: this is naming drift in the callers, a
- * business call about which real Django role they meant, not something this
- * file can guess).
- */
 
 /**
  * Turning a caller's idea of "who should hear this" into concrete recipients.
@@ -90,14 +75,13 @@ const loadStaff = async (ids) => {
  * a former employee.
  */
 const loadStaffByRoles = async (roles) => {
-  const djangoRoleIds = mapRolesToDjango(roles);
-  if (!djangoRoleIds.length) return [];
+  if (!roles?.length) return [];
   return db
     .select()
     .from(staff)
     .where(
       and(
-        arrayOverlaps(staff.roles, djangoRoleIds),
+        arrayOverlaps(staff.roles, roles),
         eq(staff.isActive, true),
         eq(staff.suspended, false)
       )

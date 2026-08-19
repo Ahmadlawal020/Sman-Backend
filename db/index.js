@@ -86,9 +86,9 @@ const db = drizzle(client, {
 const testConnection = async () => {
   try {
     await client`SELECT 1`;
-    console.log("PostgreSQL connected successfully");
+    console.log("Neon PostgreSQL connected successfully");
   } catch (err) {
-    console.error("PostgreSQL connection failed:", err.message);
+    console.error("Neon PostgreSQL connection failed:", err.message);
     throw err;
   }
 };

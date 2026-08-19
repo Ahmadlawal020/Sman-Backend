@@ -1,15 +1,6 @@
-const { eq, asc } = require("drizzle-orm");
+const { eq, or, asc } = require("drizzle-orm");
 const { db } = require("../config/db");
-const {
-  consumerOrder: orders,
-  consumerDepots: depots,
-  depotExtras,
-  consumerProduct: products,
-  consumerTruckallocation: orderTrucks,
-  consumerCustomer: customers,
-  consumerOrderproduct,
-} = require("../db/schema");
-const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+const { orders, depots, products, orderTrucks } = require("../db/schema");
 
 /**
  * Public order tracking — what anyone holding the reference may see.
@@ -32,22 +23,19 @@ const { generateOrderReference, parseOrderReference } = require("../utils/helper
  */
 
 // Per-truck movement, in words. Driver details are deliberately absent — a
-// plate is on a public road, a driver's name and phone are not. Keyed on
-// consumer_truckallocation.ticket_status's real enum (pending/generated/
-// printed/loaded/completed) — gated_in/gated_out were the old clean-room
-// schema's vocabulary and never appear on this live column.
+// plate is on a public road, a driver's name and phone are not.
 const TRUCK_STATUS_LABEL = {
   pending: "Assigned",
-  generated: "Ticket issued",
-  printed: "Ticket printed",
-  loaded: "Loaded",
-  completed: "Departed",
+  // A ticketed truck is cleared to load but has not reached the gate yet, so
+  // this names the paperwork rather than claiming work already done.
+  loaded: "Ticket issued",
+  gated_in: "At the depot",
+  gated_out: "Departed",
 };
 
-// "completed" is this table's own terminal ticket_status — the closest live
-// signal to "this truck is certainly done", since the actual gate-exit
-// timestamp lives on the separate consumer_truckticket row (not joined here).
-const loadedCount = (trucks) => trucks.filter((t) => t.status === "completed").length;
+// Counted off the gate, not off the ticket: a truck that has driven back out is
+// the only one certainly carrying product.
+const loadedCount = (trucks) => trucks.filter((t) => t.status === "gated_out").length;
 
 const NOTE = {
   received: () => "Order received — awaiting payment.",
@@ -99,58 +87,59 @@ const buildReached = (row) => {
 /** One-line situation report for the current stage. Needs `depotName` + `trucks`. */
 const stageNote = (stage, row) => (NOTE[stage] ? NOTE[stage](row) : null);
 
+const { customers } = require("../db/schema/customer");
+const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
+
 const trackByRef = async (ref) => {
   const normalized = String(ref || "").trim().toUpperCase();
   if (!normalized) return null;
 
-  // No stored order_number live — every reference resolves through the id
-  // (see repositories/order.repository.js). Accepts "SO600", the legacy
-  // "SO/600", and a bare id, so a reference printed on any invoice or SMS
-  // ever sent still tracks; anything that isn't reference-shaped 404s.
+  // Accepts "SO600", the legacy "SO/600", and the raw ORD-… column value, so a
+  // reference printed on any invoice or SMS ever sent still tracks.
   const possibleId = parseOrderReference(normalized);
-  if (!possibleId) return null;
 
-  // consumer_order (live, canonical) has no depotId at all — only pfiId, and
-  // a PFI's own locationId points at a STATE, not a depot (see
-  // order.repository.js's header comment; that repo flags the same gap
-  // rather than inventing a resolution). depotName is dropped here for the
-  // same reason, not guessed. Column renames: deliveryType -> releaseType,
-  // no completedAt/loadingStartedAt (nearest proxies: security_exited_at /
-  // loading_datetime), status uses "canceled" (Django's spelling).
+  let whereCond;
+  if (possibleId) {
+    whereCond = or(eq(orders.id, possibleId), eq(orders.orderNumber, normalized));
+  } else {
+    whereCond = eq(orders.orderNumber, normalized);
+  }
+
   const [row] = await db
     .select({
       id: orders.id,
+      orderNumber: orders.orderNumber,
+      companyName: orders.companyName,
       customerCompanyName: customers.companyName,
       status: orders.status,
-      quantity: consumerOrderproduct.quantity,
-      deliveryType: orders.releaseType,
+      quantity: orders.quantity,
+      deliveryType: orders.deliveryType,
       deliveryAddress: orders.deliveryAddress,
-      state: orders.destinationState,
+      state: orders.state,
       createdAt: orders.createdAt,
       paymentConfirmedAt: orders.paymentConfirmedAt,
       releasedAt: orders.releasedAt,
-      loadingStartedAt: orders.loadingDatetime,
-      completedAt: orders.securityExitedAt,
+      loadingStartedAt: orders.loadingStartedAt,
+      completedAt: orders.completedAt,
+      cancelledAt: orders.cancelledAt,
+      depotName: depots.name,
+      depotState: depots.state,
       productName: products.name,
+      productCategory: products.category,
       productUnit: products.unit,
     })
     .from(orders)
-    .leftJoin(customers, eq(orders.userId, customers.id))
-    .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, orders.id))
-    .leftJoin(products, eq(consumerOrderproduct.productId, products.id))
-    .where(eq(orders.id, possibleId))
+    .leftJoin(customers, eq(orders.customerId, customers.id))
+    .leftJoin(depots, eq(orders.depotId, depots.id))
+    .leftJoin(products, eq(orders.productId, products.id))
+    .where(whereCond)
     .limit(1);
 
   if (!row) return null;
-  row.depotName = "";
-  row.depotState = row.state;
 
-  const displayRef = generateOrderReference(row.customerCompanyName, row.id);
+  const displayRef = generateOrderReference(row.companyName || row.customerCompanyName, row.id);
 
-  // Django's spelling: status = 'canceled', not a separate cancelledAt
-  // column (see order.repository.js's header comment) — createdAt stands in
-  // for the cancellation timestamp since there's nowhere live to read one.
-  if (row.status === "canceled") {
+  if (row.status === "Cancelled") {
     return {
       ref: displayRef,
       placedAt: row.createdAt,
@@ -165,7 +154,7 @@ const trackByRef = async (ref) => {
         },
       ],
       stage: "cancelled",
-      reached: { received: row.createdAt, cancelled: row.createdAt },
+      reached: { received: row.createdAt, cancelled: row.cancelledAt || row.updatedAt || row.createdAt },
       note: "This order has been cancelled.",
       trucks: [],
     };
@@ -173,18 +162,15 @@ const trackByRef = async (ref) => {
 
   // Every allocated truck and where it is, once trucks have been assigned at
   // release. Plate + status only — never the driver's name or phone.
-  // consumer_truckallocation's `truck_number` is a sequence int (the old
-  // model's truckIndex); the plate lives in `plate_number`, and status is
-  // `ticket_status`.
   const truckRows = await db
     .select({
-      truckIndex: orderTrucks.truckNumber,
-      truckNumber: orderTrucks.plateNumber,
-      status: orderTrucks.ticketStatus,
+      truckIndex: orderTrucks.truckIndex,
+      truckNumber: orderTrucks.truckNumber,
+      status: orderTrucks.status,
     })
     .from(orderTrucks)
     .where(eq(orderTrucks.orderId, row.id))
-    .orderBy(asc(orderTrucks.truckNumber));
+    .orderBy(asc(orderTrucks.truckIndex));
   row.trucks = truckRows.map((t) => ({
     index: t.truckIndex,
     plate: t.truckNumber || null,

@@ -8,7 +8,7 @@ const { pagination, id, enumOf, requiredString, optionalString } = require("./fi
  * than retyped, so adding a category is one edit in db/schema/enums.js and not
  * a hunt for the copy that drifted.
  */
-const { notificationCategoryEnum, deviceTokenPlatformEnum } = require("../db/schema/sman/enums");
+const { notificationCategoryEnum, deviceTokenPlatformEnum } = require("../db/schema/enums");
 
 const CATEGORIES = notificationCategoryEnum.enumValues;
 const PLATFORMS = deviceTokenPlatformEnum.enumValues;

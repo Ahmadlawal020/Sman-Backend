@@ -1,18 +1,8 @@
-const { eq, and, or, ilike, desc, sql } = require("drizzle-orm");
+const { eq, and, or, ilike, desc } = require("drizzle-orm");
 const { db } = require("../config/db");
-const {
-  expectedPayments,
-  consumerCustomer: customers,
-  consumerOrder: orders,
-  administrationUser: staff,
-} = require("../db/schema");
+const { expectedPayments, customers, orders, staff } = require("../db/schema");
 const { scopeCondition } = require("../lib/scopeFilter");
 
-// consumer_customer has no `.name` (split first/last) or `.phone` (it's
-// `.phoneNumber`); consumer_order has no order number column at all (the
-// reference is computed elsewhere from company name + id, see
-// order.service.js) — dropped here rather than guessed. administration_user
-// has one `.fullName`, not separate first/surname.
 const COLUMNS = {
   id: expectedPayments.id,
   customerId: expectedPayments.customerId,
@@ -27,9 +17,11 @@ const COLUMNS = {
   resolvedAt: expectedPayments.resolvedAt,
   createdAt: expectedPayments.createdAt,
   updatedAt: expectedPayments.updatedAt,
-  customerName: sql`CONCAT(${customers.firstName}, ' ', ${customers.lastName})`,
-  customerPhone: customers.phoneNumber,
-  createdByName: staff.fullName,
+  customerName: customers.name,
+  customerPhone: customers.phone,
+  orderNumber: orders.orderNumber,
+  createdByFirstName: staff.firstName,
+  createdBySurname: staff.surname,
 };
 
 const baseQuery = () =>
@@ -50,12 +42,7 @@ const findAll = async ({ customerId, orderId, status, search, scopeUser } = {}) 
   if (search) {
     const term = `%${search}%`;
     conditions.push(
-      or(
-        ilike(customers.firstName, term),
-        ilike(customers.lastName, term),
-        ilike(customers.phoneNumber, term),
-        ilike(expectedPayments.reference, term)
-      )
+      or(ilike(customers.name, term), ilike(customers.phone, term), ilike(expectedPayments.reference, term))
     );
   }
   const whereClause = conditions.length ? and(...conditions) : undefined;

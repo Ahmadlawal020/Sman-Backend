@@ -1,28 +1,20 @@
+const { eq } = require("drizzle-orm");
+const { v4: uuidv4 } = require("uuid");
 const { db } = require("../config/db");
-const { administrationOfflinesales, administrationOfflinesalesproduct } = require("../db/schema");
+const { offlineSales, offlineSaleItems } = require("../db/schema");
 const { offlineSaleRepo, productRepo } = require("../repositories");
 const { emitEvent } = require("./events");
 
-/**
- * administration_offlinesales (live, canonical) is much sparser than the old
- * clean-room offline_sales table this replaces — see
- * repositories/offlineSale.repository.js's header comment for the full
- * list. No saleNumber, createdBy/createdByName pair (just a plain `staff`
- * name string), amountPaid, paymentStatus/Bank/Reference, approvedBy/
- * approvedAt/rejectionReason, or reconciled/reconciledBy/reconciledAt
- * column exists at all — only id/staff/status/totalPrice/notes/stateId/
- * createdAt/updatedAt. Per-line unitPrice/lineTotal are dropped for the
- * same reason (administration_offlinesalesproduct tracks quantity only);
- * the header's totalPrice is the only money figure that survives.
- */
+// An offline sale and its line items are one fact: they are written in a
+// single transaction, and the header total is computed from the lines inside
+// that transaction — the two can never disagree. Unit prices are snapshots
+// keyed in by staff (offline sales happen where the price list isn't live);
+// approval is the control that reviews them.
 
 const money = (value) => Number(value || 0);
 const asDecimal = (value) => money(value).toFixed(2);
 
-/** Customer/staff-facing reference — computed like order/ticket references, since there's no sale_number column to store one in. */
-const saleReference = (id) => `OFS-${id}`;
-
-const createSale = async ({ items, notes, stateId }, { actor }) => {
+const createSale = async ({ items, ...header }, { actor }) => {
   if (!Array.isArray(items) || items.length === 0) {
     return { success: false, message: "An offline sale needs at least one line item" };
   }
@@ -35,69 +27,96 @@ const createSale = async ({ items, notes, stateId }, { actor }) => {
     }
   }
 
+  const saleNumber = `OFS-${uuidv4().replace(/-/g, "").slice(0, 10).toUpperCase()}`;
+
   const sale = await db.transaction(async (tx) => {
     let total = 0;
     const lines = items.map((item) => {
-      total += money(item.unitPrice) * item.quantity;
-      return { productId: item.productId, quantity: item.quantity };
+      const lineTotal = money(item.unitPrice) * item.quantity;
+      total += lineTotal;
+      return {
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: asDecimal(item.unitPrice),
+        lineTotal: asDecimal(lineTotal),
+      };
     });
 
-    const now = new Date().toISOString();
     const [created] = await tx
-      .insert(administrationOfflinesales)
+      .insert(offlineSales)
       .values({
-        staff: actor?.name || "",
+        ...header,
+        saleNumber,
+        totalAmount: asDecimal(total),
         status: "pending",
-        totalPrice: asDecimal(total),
-        notes: notes || null,
-        stateId: stateId ?? null,
-        createdAt: now,
-        updatedAt: now,
+        createdBy: actor?.id || null,
+        createdByName: actor?.name || "",
       })
       .returning();
 
     await tx
-      .insert(administrationOfflinesalesproduct)
-      .values(lines.map((line) => ({ ...line, offlineId: created.id })));
+      .insert(offlineSaleItems)
+      .values(lines.map((line) => ({ ...line, offlineSaleId: created.id })));
 
     return created;
   });
-
-  const saleNumber = saleReference(sale.id);
 
   emitEvent("offline_sale.created", {
     actor,
     entityType: "offline_sale",
     entityId: sale.id,
     saleNumber,
-    totalAmount: sale.totalPrice,
+    totalAmount: sale.totalAmount,
   });
 
   return { success: true, sale: await offlineSaleRepo.findByIdWithItems(sale.id) };
 };
 
-/**
- * FLAGGED — no live column tracks a partial-payment amount, a payment
- * status, or the paying bank/reference at all (see this file's header
- * comment). Writing them would silently vanish (drizzle drops unknown keys
- * from a .set()), leaving the caller believing a payment was recorded when
- * nothing durable happened — worse than refusing outright. Needs a human
- * decision (most likely a small sman-owned extras table, the same pattern
- * used for depot/lpgStation/dailyReport/truck — see db/schema/sman/) before
- * this can work again; not invented here.
- */
-const recordPayment = async (id, { amount }) => {
+const recordPayment = async (id, { amount, bank = "", reference = "" }, { actor }) => {
   const value = money(amount);
   if (value <= 0) return { success: false, message: "Payment amount must be positive" };
 
-  const sale = await offlineSaleRepo.findById(id);
-  if (!sale) return { success: false, notFound: true, message: "Offline sale not found" };
+  // Locked read-modify-write: two clerks recording payments at once must not
+  // lose each other's amounts.
+  const result = await db.transaction(async (tx) => {
+    const [sale] = await tx
+      .select()
+      .from(offlineSales)
+      .where(eq(offlineSales.id, id))
+      .for("update")
+      .limit(1);
+    if (!sale) return { success: false, notFound: true, message: "Offline sale not found" };
+    if (sale.status === "rejected") {
+      return { success: false, message: "Cannot record payment on a rejected sale" };
+    }
 
-  return {
-    success: false,
-    message:
-      "Payment recording against offline sales isn't available yet on this schema — administration_offlinesales has no amount-paid/payment-status columns to persist it to.",
-  };
+    const amountPaid = money(sale.amountPaid) + value;
+    const [updated] = await tx
+      .update(offlineSales)
+      .set({
+        amountPaid: asDecimal(amountPaid),
+        paymentStatus: amountPaid >= money(sale.totalAmount) ? "Paid" : "Unpaid",
+        paymentBank: bank || sale.paymentBank,
+        paymentReference: reference || sale.paymentReference,
+        updatedAt: new Date(),
+      })
+      .where(eq(offlineSales.id, id))
+      .returning();
+
+    return { success: true, sale: updated };
+  });
+
+  if (result.success) {
+    emitEvent("offline_sale.payment_recorded", {
+      actor,
+      entityType: "offline_sale",
+      entityId: id,
+      amount: asDecimal(value),
+      bank,
+    });
+  }
+
+  return result;
 };
 
 const reviewSale = async (id, { approve, reason = "" }, { actor }) => {
@@ -107,12 +126,6 @@ const reviewSale = async (id, { approve, reason = "" }, { actor }) => {
     return { success: false, message: `Sale is already ${sale.status}` };
   }
 
-  // approvedBy/approvedAt/rejectionReason have no live column either — only
-  // `status` actually persists here (offlineSaleRepo.update's raw .set()
-  // silently drops the rest, same as findAll's dropped `reconciled` filter,
-  // see repositories/offlineSale.repository.js's header comment). Passed
-  // through anyway so a future extras table (see recordPayment's note above)
-  // can pick them up without a second pass through every call site.
   const status = approve ? "approved" : "rejected";
   const updated = await offlineSaleRepo.update(id, {
     status,
@@ -125,20 +138,19 @@ const reviewSale = async (id, { approve, reason = "" }, { actor }) => {
     actor,
     entityType: "offline_sale",
     entityId: id,
-    saleNumber: saleReference(sale.id),
+    saleNumber: sale.saleNumber,
     reason,
-    createdBy: null,
-    totalAmount: sale.totalPrice,
+    // For the notification consumer: who keyed the sale in, and for how much.
+    createdBy: sale.createdBy || null,
+    totalAmount: sale.totalAmount,
   });
 
   return { success: true, sale: updated };
 };
 
 /**
- * FLAGGED — same gap as recordPayment: no reconciled/reconciledBy/
- * reconciledAt or paymentStatus column exists live, so there is nothing
- * true to check ("fully paid" can never be determined) or persist. Refusing
- * outright rather than silently no-opping while reporting success.
+ * Reconciliation: an approved, fully-paid sale is marked as matched against
+ * the bank/deposit records. One-way.
  */
 const reconcileSale = async (id, { actor }) => {
   const sale = await offlineSaleRepo.findById(id);
@@ -146,12 +158,27 @@ const reconcileSale = async (id, { actor }) => {
   if (sale.status !== "approved") {
     return { success: false, message: "Only approved sales can be reconciled" };
   }
+  if (sale.paymentStatus !== "Paid") {
+    return { success: false, message: "Sale is not fully paid — record the payment first" };
+  }
+  if (sale.reconciled) {
+    return { success: false, message: "Sale is already reconciled" };
+  }
 
-  return {
-    success: false,
-    message:
-      "Reconciliation isn't available yet on this schema — administration_offlinesales has no payment-status or reconciled columns to check or persist it to.",
-  };
+  const updated = await offlineSaleRepo.update(id, {
+    reconciled: true,
+    reconciledBy: actor?.id || null,
+    reconciledAt: new Date(),
+  });
+
+  emitEvent("offline_sale.reconciled", {
+    actor,
+    entityType: "offline_sale",
+    entityId: id,
+    saleNumber: sale.saleNumber,
+  });
+
+  return { success: true, sale: updated };
 };
 
 module.exports = { createSale, recordPayment, reviewSale, reconcileSale };

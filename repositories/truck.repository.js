@@ -1,81 +1,50 @@
-const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { consumerFleettruck, truckExtras, drivers, driverTruckHistory } = require("../db/schema");
-
-/**
- * consumer_fleettruck (the live row, canonical) covers plate/driver-name/
- * driver-phone/capacity/status/mileage/insurance/road-worthiness/service-date
- * — everything else (vin, year, a separate truck type, live fuel level,
- * registration expiry, mileage-based next-service) lives in sman.truck_extras,
- * 1:1 keyed to the live truck. See db/schema/sman/truckExtras.js.
- *
- * The driver's name/phone are denormalised directly onto the truck row in
- * the live schema (no driver_id FK at all) — sman.drivers is a separate
- * roster (license, rating, safety score) that references a truck back via
- * `assignedTruckId`, not the other way around, so "the assigned driver's
- * roster record" is a reverse lookup, not a join off this table.
- */
-const withExtras = (row) =>
-  row && {
-    ...row.consumer_fleettruck,
-    ...row.truck_extras,
-    id: row.consumer_fleettruck.id,
-  };
+const { fleetTrucks: trucks, drivers, driverTruckHistory } = require("../db/schema");
 
 const findById = async (id) => {
-  const [row] = await db
-    .select()
-    .from(consumerFleettruck)
-    .leftJoin(truckExtras, eq(consumerFleettruck.id, truckExtras.truckId))
-    .where(eq(consumerFleettruck.id, id))
-    .limit(1);
-  return withExtras(row);
+  const [row] = await db.select().from(trucks).where(eq(trucks.id, id)).limit(1);
+  return row || null;
 };
 
 const findByIdWithDriver = async (id) => {
-  const truck = await findById(id);
-  if (!truck) return null;
-
-  const [assignedDriver] = await db
+  const [row] = await db
     .select({
-      driverId: drivers.id,
+      id: trucks.id,
+      plateNumber: trucks.plateNumber,
+      model: trucks.model,
+      capacity: trucks.maxCapacity,
+      status: trucks.truckStatus,
+      currentDriverId: trucks.driverId,
+      fuelLevel: trucks.fuelLevel,
+      mileage: trucks.mileage,
+      vin: trucks.vin,
+      year: trucks.year,
+      make: trucks.truckMake,
+      type: trucks.truckType,
+      insuranceExpiry: trucks.insuranceExpiry,
+      registrationExpiry: trucks.registrationExpiry,
+      nextServiceMileage: trucks.nextServiceMileage,
+      createdAt: trucks.createdAt,
+      updatedAt: trucks.updatedAt,
+      driverName: drivers.name,
+      driverPhone: drivers.phone,
       driverLicense: drivers.licenseNumber,
     })
-    .from(drivers)
-    .where(eq(drivers.assignedTruckId, id))
+    .from(trucks)
+    .leftJoin(drivers, eq(trucks.driverId, drivers.id))
+    .where(eq(trucks.id, id))
     .limit(1);
-
-  return {
-    id: truck.id,
-    plateNumber: truck.plateNumber,
-    capacity: truck.maxCapacity,
-    status: truck.truckStatus,
-    currentDriverId: assignedDriver?.driverId ?? null,
-    driverLicense: assignedDriver?.driverLicense ?? "",
-    mileage: truck.mileage,
-    vin: truck.vin,
-    year: truck.year,
-    make: truck.truckMake,
-    type: truck.truckType,
-    fuelLevel: truck.fuelLevel,
-    insuranceExpiry: truck.insuranceExpiry,
-    registrationExpiry: truck.registrationExpiry,
-    nextServiceMileage: truck.nextServiceMileage,
-    createdAt: truck.createdAt,
-    updatedAt: truck.updatedAt,
-    driverName: truck.driverName,
-    driverPhone: truck.driverPhone,
-  };
+  return row || null;
 };
 
 const findByPlateNumber = async (plateNumber) => {
   const [row] = await db
     .select()
-    .from(consumerFleettruck)
-    .leftJoin(truckExtras, eq(consumerFleettruck.id, truckExtras.truckId))
-    .where(eq(consumerFleettruck.plateNumber, plateNumber.toUpperCase()))
+    .from(trucks)
+    .where(eq(trucks.plateNumber, plateNumber.toUpperCase()))
     .limit(1);
-  return withExtras(row);
+  return row || null;
 };
 
 const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
@@ -87,29 +56,57 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
 
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(or(ilike(consumerFleettruck.plateNumber, pattern), ilike(consumerFleettruck.truckMake, pattern)));
+    conditions.push(
+      or(
+        ilike(trucks.plateNumber, pattern),
+        ilike(trucks.model, pattern)
+      )
+    );
   }
 
   if (status && status !== "all") {
-    conditions.push(eq(consumerFleettruck.truckStatus, status));
+    conditions.push(eq(trucks.truckStatus, status));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db
-      .select()
-      .from(consumerFleettruck)
-      .leftJoin(truckExtras, eq(consumerFleettruck.id, truckExtras.truckId))
+      .select({
+        id: trucks.id,
+        plateNumber: trucks.plateNumber,
+        model: trucks.model,
+        capacity: trucks.maxCapacity,
+        status: trucks.truckStatus,
+        currentDriverId: trucks.driverId,
+        fuelLevel: trucks.fuelLevel,
+        mileage: trucks.mileage,
+        vin: trucks.vin,
+        year: trucks.year,
+        make: trucks.truckMake,
+        type: trucks.truckType,
+        insuranceExpiry: trucks.insuranceExpiry,
+        registrationExpiry: trucks.registrationExpiry,
+        nextServiceMileage: trucks.nextServiceMileage,
+        createdAt: trucks.createdAt,
+        updatedAt: trucks.updatedAt,
+        driverName: drivers.name,
+        driverPhone: drivers.phone,
+      })
+      .from(trucks)
+      .leftJoin(drivers, eq(trucks.driverId, drivers.id))
       .where(whereClause)
-      .orderBy(desc(consumerFleettruck.createdAt))
+      .orderBy(desc(trucks.createdAt))
       .limit(limitNum)
       .offset(offset),
-    db.select({ total: count() }).from(consumerFleettruck).where(whereClause),
+    db
+      .select({ total: count() })
+      .from(trucks)
+      .where(whereClause),
   ]);
 
   return {
-    trucks: rows.map(withExtras),
+    trucks: rows,
     pagination: {
       total,
       page: pageNum,
@@ -118,50 +115,25 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   };
 };
 
-const create = async (data, tx = db) => {
-  const { vin, year, type, fuelLevel, registrationExpiry, nextServiceMileage, ...liveData } = data;
-  const [truckRow] = await tx.insert(consumerFleettruck).values(liveData).returning();
-  const [extrasRow] = await tx
-    .insert(truckExtras)
-    .values({ truckId: truckRow.id, vin, year, truckType: type, fuelLevel, registrationExpiry, nextServiceMileage })
+const create = async (data) => {
+  const [row] = await db.insert(trucks).values(data).returning();
+  return row;
+};
+
+const update = async (id, data) => {
+  const [row] = await db
+    .update(trucks)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(trucks.id, id))
     .returning();
-  return { ...truckRow, ...extrasRow, id: truckRow.id };
-};
-
-const update = async (id, data, tx = db) => {
-  const { vin, year, type, fuelLevel, registrationExpiry, nextServiceMileage, ...liveData } = data;
-  const extrasData = { vin, year, truckType: type, fuelLevel, registrationExpiry, nextServiceMileage };
-  for (const key of Object.keys(extrasData)) {
-    if (extrasData[key] === undefined) delete extrasData[key];
-  }
-
-  if (Object.keys(liveData).length > 0) {
-    await tx.update(consumerFleettruck).set(liveData).where(eq(consumerFleettruck.id, id));
-  }
-  if (Object.keys(extrasData).length > 0) {
-    // upsert: a truck predating truck_extras has no row there yet — a plain
-    // UPDATE would silently affect 0 rows.
-    await tx
-      .insert(truckExtras)
-      .values({ truckId: id, ...extrasData })
-      .onConflictDoUpdate({
-        target: truckExtras.truckId,
-        set: { ...extrasData, updatedAt: new Date() },
-      });
-  }
-  return findById(id);
-};
-
-const deleteById = async (id) => {
-  const [row] = await db.delete(consumerFleettruck).where(eq(consumerFleettruck.id, id)).returning();
   return row || null;
 };
 
-/**
- * Every driver ever assigned to this truck, most recent first — sourced from
- * sman.driver_truck_history (Sman-Backend-owned; the live schema keeps no
- * assignment history, only the truck's current driver_name/driver_phone).
- */
+const deleteById = async (id) => {
+  const [row] = await db.delete(trucks).where(eq(trucks.id, id)).returning();
+  return row || null;
+};
+
 const getDriverHistory = async (truckId) => {
   return db
     .select({
@@ -177,7 +149,10 @@ const getDriverHistory = async (truckId) => {
 };
 
 const addDriverHistory = async (truckId, driverId) => {
-  const [row] = await db.insert(driverTruckHistory).values({ truckId, driverId }).returning();
+  const [row] = await db
+    .insert(driverTruckHistory)
+    .values({ truckId, driverId })
+    .returning();
   return row;
 };
 

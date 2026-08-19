@@ -1,29 +1,27 @@
 const { eq, and, or, ilike, desc, asc, count, lte, gte, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { consumerFleettruck, consumerFleetledgerentry } = require("../db/schema");
-
-/**
- * consumer_fleettruck / consumer_fleetledgerentry map closely to the old
- * fleet_trucks / fleet_ledger_entries — see docs/LIVE_DB_CUTOVER.md §3
- * (high confidence). Column renames: ledger `entryDate` -> `date`,
- * `notes` -> `description`.
- */
+const { fleetTrucks, fleetLedgerEntries } = require("../db/schema");
 
 const findById = async (id) => {
-  const [row] = await db.select().from(consumerFleettruck).where(eq(consumerFleettruck.id, id)).limit(1);
+  const [row] = await db.select().from(fleetTrucks).where(eq(fleetTrucks.id, id)).limit(1);
   return row || null;
 };
 
 const findByPlate = async (plateNumber) => {
-  const [row] = await db.select().from(consumerFleettruck).where(eq(consumerFleettruck.plateNumber, plateNumber)).limit(1);
+  const [row] = await db
+    .select()
+    .from(fleetTrucks)
+    .where(eq(fleetTrucks.plateNumber, plateNumber))
+    .limit(1);
   return row || null;
 };
 
+// Whitelist, not passthrough: sort input never reaches SQL unvalidated.
 const SORTABLE = {
-  plateNumber: consumerFleettruck.plateNumber,
-  createdAt: consumerFleettruck.createdAt,
-  mileage: consumerFleettruck.mileage,
-  nextServiceDate: consumerFleettruck.nextServiceDate,
+  plateNumber: fleetTrucks.plateNumber,
+  createdAt: fleetTrucks.createdAt,
+  mileage: fleetTrucks.mileage,
+  nextServiceDate: fleetTrucks.nextServiceDate,
 };
 
 const findAll = async ({ search, isActive, sort, order, page = 1, limit = 50 } = {}) => {
@@ -34,120 +32,142 @@ const findAll = async ({ search, isActive, sort, order, page = 1, limit = 50 } =
   const conditions = [];
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(or(ilike(consumerFleettruck.plateNumber, pattern), ilike(consumerFleettruck.driverName, pattern), ilike(consumerFleettruck.truckMake, pattern)));
+    conditions.push(
+      or(
+        ilike(fleetTrucks.plateNumber, pattern),
+        ilike(fleetTrucks.driverName, pattern),
+        ilike(fleetTrucks.truckMake, pattern)
+      )
+    );
   }
-  if (isActive !== undefined) conditions.push(eq(consumerFleettruck.isActive, isActive));
+  if (isActive !== undefined) conditions.push(eq(fleetTrucks.isActive, isActive));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-  const sortColumn = SORTABLE[sort] || consumerFleettruck.plateNumber;
+  const sortColumn = SORTABLE[sort] || fleetTrucks.plateNumber;
   const sortDir = order === "desc" ? desc : asc;
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(consumerFleettruck)
+      .from(fleetTrucks)
       .where(whereClause)
-      .orderBy(sortDir(sortColumn), asc(consumerFleettruck.id))
+      .orderBy(sortDir(sortColumn), asc(fleetTrucks.id))
       .limit(limitNum)
       .offset(offset),
-    db.select({ total: count() }).from(consumerFleettruck).where(whereClause),
+    db.select({ total: count() }).from(fleetTrucks).where(whereClause),
   ]);
 
-  return { trucks: rows, pagination: { total: Number(total), page: pageNum, pages: Math.ceil(Number(total) / limitNum) } };
+  return {
+    trucks: rows,
+    pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
+  };
 };
 
 const create = async (data) => {
-  const [row] = await db.insert(consumerFleettruck).values(data).returning();
+  const [row] = await db.insert(fleetTrucks).values(data).returning();
   return row;
 };
 
 const update = async (id, data) => {
   const [row] = await db
-    .update(consumerFleettruck)
-    .set({ ...data, updatedAt: new Date().toISOString() })
-    .where(eq(consumerFleettruck.id, id))
+    .update(fleetTrucks)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(fleetTrucks.id, id))
     .returning();
   return row || null;
 };
 
+// Compliance watchlist: anything expiring on or before the given date.
 const findExpiringCompliance = async (byDate) => {
   return db
     .select()
-    .from(consumerFleettruck)
+    .from(fleetTrucks)
     .where(
       and(
-        eq(consumerFleettruck.isActive, true),
-        or(lte(consumerFleettruck.insuranceExpiry, byDate), lte(consumerFleettruck.roadWorthinessExpiry, byDate), lte(consumerFleettruck.nextServiceDate, byDate))
+        eq(fleetTrucks.isActive, true),
+        or(
+          lte(fleetTrucks.insuranceExpiry, byDate),
+          lte(fleetTrucks.roadWorthinessExpiry, byDate),
+          lte(fleetTrucks.nextServiceDate, byDate)
+        )
       )
     )
-    .orderBy(asc(consumerFleettruck.plateNumber));
+    .orderBy(asc(fleetTrucks.plateNumber));
 };
 
-// ── Fleet ledger (append-only) ────────────────────────────────────────────────
+// ── Fleet ledger (append-only: no update, no delete) ─────────────────────────
 
 const createLedgerEntry = async (data) => {
-  const { entryDate, notes, ...rest } = data;
-  const [row] = await db
-    .insert(consumerFleetledgerentry)
-    .values({ ...rest, date: entryDate ?? data.date, description: notes ?? data.description })
-    .returning();
+  const [row] = await db.insert(fleetLedgerEntries).values(data).returning();
   return row;
 };
 
-const findLedgerEntries = async ({ truckId, entryType, category, dateFrom, dateTo, page = 1, limit = 50 } = {}) => {
+const findLedgerEntries = async ({
+  truckId,
+  entryType,
+  category,
+  dateFrom,
+  dateTo,
+  page = 1,
+  limit = 50,
+} = {}) => {
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-  if (truckId) conditions.push(eq(consumerFleetledgerentry.truckId, truckId));
-  if (entryType) conditions.push(eq(consumerFleetledgerentry.entryType, entryType));
-  if (category) conditions.push(ilike(consumerFleetledgerentry.category, `%${category}%`));
-  if (dateFrom) conditions.push(gte(consumerFleetledgerentry.date, dateFrom));
-  if (dateTo) conditions.push(lte(consumerFleetledgerentry.date, dateTo));
+  if (truckId) conditions.push(eq(fleetLedgerEntries.truckId, truckId));
+  if (entryType) conditions.push(eq(fleetLedgerEntries.entryType, entryType));
+  if (category) conditions.push(ilike(fleetLedgerEntries.category, `%${category}%`));
+  if (dateFrom) conditions.push(gte(fleetLedgerEntries.entryDate, dateFrom));
+  if (dateTo) conditions.push(lte(fleetLedgerEntries.entryDate, dateTo));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(consumerFleetledgerentry)
+      .from(fleetLedgerEntries)
       .where(whereClause)
-      .orderBy(desc(consumerFleetledgerentry.date), desc(consumerFleetledgerentry.id))
+      .orderBy(desc(fleetLedgerEntries.entryDate), desc(fleetLedgerEntries.id))
       .limit(limitNum)
       .offset(offset),
-    db.select({ total: count() }).from(consumerFleetledgerentry).where(whereClause),
+    db.select({ total: count() }).from(fleetLedgerEntries).where(whereClause),
   ]);
 
-  return { entries: rows, pagination: { total: Number(total), page: pageNum, pages: Math.ceil(Number(total) / limitNum) } };
+  return {
+    entries: rows,
+    pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) },
+  };
 };
 
+// Totals for a truck (or the whole fleet when truckId is omitted).
 const summarizeLedger = async ({ truckId, dateFrom, dateTo } = {}) => {
   const conditions = [];
-  if (truckId) conditions.push(eq(consumerFleetledgerentry.truckId, truckId));
-  if (dateFrom) conditions.push(gte(consumerFleetledgerentry.date, dateFrom));
-  if (dateTo) conditions.push(lte(consumerFleetledgerentry.date, dateTo));
+  if (truckId) conditions.push(eq(fleetLedgerEntries.truckId, truckId));
+  if (dateFrom) conditions.push(gte(fleetLedgerEntries.entryDate, dateFrom));
+  if (dateTo) conditions.push(lte(fleetLedgerEntries.entryDate, dateTo));
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [totals] = await db
     .select({
-      expenses: sql`COALESCE(SUM(CASE WHEN ${consumerFleetledgerentry.entryType} = 'expense' THEN ${consumerFleetledgerentry.amount} ELSE 0 END), 0)`,
-      income: sql`COALESCE(SUM(CASE WHEN ${consumerFleetledgerentry.entryType} = 'income' THEN ${consumerFleetledgerentry.amount} ELSE 0 END), 0)`,
+      expenses: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'expense' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
+      income: sql`COALESCE(SUM(CASE WHEN ${fleetLedgerEntries.entryType} = 'income' THEN ${fleetLedgerEntries.amount} ELSE 0 END), 0)`,
       entryCount: sql`count(*)::int`,
     })
-    .from(consumerFleetledgerentry)
+    .from(fleetLedgerEntries)
     .where(whereClause);
 
   const byCategory = await db
     .select({
-      category: consumerFleetledgerentry.category,
-      entryType: consumerFleetledgerentry.entryType,
-      total: sql`COALESCE(SUM(${consumerFleetledgerentry.amount}), 0)`,
+      category: fleetLedgerEntries.category,
+      entryType: fleetLedgerEntries.entryType,
+      total: sql`COALESCE(SUM(${fleetLedgerEntries.amount}), 0)`,
       entryCount: sql`count(*)::int`,
     })
-    .from(consumerFleetledgerentry)
+    .from(fleetLedgerEntries)
     .where(whereClause)
-    .groupBy(consumerFleetledgerentry.category, consumerFleetledgerentry.entryType);
+    .groupBy(fleetLedgerEntries.category, fleetLedgerEntries.entryType);
 
   return { totals, byCategory };
 };

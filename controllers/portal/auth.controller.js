@@ -189,16 +189,10 @@ const handleVerifyOtp = asyncHandler(async (req, res) => {
   //
   // Only Pending is promoted. `Inactive` is a staff decision and is refused
   // above; passing an OTP must never undo a deactivation.
-  //
-  // consumer_customer (Django's real table) has no phone_verified_at,
-  // last_login_at, or status column at all — see customer.repository.js's
-  // header comment. Calling update() with those keys produced an empty SQL
-  // SET clause, which Postgres rejected outright (500 on every OTP verify).
-  // Nothing here is currently backed by a live column, so there's nothing to
-  // persist; `customer` (already loaded above) stands in for what `updated`
-  // used to be. Revisit once phone-verification/status/last-login tracking
-  // has a real home on the live schema.
-  const updated = customer;
+  const patch = { phoneVerifiedAt: new Date(), lastLoginAt: new Date() };
+  if (customer.status === "Pending") patch.status = "Active";
+
+  const updated = await customerRepo.update(customer.id, patch);
 
   const { accessToken, refreshToken } = await sessionService.issue(
     REALM,

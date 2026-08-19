@@ -57,12 +57,7 @@ const handleLogin = asyncHandler(async (req, res) => {
     foundAdmin,
     sessionService.requestContext(req)
   );
-  // administration_user's real column is `last_login` (Django's own field,
-  // timestamp mode:'string'), not `lastLoginAt` — that key doesn't exist on
-  // the live schema, so staffRepo.update's .set() silently dropped it,
-  // producing an empty SET clause that Postgres rejected outright (500 on
-  // every login).
-  await staffRepo.update(foundAdmin.id, { lastLogin: new Date().toISOString() });
+  await staffRepo.update(foundAdmin.id, { lastLoginAt: new Date() });
 
   const { refreshToken: bodyToken, csrfToken } = cookieService.applyIssuedToken(
     req,

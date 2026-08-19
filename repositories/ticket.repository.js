@@ -1,64 +1,108 @@
-const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
+const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { consumerTruckticket, consumerOrder, consumerOrderproduct, consumerCustomer, consumerProduct, consumerPfi, administrationUser } = require("../db/schema");
+const { tickets, orders, customers, depots, products, staff, pfis } = require("../db/schema");
 const { generateOrderReference } = require("../utils/helpers");
-
-/**
- * consumer_truckticket is Django's real ticket table — see
- * soroman_backend-2/consumer/models.py:1796 ("standalone truck ticket
- * created after an order is released... generated explicitly via the
- * generate-tickets endpoint"), the equivalent of the old `tickets` table.
- * Gaps from the old table, none silently stubbed:
- *
- *  - No qrCodeDataUrl column at all — QR generation has no live backing.
- *  - No redeemedAt/redeemedBy as such. The closest live concept is security
- *    gate entry (enteredAt/enteredById) — TICKET_STATUS_CHOICES is
- *    pending/generated/printed/loaded/completed, nothing called "redeemed".
- *    Mapped below as the nearest equivalent, not an exact synonym.
- *  - orderTruckId doesn't exist — a ticket links to the order directly
- *    (order_id), not to a specific consumer_truckallocation row.
- */
 
 const formatTicket = (row) => {
   if (!row) return null;
-  const { orderCompanyName, orderStatus, orderQuantity, orderTotalPrice, orderReleaseType, orderStateName, orderCreatedAt, customerName, customerLastName, customerEmail, customerPhone, customerCompanyName, productName, productUnit, pfiNumber, enteredByFullName, enteredByEmail, ...ticket } = row;
+  const {
+    orderNumber,
+    orderCompanyName,
+    orderStatus,
+    orderQuantity,
+    orderPrice,
+    orderTotalAmount,
+    orderDeliveryType,
+    orderState,
+    orderVirtualAccountNumber,
+    orderVirtualAccountBank,
+    orderVirtualAccountName,
+    orderCreatedAt,
+    customerName,
+    customerEmail,
+    customerPhone,
+    customerCompanyName,
+    depotName,
+    depotCode,
+    depotAddress,
+    productName,
+    productSku,
+    productUnit,
+    pfiNumber,
+    redeemerFirstName,
+    redeemerSurname,
+    redeemerEmail,
+    ...ticket
+  } = row;
 
+  const priceNum = orderPrice ? parseFloat(orderPrice) : 0;
+  const totalAmountNum = orderTotalAmount ? parseFloat(orderTotalAmount) : 0;
   const company = orderCompanyName || customerCompanyName || "";
-  const ref = ticket.orderId ? generateOrderReference(company, ticket.orderId) : null;
+  const ref = ticket.orderId ? generateOrderReference(company, ticket.orderId) : orderNumber;
 
   return {
     ...ticket,
-    order: ticket.orderId
+    order: ticket.orderId || orderNumber
       ? {
+          _id: ticket.orderId,
           id: ticket.orderId,
           orderNumber: ref,
           reference: ref,
           status: orderStatus,
-          quantity: orderQuantity,
-          totalPrice: orderTotalPrice,
-          releaseType: orderReleaseType,
-          state: orderStateName,
+          quantity: orderQuantity ? parseInt(orderQuantity, 10) : 0,
+          price: priceNum,
+          totalAmount: totalAmountNum,
+          deliveryType: orderDeliveryType,
+          state: orderState,
+          virtualAccountNumber: orderVirtualAccountNumber || "",
+          virtualAccountBank: orderVirtualAccountBank || "",
+          virtualAccountName: orderVirtualAccountName || "",
           pfiNumber: pfiNumber || "",
           createdAt: orderCreatedAt,
-          product: productName ? { name: productName, unit: productUnit || "Liters" } : null,
-          customer: customerName ? { name: `${customerName} ${customerLastName || ""}`.trim(), email: customerEmail || "", phone: customerPhone || "", companyName: customerCompanyName || "" } : null,
+          product: productName
+            ? {
+                name: productName,
+                sku: productSku || "",
+                unit: productUnit || "Liters",
+              }
+            : null,
+          customer: customerName
+            ? {
+                name: customerName,
+                email: customerEmail || "",
+                phone: customerPhone || "",
+                companyName: customerCompanyName || "",
+              }
+            : null,
+          depot: depotName
+            ? {
+                name: depotName,
+                code: depotCode || "",
+                address: depotAddress || "",
+              }
+            : null,
         }
       : null,
-    enteredBy: enteredByFullName ? { fullName: enteredByFullName, email: enteredByEmail || "" } : null,
+    redeemedBy: redeemerFirstName
+      ? {
+          firstName: redeemerFirstName,
+          surname: redeemerSurname,
+          email: redeemerEmail || "",
+        }
+      : null,
   };
 };
 
 const findById = async (id) => {
-  const [row] = await db.select().from(consumerTruckticket).where(eq(consumerTruckticket.id, id)).limit(1);
+  const [row] = await db.select().from(tickets).where(eq(tickets.id, id)).limit(1);
   return row || null;
 };
 
-/** No stored ticket_number live — TruckTicket has no equivalent code column, only order_id + truck_number. */
-const findByOrderAndTruckNumber = async (orderId, truckNumber, tx = db) => {
-  const [row] = await tx
+const findByNumber = async (ticketNumber) => {
+  const [row] = await db
     .select()
-    .from(consumerTruckticket)
-    .where(and(eq(consumerTruckticket.orderId, orderId), eq(consumerTruckticket.truckNumber, truckNumber)))
+    .from(tickets)
+    .where(eq(tickets.ticketNumber, ticketNumber))
     .limit(1);
   return row || null;
 };
@@ -66,55 +110,119 @@ const findByOrderAndTruckNumber = async (orderId, truckNumber, tx = db) => {
 const findByIdOrCode = async (idOrCode) => {
   if (!idOrCode) return null;
   const str = String(idOrCode);
-  if (/^\d+$/.test(str)) return findById(parseInt(str, 10));
+
+  // If integer ID
+  if (/^\d+$/.test(str)) {
+    const t = await findById(parseInt(str, 10));
+    if (t) return t;
+  }
+
+  // Try as ticket number
+  const tNum = await findByNumber(str);
+  if (tNum) return tNum;
+
+  // Try as UUID
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  if (isUuid) {
+    return findById(idOrCode);
+  }
+
   return null;
 };
 
-const FULL_TICKET_COLUMNS = {
-  ...consumerTruckticket,
-  orderCompanyName: consumerOrder.customerName,
-  orderStatus: consumerOrder.status,
-  orderQuantity: consumerOrder.quantity,
-  orderTotalPrice: consumerOrder.totalPrice,
-  orderReleaseType: consumerOrder.releaseType,
-  orderCreatedAt: consumerOrder.createdAt,
-  customerName: consumerCustomer.firstName,
-  customerLastName: consumerCustomer.lastName,
-  customerEmail: consumerCustomer.email,
-  customerPhone: consumerCustomer.phoneNumber,
-  customerCompanyName: consumerCustomer.companyName,
-  productName: consumerProduct.name,
-  productUnit: consumerProduct.unit,
-  pfiNumber: consumerPfi.pfiNumber,
-  enteredByFullName: administrationUser.fullName,
-  enteredByEmail: administrationUser.email,
-};
-
-const fullTicketQuery = () =>
-  db
-    .select(FULL_TICKET_COLUMNS)
-    .from(consumerTruckticket)
-    .leftJoin(consumerOrder, eq(consumerTruckticket.orderId, consumerOrder.id))
-    .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
-    .leftJoin(consumerOrderproduct, eq(consumerOrderproduct.orderId, consumerOrder.id))
-    .leftJoin(consumerProduct, eq(consumerOrderproduct.productId, consumerProduct.id))
-    .leftJoin(consumerPfi, eq(consumerOrder.pfiId, consumerPfi.id))
-    .leftJoin(administrationUser, eq(consumerTruckticket.enteredById, administrationUser.id));
-
 const findByIdFull = async (id) => {
-  const [row] = await fullTicketQuery().where(eq(consumerTruckticket.id, id)).limit(1);
+  const [row] = await db
+    .select({
+      id: tickets.id,
+      ticketNumber: tickets.ticketNumber,
+      orderId: tickets.orderId,
+      status: tickets.status,
+      qrCodeDataUrl: tickets.qrCodeDataUrl,
+      redeemedAt: tickets.redeemedAt,
+      redeemedBy: tickets.redeemedBy,
+      createdAt: tickets.createdAt,
+      updatedAt: tickets.updatedAt,
+      orderNumber: orders.orderNumber,
+      orderCompanyName: orders.companyName,
+      orderStatus: orders.status,
+      orderQuantity: orders.quantity,
+      orderPrice: orders.price,
+      orderTotalAmount: orders.totalAmount,
+      orderDeliveryType: orders.deliveryType,
+      orderState: orders.state,
+      orderVirtualAccountNumber: orders.virtualAccountNumber,
+      orderVirtualAccountBank: orders.virtualAccountBank,
+      orderVirtualAccountName: orders.virtualAccountName,
+      orderCreatedAt: orders.createdAt,
+      customerName: customers.name,
+      customerEmail: customers.email,
+      customerPhone: customers.phone,
+      customerCompanyName: customers.companyName,
+      depotName: depots.name,
+      depotCode: depots.code,
+      depotAddress: depots.address,
+      productName: products.name,
+      productSku: products.sku,
+      productUnit: products.unit,
+      pfiNumber: pfis.pfiNumber,
+      redeemerFirstName: staff.firstName,
+      redeemerSurname: staff.surname,
+      redeemerEmail: staff.email,
+    })
+    .from(tickets)
+    .leftJoin(orders, eq(tickets.orderId, orders.id))
+    .leftJoin(customers, eq(orders.customerId, customers.id))
+    .leftJoin(depots, eq(orders.depotId, depots.id))
+    .leftJoin(products, eq(orders.productId, products.id))
+    .leftJoin(pfis, eq(orders.pfiId, pfis.id))
+    .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
+    .where(eq(tickets.id, id))
+    .limit(1);
   return formatTicket(row);
 };
 
 const findByIdOrCodeFull = async (idOrCode) => {
   if (!idOrCode) return null;
   const str = String(idOrCode);
-  if (/^\d+$/.test(str)) return findByIdFull(parseInt(str, 10));
+
+  // If integer ID
+  if (/^\d+$/.test(str)) {
+    const full = await findByIdFull(parseInt(str, 10));
+    if (full) return full;
+  }
+
+  // Try as ticket number
+  const tNum = await findByNumber(str);
+  if (tNum) {
+    return findByIdFull(tNum.id);
+  }
+
+  // Try as UUID
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  if (isUuid) {
+    return findByIdFull(idOrCode);
+  }
+
   return null;
 };
 
 const findByOrder = async (orderId, tx = db) => {
-  return tx.select().from(consumerTruckticket).where(eq(consumerTruckticket.orderId, orderId));
+  const [row] = await tx
+    .select()
+    .from(tickets)
+    .where(eq(tickets.orderId, orderId))
+    .limit(1);
+  return row || null;
+};
+
+/** The one ticket belonging to a specific truck load, if it has been issued. */
+const findByOrderTruck = async (orderTruckId, tx = db) => {
+  const [row] = await tx
+    .select()
+    .from(tickets)
+    .where(eq(tickets.orderTruckId, orderTruckId))
+    .limit(1);
+  return row || null;
 };
 
 const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
@@ -123,52 +231,115 @@ const findAll = async ({ search, status, page = 1, limit = 50 } = {}) => {
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
-  if (status) conditions.push(eq(consumerTruckticket.ticketStatus, status));
+
+  if (status) {
+    conditions.push(eq(tickets.status, status));
+  }
+
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(or(ilike(consumerTruckticket.plateNumber, pattern), ilike(consumerTruckticket.driverName, pattern), ilike(consumerCustomer.firstName, pattern)));
+    conditions.push(
+      or(
+        ilike(tickets.ticketNumber, pattern),
+        ilike(orders.orderNumber, pattern),
+        ilike(customers.name, pattern)
+      )
+    );
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, [{ total }]] = await Promise.all([
-    fullTicketQuery().where(whereClause).orderBy(desc(consumerTruckticket.createdAt)).limit(limitNum).offset(offset),
+    db
+      .select({
+        id: tickets.id,
+        ticketNumber: tickets.ticketNumber,
+        orderId: tickets.orderId,
+        status: tickets.status,
+        qrCodeDataUrl: tickets.qrCodeDataUrl,
+        redeemedAt: tickets.redeemedAt,
+        redeemedBy: tickets.redeemedBy,
+        createdAt: tickets.createdAt,
+        updatedAt: tickets.updatedAt,
+        orderNumber: orders.orderNumber,
+        orderStatus: orders.status,
+        orderQuantity: orders.quantity,
+        orderPrice: orders.price,
+        orderTotalAmount: orders.totalAmount,
+        orderDeliveryType: orders.deliveryType,
+        orderState: orders.state,
+        orderVirtualAccountNumber: orders.virtualAccountNumber,
+        orderVirtualAccountBank: orders.virtualAccountBank,
+        orderVirtualAccountName: orders.virtualAccountName,
+        orderCreatedAt: orders.createdAt,
+        customerName: customers.name,
+        customerEmail: customers.email,
+        customerPhone: customers.phone,
+        customerCompanyName: customers.companyName,
+        depotName: depots.name,
+        depotCode: depots.code,
+        depotAddress: depots.address,
+        productName: products.name,
+        productSku: products.sku,
+        productUnit: products.unit,
+        pfiNumber: pfis.pfiNumber,
+        redeemerFirstName: staff.firstName,
+        redeemerSurname: staff.surname,
+        redeemerEmail: staff.email,
+      })
+      .from(tickets)
+      .leftJoin(orders, eq(tickets.orderId, orders.id))
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(depots, eq(orders.depotId, depots.id))
+      .leftJoin(products, eq(orders.productId, products.id))
+      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
+      .leftJoin(staff, eq(tickets.redeemedBy, staff.id))
+      .where(whereClause)
+      .orderBy(desc(tickets.createdAt))
+      .limit(limitNum)
+      .offset(offset),
     db
       .select({ total: count() })
-      .from(consumerTruckticket)
-      .leftJoin(consumerOrder, eq(consumerTruckticket.orderId, consumerOrder.id))
-      .leftJoin(consumerCustomer, eq(consumerOrder.userId, consumerCustomer.id))
+      .from(tickets)
+      .leftJoin(orders, eq(tickets.orderId, orders.id))
+      .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(whereClause),
   ]);
 
   return {
     tickets: rows.map(formatTicket),
-    pagination: { total: Number(total), page: pageNum, pages: Math.ceil(Number(total) / limitNum) },
+    pagination: {
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+    },
   };
 };
 
 const create = async (data, tx = db) => {
-  const [row] = await tx.insert(consumerTruckticket).values(data).returning();
+  const [row] = await tx.insert(tickets).values(data).returning();
   return row;
 };
 
 const update = async (id, data, tx = db) => {
   const [row] = await tx
-    .update(consumerTruckticket)
-    .set({ ...data, updatedAt: new Date().toISOString() })
-    .where(eq(consumerTruckticket.id, id))
+    .update(tickets)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(tickets.id, id))
     .returning();
   return row || null;
 };
 
 module.exports = {
   findById,
-  findByOrderAndTruckNumber,
+  findByNumber,
   findByIdOrCode,
   findByIdFull,
   findByIdOrCodeFull,
   findByOrder,
+  findByOrderTruck,
   findAll,
   create,
   update,
 };
+

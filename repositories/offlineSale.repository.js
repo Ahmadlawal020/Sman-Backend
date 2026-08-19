@@ -1,24 +1,12 @@
 const { eq, and, or, ilike, asc, desc, count, gte, lte } = require("drizzle-orm");
 const { db } = require("../config/db");
-const {
-  administrationOfflinesales: offlineSales,
-  administrationOfflinesalesproduct: offlineSaleItems,
-  consumerProduct: products,
-} = require("../db/schema");
-
-/**
- * administration_offlinesales (live, canonical) is much sparser than the old
- * clean-room offline_sales: no sale_number, customer_name, location, or
- * reconciled column, and `total_amount` -> `total_price`. Its line-item
- * table (administration_offlinesalesproduct) tracks quantity only — no
- * per-line unit_price/line_total, so findByIdWithItems can no longer report
- * those; the sale's own total_price is the only money figure left.
- */
+const { offlineSales, offlineSaleItems, products } = require("../db/schema");
 
 // Whitelist, not passthrough: sort input never reaches SQL unvalidated.
 const SORTABLE = {
   createdAt: offlineSales.createdAt,
-  totalPrice: offlineSales.totalPrice,
+  totalAmount: offlineSales.totalAmount,
+  saleNumber: offlineSales.saleNumber,
   status: offlineSales.status,
 };
 
@@ -35,12 +23,14 @@ const findByIdWithItems = async (id) => {
       id: offlineSaleItems.id,
       productId: offlineSaleItems.productId,
       productName: products.name,
-      productSku: products.abbreviation,
+      productSku: products.sku,
       quantity: offlineSaleItems.quantity,
+      unitPrice: offlineSaleItems.unitPrice,
+      lineTotal: offlineSaleItems.lineTotal,
     })
     .from(offlineSaleItems)
     .leftJoin(products, eq(offlineSaleItems.productId, products.id))
-    .where(eq(offlineSaleItems.offlineId, id));
+    .where(eq(offlineSaleItems.offlineSaleId, id));
   return { ...sale, items };
 };
 
@@ -51,14 +41,19 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, ord
 
   const conditions = [];
   if (status) conditions.push(eq(offlineSales.status, status));
-  // No reconciled column on the live table — silently ignored rather than
-  // erroring, same treatment as the other dropped clean-room-only fields.
+  if (reconciled !== undefined) conditions.push(eq(offlineSales.reconciled, reconciled));
   if (search) {
     const pattern = `%${search}%`;
-    conditions.push(or(ilike(offlineSales.staff, pattern), ilike(offlineSales.notes, pattern)));
+    conditions.push(
+      or(
+        ilike(offlineSales.saleNumber, pattern),
+        ilike(offlineSales.customerName, pattern),
+        ilike(offlineSales.location, pattern)
+      )
+    );
   }
-  if (dateFrom) conditions.push(gte(offlineSales.createdAt, new Date(dateFrom).toISOString()));
-  if (dateTo) conditions.push(lte(offlineSales.createdAt, new Date(dateTo).toISOString()));
+  if (dateFrom) conditions.push(gte(offlineSales.createdAt, new Date(dateFrom)));
+  if (dateTo) conditions.push(lte(offlineSales.createdAt, new Date(dateTo)));
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -83,11 +78,9 @@ const findAll = async ({ status, search, reconciled, dateFrom, dateTo, sort, ord
 };
 
 const update = async (id, data) => {
-  // updatedAt is timestamp(mode: 'string') — postgres.js rejects a raw Date
-  // for a string-mode column.
   const [row] = await db
     .update(offlineSales)
-    .set({ ...data, updatedAt: new Date().toISOString() })
+    .set({ ...data, updatedAt: new Date() })
     .where(eq(offlineSales.id, id))
     .returning();
   return row || null;

@@ -1,14 +1,14 @@
 const { eq, and, inArray, sql, count } = require("drizzle-orm");
 const { db } = require("../config/db");
 const {
-  consumerCustomer,
-  consumerOrder,
+  customers,
   customerIdentities,
   customerTrustedDevices,
   customerPasskeys,
   webauthnChallenges,
   customerOtps,
   walletHolds,
+  orders,
   lpgOrderRequests,
   dangoteOrderRequests,
   notifications,
@@ -16,10 +16,9 @@ const {
   notificationSettings,
   deviceTokens,
 } = require("../db/schema");
-const { sessionRepo, customerRepo } = require("../repositories");
+const { sessionRepo } = require("../repositories");
 const { principalWhere } = require("../utils/principal");
 const { generateOrderReference } = require("../utils/helpers");
-const { fromLiveStatus } = require("../utils/orderStatusMapping");
 
 /**
  * Apple App Store Guideline 5.1.1(v): apps that create accounts must let the
@@ -32,17 +31,6 @@ const { fromLiveStatus } = require("../utils/orderStatusMapping");
  * So we anonymize the customer tombstone (keep the id for ledger FKs), wipe
  * every auth/identity surface, and refuse when open money or open work would
  * leave ops without a reachable principal.
- *
- * LIVE SCHEMA NOTE: consumer_customer has no balance/status/updatedAt/
- * address/commission (bank/account name/number)/paystack customer id/
- * virtualAccount (number/bank/name)/dvaSubaccountCode/
- * phoneVerifiedAt columns at all (see repositories/customer.repository.js's
- * header comment) — only id/firstName/lastName/companyName/email/
- * phoneNumber/createdAt exist. There is therefore no live "Inactive" flag to
- * set; what actually makes the account unusable is wipeAuthSurfaces()
- * deleting every identity/session/passkey row below and revoking every
- * refresh token, not a status column. Balance is read from the sman wallet
- * ledger (customerRepo.getBalance), same as every other wallet check.
  */
 
 const OPEN_ORDER_STATUSES = ["Pending", "Paid", "Released", "Loading"];
@@ -80,11 +68,13 @@ function formatBlockerMessage(blockers) {
 async function collectBlockers(customerId, tx = db) {
   const [customer] = await tx
     .select({
-      id: consumerCustomer.id,
-      companyName: consumerCustomer.companyName,
+      id: customers.id,
+      balance: customers.balance,
+      status: customers.status,
+      companyName: customers.companyName,
     })
-    .from(consumerCustomer)
-    .where(eq(consumerCustomer.id, customerId))
+    .from(customers)
+    .where(eq(customers.id, customerId))
     .limit(1);
 
   if (!customer) {
@@ -93,27 +83,25 @@ async function collectBlockers(customerId, tx = db) {
 
   const blockers = [];
 
-  const balance = await customerRepo.getBalance(customerId, tx);
-  if (money(balance) > 0) {
+  if (money(customer.balance) > 0) {
     blockers.push(
-      `Your wallet still has ${formatNaira(balance)}. Spend it on an order (or ask the desk to clear it) before deleting.`
+      `Your wallet still has ${formatNaira(customer.balance)}. Spend it on an order (or ask the desk to clear it) before deleting.`
     );
   }
 
-  // "loaded" alone is ambiguous (covers both Loading and Completed — see
-  // utils/orderStatusMapping.js); pre-filtering to it plus pending/paid/
-  // released still excludes canceled/sold, and the exact Sman status is
-  // resolved per row below via fromLiveStatus before splitting unpaid vs
-  // in-progress.
   const [[{ holds }], openOrderRows, openLpgRows, openDangoteRows] = await Promise.all([
     tx
       .select({ holds: count() })
       .from(walletHolds)
       .where(and(eq(walletHolds.customerId, customerId), eq(walletHolds.status, "active"))),
     tx
-      .select({ id: consumerOrder.id, status: consumerOrder.status, releaseStatus: consumerOrder.releaseStatus })
-      .from(consumerOrder)
-      .where(and(eq(consumerOrder.userId, customerId), inArray(consumerOrder.status, ["pending", "paid", "released", "loaded"]))),
+      .select({
+        id: orders.id,
+        companyName: orders.companyName,
+        status: orders.status,
+      })
+      .from(orders)
+      .where(and(eq(orders.customerId, customerId), inArray(orders.status, OPEN_ORDER_STATUSES))),
     tx
       .select({
         id: lpgOrderRequests.id,
@@ -139,19 +127,15 @@ async function collectBlockers(customerId, tx = db) {
       ),
   ]);
 
-  const openOrders = openOrderRows
-    .map((row) => ({ id: row.id, smanStatus: fromLiveStatus(row) }))
-    .filter((row) => OPEN_ORDER_STATUSES.includes(row.smanStatus));
-
-  // consumer_order has no companyName column of its own (see
-  // order.repository.js's header comment) — the customer's own companyName
-  // is the only source for the reference, unlike the old per-order override.
-  const orderRef = (row) => generateOrderReference(customer.companyName || "", row.id);
+  // Same customer-facing ref the portal overwrites onto orderNumber (HA10831),
+  // never the staff ORD-… column — that is what the invoice/SMS/dashboard show.
+  const orderRef = (row) =>
+    generateOrderReference(row.companyName || customer.companyName || "", row.id);
   const requestRef = (row) =>
     generateOrderReference(row.companyName || customer.companyName || "", row.id);
 
-  const unpaid = openOrders.filter((o) => o.smanStatus === "Pending");
-  const inProgress = openOrders.filter((o) => o.smanStatus !== "Pending");
+  const unpaid = openOrderRows.filter((o) => o.status === "Pending");
+  const inProgress = openOrderRows.filter((o) => o.status !== "Pending");
 
   if (unpaid.length === 1) {
     blockers.push(`Cancel unpaid order ${orderRef(unpaid[0])} before deleting.`);
@@ -164,7 +148,7 @@ async function collectBlockers(customerId, tx = db) {
   if (inProgress.length === 1) {
     const o = inProgress[0];
     blockers.push(
-      `Order ${orderRef(o)} is still ${o.smanStatus.toLowerCase()}. It must complete at the depot before you can delete — paid orders can't be cancelled.`
+      `Order ${orderRef(o)} is still ${o.status.toLowerCase()}. It must complete at the depot before you can delete — paid orders can't be cancelled.`
     );
   } else if (inProgress.length > 1) {
     blockers.push(
@@ -176,7 +160,7 @@ async function collectBlockers(customerId, tx = db) {
 
   // Holds normally ride with Paid/in-progress orders (already explained above).
   // Only call them out alone when something is stranded without an open order.
-  if (Number(holds) > 0 && openOrders.length === 0) {
+  if (Number(holds) > 0 && openOrderRows.length === 0) {
     blockers.push(
       "An order still has funds on hold. Contact the desk if this persists after all orders are finished."
     );
@@ -207,21 +191,25 @@ async function collectBlockers(customerId, tx = db) {
   return { customer, blockers };
 }
 
-/**
- * Scrub every personal field consumer_customer actually has (id/firstName/
- * lastName/companyName/email/phoneNumber/createdAt — see this file's header
- * comment). No status/updatedAt/address/commission/paystack/virtualAccount/
- * dvaSubaccountCode columns exist to clear; there's no unique constraint on
- * phone_number live either, so the deleted_<id> phone is purely a privacy
- * scrub now, not freeing up a uniqueness slot.
- */
+/** Scrub every personal field; free the unique phone for a future registration. */
 function anonymizedFields(customerId) {
   return {
-    firstName: "Deleted",
-    lastName: "User",
+    name: "Deleted User",
     email: "",
-    phoneNumber: `deleted_${customerId}`,
+    phone: `deleted_${customerId}`,
     companyName: "",
+    address: "",
+    commissionBankName: "",
+    commissionAccountName: "",
+    commissionAccountNumber: "",
+    paystackCustomerId: "",
+    virtualAccountNumber: "",
+    virtualAccountBank: "",
+    virtualAccountName: "",
+    dvaSubaccountCode: "",
+    phoneVerifiedAt: null,
+    status: "Inactive",
+    updatedAt: new Date(),
   };
 }
 
@@ -279,19 +267,16 @@ async function deleteCustomerAccount(customerId) {
     await wipeAuthSurfaces(id, tx);
 
     const [updated] = await tx
-      .update(consumerCustomer)
+      .update(customers)
       .set(anonymizedFields(id))
-      .where(eq(consumerCustomer.id, id))
-      .returning({ id: consumerCustomer.id });
+      .where(eq(customers.id, id))
+      .returning({ id: customers.id, updatedAt: customers.updatedAt });
 
     if (!updated) {
       return { ok: false, status: 404, message: "Account not found" };
     }
 
-    // No updatedAt column on consumer_customer to read back (see this
-    // file's header comment) — "now" is the true moment this ran, not a
-    // stand-in for a missing timestamp column.
-    return { ok: true, deletedAt: new Date() };
+    return { ok: true, deletedAt: updated.updatedAt };
   });
 }
 

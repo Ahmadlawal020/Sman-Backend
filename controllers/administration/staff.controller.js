@@ -40,12 +40,9 @@ const createAdmin = asyncHandler(async (req, res) => {
 
   const { rawToken, hashedToken } = generateResetToken();
 
-  // administration_user.roles is Django's integer[] (Roles.IntegerChoices) —
-  // stored as-is, not translated to strings. misc.schema.js's createStaff
-  // schema already validated every element is `n in ROLE_MAP`, i.e. a real
-  // Django role integer. mapRolesToBackend produces Sman's permission-string
-  // vocabulary for in-memory checks only; it never belongs in this column.
-  const backendRoles = roles && roles.length > 0 ? roles.map(Number) : [1]; // 1 = admin
+  const backendRoles = roles && roles.length > 0
+    ? mapRolesToBackend(roles)
+    : ["admin"];
 
   const admin = await staffRepo.create({
     firstName: first_name.trim(),
@@ -100,10 +97,7 @@ const createAdmin = asyncHandler(async (req, res) => {
 const getAllAdmins = asyncHandler(async (req, res) => {
   const { staff, pagination } = await staffRepo.findAll({ page: 1, limit: 1000 });
 
-  // plainPassword (administration_user.plain_password) is Django's own
-  // cleartext-password column — never send it out. It was missing from this
-  // exclusion list; every staff record was returning it as-is.
-  const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, plainPassword, ...rest }) => rest);
+  const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
   const staffIds = safeStaff.map((s) => s.id);
   const [scopeByStaff, overridesByStaff] = await Promise.all([
     staffScopeRepo.getScopeWithNamesForStaffIds(staffIds),
@@ -130,7 +124,7 @@ const getAdminById = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "User not found" });
   }
 
-  const { password, refreshToken, passwordResetToken, passwordResetExpires, plainPassword, ...safeAdmin } = admin;
+  const { password, refreshToken, passwordResetToken, passwordResetExpires, ...safeAdmin } = admin;
   const [scope, pageOverrides] = await Promise.all([
     staffScopeRepo.getScopeWithNames(admin.id),
     staffScopeRepo.getPageOverrides(admin.id),
@@ -212,9 +206,7 @@ const updateAdmin = asyncHandler(async (req, res) => {
     updateData.email = normalizedEmail;
   }
   if (phone_number !== undefined) updateData.phoneNumber = phone_number || null;
-  // Same as createAdmin: store Django's role integers as-is, not the
-  // translated permission strings — administration_user.roles is integer[].
-  if (roles && roles.length > 0) updateData.roles = roles.map(Number);
+  if (roles && roles.length > 0) updateData.roles = mapRolesToBackend(roles);
   if (suspended !== undefined) updateData.suspended = suspended;
   if (can_view_all_locations !== undefined) updateData.canViewAllLocations = can_view_all_locations;
 

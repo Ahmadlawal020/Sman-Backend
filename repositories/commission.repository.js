@@ -4,20 +4,14 @@ const { generateOrderReference } = require("../utils/helpers");
 const {
   commissions,
   depotProductCommissions,
-  consumerOrder: orders,
-  consumerCustomer: customers,
-  consumerDepots: depots,
-  depotExtras,
-  consumerProduct: products,
-  consumerTruckallocation: orderTrucks,
-  consumerPfi: pfis,
-  administrationUser: staff,
+  orders,
+  customers,
+  depots,
+  products,
+  orderTrucks,
+  pfis,
+  staff,
 } = require("../db/schema");
-
-// consumer_customer has no `.name`/`.commissionBankName` etc — name is
-// split first/last; commission payout bank details live per-order on
-// consumer_order (commission_account_*), not on the customer.
-const CUSTOMER_NAME = sql`CONCAT(${customers.firstName}, ' ', ${customers.lastName})`;
 
 // ─── Commission Rates (depot × product) ─────────────────────────────────────
 
@@ -49,18 +43,17 @@ const getRates = async ({ depotId, page = 1, limit = 200 } = {}) => {
       id: depotProductCommissions.id,
       depotId: depotProductCommissions.depotId,
       depotName: depots.name,
-      depotCity: depotExtras.city,
-      depotState: depotExtras.state,
+      depotCity: depots.city,
+      depotState: depots.state,
       productId: depotProductCommissions.productId,
       productName: products.name,
-      productSku: products.abbreviation,
+      productSku: products.sku,
       commissionRate: depotProductCommissions.commissionRate,
       createdAt: depotProductCommissions.createdAt,
       updatedAt: depotProductCommissions.updatedAt,
     })
     .from(depotProductCommissions)
     .leftJoin(depots, eq(depotProductCommissions.depotId, depots.id))
-    .leftJoin(depotExtras, eq(depots.id, depotExtras.depotId))
     .leftJoin(products, eq(depotProductCommissions.productId, products.id))
     .where(whereClause)
     .orderBy(depots.name, products.name)
@@ -140,8 +133,8 @@ const findAll = async ({
     const pattern = `%${search}%`;
     conditions.push(
       or(
-        ilike(customers.firstName, pattern),
-        ilike(customers.lastName, pattern),
+        ilike(orders.orderNumber, pattern),
+        ilike(customers.name, pattern),
         ilike(customers.companyName, pattern),
         ilike(depots.name, pattern),
         ilike(products.name, pattern)
@@ -156,38 +149,36 @@ const findAll = async ({
       .select({
         id: commissions.id,
         orderId: commissions.orderId,
-        orderCompanyName: sql`NULL`,
+        orderNumber: orders.orderNumber,
+        orderCompanyName: orders.companyName,
         orderCreatedAt: orders.createdAt,
         customerId: commissions.customerId,
-        customerName: CUSTOMER_NAME,
-        customerPhone: customers.phoneNumber,
+        customerName: customers.name,
+        customerPhone: customers.phone,
         customerCompanyName: customers.companyName,
-        // Commission payout bank details live per-order on consumer_order
-        // (commission_account_*), not on the customer — see the Django model.
-        customerCommissionBankName: orders.commissionBankName,
-        customerCommissionAccountName: orders.commissionAccountName,
-        customerCommissionAccountNumber: orders.commissionAccountNumber,
+        customerCommissionBankName: customers.commissionBankName,
+        customerCommissionAccountName: customers.commissionAccountName,
+        customerCommissionAccountNumber: customers.commissionAccountNumber,
         depotId: commissions.depotId,
         depotName: depots.name,
-        depotCity: depotExtras.city,
-        depotState: depotExtras.state,
+        depotCity: depots.city,
+        depotState: depots.state,
         productId: commissions.productId,
         productName: products.name,
-        productSku: products.abbreviation,
+        productSku: products.sku,
         quantity: commissions.quantity,
         commissionRate: commissions.commissionRate,
         commissionAmount: commissions.commissionAmount,
         status: commissions.status,
         paidAt: commissions.paidAt,
         paidBy: commissions.paidBy,
-        paidByName: staff.fullName,
+        paidByName: sql`CONCAT(${staff.firstName}, ' ', ${staff.surname})`,
         createdAt: commissions.createdAt,
       })
       .from(commissions)
       .leftJoin(orders, eq(commissions.orderId, orders.id))
       .leftJoin(customers, eq(commissions.customerId, customers.id))
       .leftJoin(depots, eq(commissions.depotId, depots.id))
-      .leftJoin(depotExtras, eq(depots.id, depotExtras.depotId))
       .leftJoin(products, eq(commissions.productId, products.id))
       .leftJoin(staff, eq(commissions.paidBy, staff.id))
       .where(whereClause)
@@ -202,7 +193,7 @@ const findAll = async ({
     rows.map(async (row) => {
       const trucks = await db
         .select({
-          truckNumber: orderTrucks.plateNumber,
+          truckNumber: orderTrucks.truckNumber,
           quantity: orderTrucks.quantity,
         })
         .from(orderTrucks)
@@ -240,15 +231,17 @@ const findById = async (id) => {
     .select({
       id: commissions.id,
       orderId: commissions.orderId,
-      // No live order_number column — the reference is always computed from
-      // orderId below, same as findAll.
+      orderNumber: orders.orderNumber,
+      // Needed to derive the reference, exactly as findAll does — the order's
+      // own company name wins over the customer's.
+      orderCompanyName: orders.companyName,
       customerId: commissions.customerId,
-      customerName: CUSTOMER_NAME,
-      customerPhone: customers.phoneNumber,
+      customerName: customers.name,
+      customerPhone: customers.phone,
       customerCompanyName: customers.companyName,
-      customerCommissionBankName: orders.commissionBankName,
-      customerCommissionAccountName: orders.commissionAccountName,
-      customerCommissionAccountNumber: orders.commissionAccountNumber,
+      customerCommissionBankName: customers.commissionBankName,
+      customerCommissionAccountName: customers.commissionAccountName,
+      customerCommissionAccountNumber: customers.commissionAccountNumber,
       depotId: commissions.depotId,
       depotName: depots.name,
       productId: commissions.productId,

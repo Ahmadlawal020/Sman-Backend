@@ -1,9 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const {
-  administrationDeliverysale: deliverySales,
-  administrationDeliverycustomer: deliveryCustomers,
-} = require("../db/schema");
+const { deliverySales, deliveryCustomers } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db
@@ -14,9 +11,14 @@ const findById = async (id) => {
   return row || null;
 };
 
-// No paystack_reference column on the live table — moot anyway, since
-// Paystack payment processing is disabled (see payment.service.js).
-const findByPaystackReference = async () => null;
+const findByPaystackReference = async (reference) => {
+  const [row] = await db
+    .select()
+    .from(deliverySales)
+    .where(eq(deliverySales.paystackReference, reference))
+    .limit(1);
+  return row || null;
+};
 
 const findPendingByCustomer = async (customerId) => {
   const [row] = await db

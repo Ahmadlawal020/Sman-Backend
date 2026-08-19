@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ADD COLUMN "dva_subaccount_code" varchar(100) DEFAULT '';
