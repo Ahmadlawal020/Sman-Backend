@@ -1,6 +1,7 @@
 const { verifyAccessToken } = require("../services/token.service");
 const sessionService = require("../services/session.service");
 const { staffScopeRepo } = require("../repositories");
+const { mapRolesToBackend } = require("../config/roleMapping");
 
 // Role VALUES, not table names — these are data, consumed by config/roleMapping.js
 // and by the frontend. They are unrelated to the `staff` table rename.
@@ -51,10 +52,14 @@ const authenticateStaff = async (req, res, next) => {
   // someone's depot/PFI access must take effect on their very next request.
   const authContext = await staffScopeRepo.getAuthContext(active.principal.id);
 
+  // administration_user.roles is Django's integer[] (Roles.IntegerChoices);
+  // every permission check in this codebase (requireRole, apiPermissions.js)
+  // compares against Sman's own role-name strings. Translate here, once, so
+  // nothing downstream has to know the DB stores integers.
   req.user = {
     id: active.principal.id,
     email: active.principal.email,
-    roles: active.principal.roles || [],
+    roles: mapRolesToBackend(active.principal.roles || []),
     canViewAllLocations: authContext.canViewAllLocations,
     scope: authContext.scope,
     pageOverrides: authContext.pageOverrides,

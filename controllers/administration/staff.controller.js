@@ -40,9 +40,12 @@ const createAdmin = asyncHandler(async (req, res) => {
 
   const { rawToken, hashedToken } = generateResetToken();
 
-  const backendRoles = roles && roles.length > 0
-    ? mapRolesToBackend(roles)
-    : ["admin"];
+  // administration_user.roles is Django's integer[] (Roles.IntegerChoices) —
+  // stored as-is, not translated to strings. misc.schema.js's createStaff
+  // schema already validated every element is `n in ROLE_MAP`, i.e. a real
+  // Django role integer. mapRolesToBackend produces Sman's permission-string
+  // vocabulary for in-memory checks only; it never belongs in this column.
+  const backendRoles = roles && roles.length > 0 ? roles.map(Number) : [1]; // 1 = admin
 
   const admin = await staffRepo.create({
     firstName: first_name.trim(),
@@ -206,7 +209,9 @@ const updateAdmin = asyncHandler(async (req, res) => {
     updateData.email = normalizedEmail;
   }
   if (phone_number !== undefined) updateData.phoneNumber = phone_number || null;
-  if (roles && roles.length > 0) updateData.roles = mapRolesToBackend(roles);
+  // Same as createAdmin: store Django's role integers as-is, not the
+  // translated permission strings — administration_user.roles is integer[].
+  if (roles && roles.length > 0) updateData.roles = roles.map(Number);
   if (suspended !== undefined) updateData.suspended = suspended;
   if (can_view_all_locations !== undefined) updateData.canViewAllLocations = can_view_all_locations;
 
