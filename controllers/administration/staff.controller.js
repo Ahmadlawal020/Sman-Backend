@@ -100,7 +100,10 @@ const createAdmin = asyncHandler(async (req, res) => {
 const getAllAdmins = asyncHandler(async (req, res) => {
   const { staff, pagination } = await staffRepo.findAll({ page: 1, limit: 1000 });
 
-  const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, ...rest }) => rest);
+  // plainPassword (administration_user.plain_password) is Django's own
+  // cleartext-password column — never send it out. It was missing from this
+  // exclusion list; every staff record was returning it as-is.
+  const safeStaff = staff.map(({ password, refreshToken, passwordResetToken, passwordResetExpires, plainPassword, ...rest }) => rest);
   const staffIds = safeStaff.map((s) => s.id);
   const [scopeByStaff, overridesByStaff] = await Promise.all([
     staffScopeRepo.getScopeWithNamesForStaffIds(staffIds),
@@ -127,7 +130,7 @@ const getAdminById = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: "User not found" });
   }
 
-  const { password, refreshToken, passwordResetToken, passwordResetExpires, ...safeAdmin } = admin;
+  const { password, refreshToken, passwordResetToken, passwordResetExpires, plainPassword, ...safeAdmin } = admin;
   const [scope, pageOverrides] = await Promise.all([
     staffScopeRepo.getScopeWithNames(admin.id),
     staffScopeRepo.getPageOverrides(admin.id),
