@@ -237,18 +237,37 @@ const updateVendor = z.object(vendorBase).partial();
 
 // --- bank statements ------------------------------------------------------
 
+// These three previously didn't match what the frontend actually sends
+// (soromanfe's useBankStatements.ts) — createBankStatement expected
+// fileName/lines, the client sends filename/rows; bankStatementMapping
+// expected a { mapping: {...} } wrapper, the client PUTs the column-mapping
+// fields flat; matchBankLines required depositId and had no orderId at all,
+// but the client's match payload makes both individually optional. Since
+// `validate()` replaces req.body wholesale with the parsed result (see
+// middleware/validate.js), the mismatch meant every one of these requests
+// arrived at its controller with the fields it actually reads stripped to
+// undefined — a guaranteed 400 on every call, independent of any live-schema
+// issue. Corrected to the real shapes, not guessed — read directly from the
+// frontend's request payloads.
 const createBankStatement = z.object({
   bankAccountId: id("Bank account"),
-  fileName: optionalString("File name", 255),
-  statementDate: optionalString("Statement date", 40),
-  lines: z.array(z.record(z.unknown())).optional(),
+  filename: optionalString("Filename", 255),
+  rows: z.array(z.record(z.unknown())).optional(),
 });
 const bankStatementMapping = z.object({
-  mapping: z.record(z.unknown()),
+  headerRow: numberLike("Header row").pipe(z.number().int()).optional(),
+  dateColumn: z.union([numberLike("Date column"), z.string()]),
+  amountColumn: z.union([numberLike("Amount column"), z.string(), z.null()]).optional(),
+  creditColumn: z.union([numberLike("Credit column"), z.string(), z.null()]).optional(),
+  depositorColumn: z.union([numberLike("Depositor column"), z.string(), z.null()]).optional(),
+  referenceColumn: z.union([numberLike("Reference column"), z.string(), z.null()]).optional(),
+  narrationColumn: z.union([numberLike("Narration column"), z.string(), z.null()]).optional(),
+  sampleHeaders: z.array(z.string()).optional(),
 });
 const matchBankLines = z.object({
   lineIds: z.array(id("Line id")).min(1, "At least one line is required"),
-  depositId: id("Deposit"),
+  depositId: id("Deposit").optional(),
+  orderId: id("Order").optional(),
 });
 
 // --- expenses --------------------------------------------------------------

@@ -23,7 +23,7 @@ async function saveMapping(req, res) {
     return fail(res, 400, "Choose either an amount column or a credit column");
   }
 
-  const mapping = await repo.upsertMapping(bankAccountId, req.body);
+  const mapping = await repo.upsertMapping(bankAccountId, req.body, req.user?.id ?? null);
   return ok(res, { mapping }, "Statement format saved");
 }
 
@@ -49,7 +49,7 @@ async function uploadStatement(req, res) {
   const result = await repo.ingest({
     bankAccountId: Number(bankAccountId),
     filename,
-    uploadedBy: req.staff?.id ?? null,
+    uploadedBy: req.user?.id ?? null,
     rows,
   });
 
@@ -103,7 +103,7 @@ async function matchLines(req, res) {
     lineIds,
     orderId,
     depositId,
-    staffId: req.staff?.id ?? null,
+    staffId: req.user?.id ?? null,
   });
   return ok(res, result, `${result.matched} line${result.matched === 1 ? "" : "s"} matched`);
 }
