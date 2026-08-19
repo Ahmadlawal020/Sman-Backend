@@ -1,0 +1,16 @@
+[Unit]
+Description=Sman Backend (Node/Express)
+After=network.target
+
+[Service]
+Type=simple
+User=__DEPLOY_USER__
+Group=__DEPLOY_USER__
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+ExecStart=/usr/bin/node __PROJECT_DIR__/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
