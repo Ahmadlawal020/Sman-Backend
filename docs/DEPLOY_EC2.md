@@ -139,10 +139,19 @@ the data — it's a pure read/write API layer swap.
 
 ## Ongoing deploys after this
 
-For the *first* cutover, everything above is manual by design. Once this is
-stable, the natural next step is a GitHub Actions deploy workflow for this
-repo mirroring `soroman_backend-2`'s `.github/workflows/deploy.yml` — SSH in,
-`git pull`, `npm ci`, `sudo systemctl restart sman-backend` — using the same
-`EC2_HOST`/`EC2_USER`/`EC2_SSH_KEY` secrets already configured for Django's
-repo. Not set up yet; ask for it once you're ready to automate deploys rather
-than SSHing in by hand each time.
+For the *first* cutover, everything above is manual by design. Once
+`~/sman-backend` and the `sman-backend` systemd service exist on the box
+(Phase 1), `.github/workflows/deploy.yml` in this repo takes over future
+pushes to `main` — it SSHs in, pulls, `npm ci`, restarts the service, health
+checks it, and rolls back automatically if the restart fails. It's already
+in the repo but does nothing yet: it needs three secrets added to this
+GitHub repo (**Settings → Secrets and variables → Actions**):
+
+- `EC2_HOST` — same value as Django's repo secret of the same name
+- `EC2_USER` — same value as Django's
+- `EC2_SSH_KEY` — same value as Django's (the private key that can SSH into
+  the box) — copy these three from `soroman_backend-2`'s repo secrets if you
+  have access there, since it's the same box and the same login
+
+Once those three are set, every push to `main` deploys automatically —
+mirroring exactly how Django's own repo already deploys itself.

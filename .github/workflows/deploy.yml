@@ -1,0 +1,59 @@
+name: Deploy to EC2 on Push
+
+# Mirrors soroman_backend-2's own deploy.yml, adapted for a Node service
+# managed by systemd instead of gunicorn. Inert until EC2_HOST / EC2_USER /
+# EC2_SSH_KEY are added as repo secrets (Settings -> Secrets and variables ->
+# Actions) — until then this workflow fails harmlessly at the SSH step.
+#
+# Assumes deploy/setup.sh has already been run at least once by hand (see
+# docs/DEPLOY_EC2.md) so ~/sman-backend and the sman-backend systemd service
+# already exist on the box. This workflow only pulls + restarts; it never
+# writes .env (that stays a manual, out-of-band step — secrets don't belong
+# in a git history, even a private one).
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/sman-backend
+
+            echo "Saving current state..."
+            git rev-parse HEAD > .last_good_commit
+
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "⬆️ Installing dependencies..."
+            npm ci --omit=dev
+
+            echo "🔁 Restarting Sman-Backend..."
+            sudo systemctl restart sman-backend
+            sleep 3
+            if sudo systemctl is-active --quiet sman-backend; then
+              echo "✅ Sman-Backend is running!"
+              echo "Current commit: $(git rev-parse HEAD)"
+            else
+              echo "❌ Sman-Backend failed! Checking logs..."
+              sudo journalctl -u sman-backend --no-pager -n 30
+              echo "Rolling back..."
+              git reset --hard $(cat .last_good_commit)
+              npm ci --omit=dev
+              sudo systemctl restart sman-backend
+              exit 1
+            fi
+
+            echo "🩺 Health check..."
+            sleep 2
+            curl -fsS http://127.0.0.1:5002/api/health
