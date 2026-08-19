@@ -9,6 +9,10 @@ logs/
 *.dump
 *.sql
 !db/migrations.legacy-neon/*.sql
+# Real migrations for the sman schema (Sman-Backend-owned tables, never
+# Django's) — small, DDL-only, meant to be committed like any other
+# migration, unlike the data dumps above.
+!db/migrations.sman/*.sql
 # Schema-only (no rows) ground truth for the live DB cutover — small and
 # meant to be committed and reviewed, unlike the data dumps above.
 !docs/live_schema.sql

@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const { eq, and, isNull, gt, desc, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { sessions, staff, customers } = require("../db/schema");
+const { sessions, administrationUser: staff, consumerCustomer: customers } = require("../db/schema");
 
 const PRINCIPAL_TABLES = { staff, customer: customers };
 

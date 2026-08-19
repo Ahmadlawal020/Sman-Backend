@@ -7,6 +7,17 @@ const smanSchema = pgSchema("sman");
 
 const driverStatusEnum = smanSchema.enum("driver_status", ["Active", "On Trip", "Off Duty"]);
 
+const auditActorTypeEnum = smanSchema.enum("audit_actor_type", ["staff", "customer", "system"]);
+
+const deliveryCustomerTypeEnum = smanSchema.enum("delivery_customer_type", ["customer", "filling_station"]);
+
+const deliveryNoteStatusEnum = smanSchema.enum("delivery_note_status", [
+  "Pending",
+  "In Transit",
+  "Delivered",
+  "Cancelled",
+]);
+
 const walletHoldStatusEnum = smanSchema.enum("wallet_hold_status", ["active", "converted", "released"]);
 
 const webhookStatusEnum = smanSchema.enum("webhook_status", ["pending", "processed", "failed"]);
@@ -95,6 +106,9 @@ const waTemplateStatusEnum = smanSchema.enum("wa_template_status", ["pending", "
 module.exports = {
   smanSchema,
   driverStatusEnum,
+  auditActorTypeEnum,
+  deliveryCustomerTypeEnum,
+  deliveryNoteStatusEnum,
   walletHoldStatusEnum,
   webhookStatusEnum,
   customerIdentityProviderEnum,

@@ -75,22 +75,26 @@ async function attachDepotsToAccount(account) {
     .map((id) => Number(id))
     .filter((id) => !isNaN(id) && id > 0);
 
+  // consumer_depots (live) is just id/name/location — code/city/state/
+  // country/status live in sman.depot_extras instead (see
+  // repositories/depot.repository.js's header comment).
   let depots = [];
   if (numericDepotIds.length > 0) {
     try {
       const rows = await client`
-        SELECT id, name, code, city, state, country, status
-        FROM depots
-        WHERE id = ANY(${numericDepotIds})
+        SELECT d.id, d.name, e.code, e.city, e.state, e.country, e.status
+        FROM consumer_depots d
+        LEFT JOIN sman.depot_extras e ON e.depot_id = d.id
+        WHERE d.id = ANY(${numericDepotIds})
       `;
       depots = rows.map((r) => ({
         id: r.id,
         name: r.name,
-        code: r.code,
-        city: r.city,
-        state: r.state,
-        country: r.country,
-        status: r.status,
+        code: r.code || "",
+        city: r.city || "",
+        state: r.state || "",
+        country: r.country || "",
+        status: r.status || "Active",
       }));
     } catch (e) {
       console.error("Failed to fetch depots for bank account:", e.message);
@@ -107,21 +111,25 @@ async function attachDepotsToAccount(account) {
     .map((id) => Number(id))
     .filter((id) => !isNaN(id) && id > 0);
 
+  // consumer_lpgplant (live) has its own `code` column but, like depots,
+  // city/state/country/status live in sman.lpg_station_extras.
   let lpgStations = [];
   if (numericStationIds.length > 0) {
     try {
       const rows = await client`
-        SELECT id, name, code, city, state, country, status
-        FROM lpg_stations
-        WHERE id = ANY(${numericStationIds})
+        SELECT p.id, p.name, p.code, e.city, e.state, e.country,
+               (CASE WHEN p.is_active THEN 'Active' ELSE 'Inactive' END) AS status
+        FROM consumer_lpgplant p
+        LEFT JOIN sman.lpg_station_extras e ON e.lpg_station_id = p.id
+        WHERE p.id = ANY(${numericStationIds})
       `;
       lpgStations = rows.map((r) => ({
         id: r.id,
         name: r.name,
-        code: r.code,
-        city: r.city,
-        state: r.state,
-        country: r.country,
+        code: r.code || "",
+        city: r.city || "",
+        state: r.state || "",
+        country: r.country || "",
         status: r.status,
       }));
     } catch (e) {

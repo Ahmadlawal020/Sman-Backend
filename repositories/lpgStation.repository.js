@@ -1,52 +1,55 @@
 const { eq, and, or, ilike, desc, count } = require("drizzle-orm");
-const { db, client } = require("../db");
+const { db } = require("../db");
 const {
-  lpgStations,
+  consumerLpgplant,
+  lpgStationExtras,
   lpgStationStaff,
   lpgStationCylinders,
   lpgPriceHistory,
-  staff,
-  pfis,
+  administrationUser: staff,
 } = require("../db/schema");
 const { scopeCondition } = require("../lib/scopeFilter");
 
-let columnsInitialized = false;
-async function ensureColumnsExist() {
-  if (columnsInitialized) return;
-  try {
-    await client`
-      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS paystack_subaccount_code VARCHAR(100) DEFAULT '';
-    `;
-    await client`
-      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS subaccount_active BOOLEAN DEFAULT false NOT NULL;
-    `;
-    await client`
-      ALTER TABLE lpg_stations ADD COLUMN IF NOT EXISTS subaccount_split_percentage INTEGER DEFAULT 100 NOT NULL;
-    `;
-    columnsInitialized = true;
-  } catch (err) {
-    console.error("Failed to ensure lpg_stations subaccount columns exist:", err.message);
-  }
-}
+/**
+ * consumer_lpgplant (the live row, canonical) is just name/code/capacity/
+ * pricing — address and Paystack subaccount fields live in
+ * sman.lpg_station_extras, 1:1 keyed to the live plant (same pattern as
+ * depot/depot_extras — see repositories/depot.repository.js). There is no
+ * live `status` column, only `is_active`; `status` here maps to that boolean
+ * ("Active" <-> true, anything else <-> false) since extras carries no
+ * status field of its own.
+ */
+const lpgStations = consumerLpgplant;
+
+const withExtras = (row) =>
+  row && {
+    ...row.consumer_lpgplant,
+    ...row.lpg_station_extras,
+    id: row.consumer_lpgplant.id,
+    status: row.consumer_lpgplant.isActive ? "Active" : "Inactive",
+  };
 
 const findById = async (id) => {
-  await ensureColumnsExist();
-  const [row] = await db.select().from(lpgStations).where(eq(lpgStations.id, id)).limit(1);
-  return row || null;
+  const [row] = await db
+    .select()
+    .from(consumerLpgplant)
+    .leftJoin(lpgStationExtras, eq(consumerLpgplant.id, lpgStationExtras.lpgStationId))
+    .where(eq(consumerLpgplant.id, id))
+    .limit(1);
+  return withExtras(row);
 };
 
 const findByCode = async (code) => {
-  await ensureColumnsExist();
   const [row] = await db
     .select()
-    .from(lpgStations)
-    .where(eq(lpgStations.code, code))
+    .from(consumerLpgplant)
+    .leftJoin(lpgStationExtras, eq(consumerLpgplant.id, lpgStationExtras.lpgStationId))
+    .where(eq(consumerLpgplant.code, code))
     .limit(1);
-  return row || null;
+  return withExtras(row);
 };
 
 const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {}) => {
-  await ensureColumnsExist();
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -64,14 +67,14 @@ const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {})
       or(
         ilike(lpgStations.name, pattern),
         ilike(lpgStations.code, pattern),
-        ilike(lpgStations.city, pattern),
-        ilike(lpgStations.state, pattern)
+        ilike(lpgStationExtras.city, pattern),
+        ilike(lpgStationExtras.state, pattern)
       )
     );
   }
 
   if (status && status !== "all") {
-    conditions.push(eq(lpgStations.status, status));
+    conditions.push(eq(lpgStations.isActive, status === "Active"));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -79,19 +82,21 @@ const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {})
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
-      .from(lpgStations)
+      .from(consumerLpgplant)
+      .leftJoin(lpgStationExtras, eq(consumerLpgplant.id, lpgStationExtras.lpgStationId))
       .where(whereClause)
-      .orderBy(desc(lpgStations.createdAt))
+      .orderBy(desc(consumerLpgplant.createdAt))
       .limit(limitNum)
       .offset(offset),
     db
       .select({ total: count() })
-      .from(lpgStations)
+      .from(consumerLpgplant)
+      .leftJoin(lpgStationExtras, eq(consumerLpgplant.id, lpgStationExtras.lpgStationId))
       .where(whereClause),
   ]);
 
   return {
-    stations: rows,
+    stations: rows.map(withExtras),
     pagination: {
       total,
       page: pageNum,
@@ -100,22 +105,64 @@ const findAll = async ({ search, status, scopeUser, page = 1, limit = 50 } = {})
   };
 };
 
-const create = async (data) => {
-  const [row] = await db.insert(lpgStations).values(data).returning();
-  return row;
+const EXTRAS_FIELDS = [
+  "address",
+  "city",
+  "state",
+  "country",
+  "postcode",
+  "establishedYear",
+  "paystackSubaccountCode",
+  "subaccountActive",
+  "subaccountSplitPercentage",
+];
+
+const create = async (data, tx = db) => {
+  const { status, ...rest } = data;
+  const liveData = {};
+  const extrasData = {};
+  for (const [key, value] of Object.entries(rest)) {
+    (EXTRAS_FIELDS.includes(key) ? extrasData : liveData)[key] = value;
+  }
+  if (status !== undefined) liveData.isActive = status === "Active";
+
+  const [stationRow] = await tx.insert(consumerLpgplant).values(liveData).returning();
+  const [extrasRow] = await tx
+    .insert(lpgStationExtras)
+    .values({ lpgStationId: stationRow.id, ...extrasData })
+    .returning();
+  return { ...stationRow, ...extrasRow, id: stationRow.id, status: stationRow.isActive ? "Active" : "Inactive" };
 };
 
-const update = async (id, data) => {
-  const [row] = await db
-    .update(lpgStations)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(lpgStations.id, id))
-    .returning();
-  return row || null;
+const update = async (id, data, tx = db) => {
+  const { status, ...rest } = data;
+  const liveData = {};
+  const extrasData = {};
+  for (const [key, value] of Object.entries(rest)) {
+    if (value === undefined) continue;
+    (EXTRAS_FIELDS.includes(key) ? extrasData : liveData)[key] = value;
+  }
+  if (status !== undefined) liveData.isActive = status === "Active";
+
+  if (Object.keys(liveData).length > 0) {
+    await tx.update(consumerLpgplant).set(liveData).where(eq(consumerLpgplant.id, id));
+  }
+  if (Object.keys(extrasData).length > 0) {
+    // upsert: a station predating lpg_station_extras has no row there yet —
+    // a plain UPDATE would silently affect 0 rows.
+    await tx
+      .insert(lpgStationExtras)
+      .values({ lpgStationId: id, ...extrasData })
+      .onConflictDoUpdate({
+        target: lpgStationExtras.lpgStationId,
+        set: { ...extrasData, updatedAt: new Date() },
+      });
+  }
+  return findById(id);
 };
 
 const deleteById = async (id) => {
-  const [row] = await db.delete(lpgStations).where(eq(lpgStations.id, id)).returning();
+  const [row] = await db.delete(consumerLpgplant).where(eq(consumerLpgplant.id, id)).returning();
   return row || null;
 };
 
@@ -127,8 +174,7 @@ const getStaff = async (stationId) => {
     .select({
       id: lpgStationStaff.id,
       adminId: lpgStationStaff.staffId,
-      firstName: staff.firstName,
-      surname: staff.surname,
+      fullName: staff.fullName,
       email: staff.email,
     })
     .from(lpgStationStaff)
@@ -273,17 +319,10 @@ const getPriceHistory = async (stationId) => {
   return rows;
 };
 
-const updateSubaccountFields = async (id, data) => {
-  const [row] = await db
-    .update(lpgStations)
-    .set({
-      ...data,
-      updatedAt: new Date(),
-    })
-    .where(eq(lpgStations.id, id))
-    .returning();
-  return row || null;
-};
+// paystackSubaccountCode/subaccountActive/subaccountSplitPercentage all live
+// on lpg_station_extras now, not the live table — route through update() so
+// they land in the right place.
+const updateSubaccountFields = (id, data) => update(id, data);
 
 module.exports = {
   findById,

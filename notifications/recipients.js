@@ -1,7 +1,24 @@
 const { eq, and, inArray, arrayOverlaps } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { staff, customers } = require("../db/schema");
+const { administrationUser: staff, consumerCustomer: customers } = require("../db/schema");
 const { toPrincipal } = require("../utils/principal");
+
+/**
+ * UNRESOLVED GAP: administration_user.roles (live) is an integer[] of
+ * Django's Roles.choices (soroman_backend-2/administration/models.py —
+ * SUPERADMIN=0, ADMIN=1, FINANCE=2, SALES=3, RELEASE=4, SECURITY=5,
+ * TRANSPORT=6, RELEASE_OFFICER=7, AUDITOR=8, MARKETING=9,
+ * LOCATION_MANAGER=10, LPG_ADMIN=11, STATION_MANAGER=12,
+ * LPG_PLANT_MANAGER=13, LPG_CASHIER=14, COMMISSIONS=15,
+ * COMMISSION_OFFICER=16, DISPATCH=17), NOT the text[] of role-name strings
+ * ("admin", "super_admin", "sales_manager", ...) every `{ roles: [...] }`
+ * caller across this codebase still passes (see repositories/staff.repository.js's
+ * own header comment — same gap, flagged there too, not fixed). The
+ * arrayOverlaps() call below will not match anything real until there is a
+ * verified string<->Django-integer mapping and every caller (and
+ * config/apiPermissions.js) is updated together — a single, deliberate pass
+ * across the whole authorization surface, not a fix confined to this file.
+ */
 
 /**
  * Turning a caller's idea of "who should hear this" into concrete recipients.

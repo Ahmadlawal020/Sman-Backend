@@ -1,25 +1,16 @@
 const { sql, eq, gt } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { depots, products, depotProductPrices, pfis } = require("../db/schema");
+const { consumerDepots, consumerStates, consumerProduct, consumerProductprice, consumerPfi, consumerPfimovement } = require("../db/schema");
 
 /**
  * The short trade code a product is known by on the floor — PMS, AGO, LPG.
  *
- * This used to be read straight off `products.category`, because that column
- * literally held "PMS (Premium Motor Spirit)". Normalising categories on
- * 2026-08-09 replaced those with real classifications, so every catalog client
- * started showing "Fuel" where it had shown "PMS": the mobile app rendered a
- * product called Petrol with a badge reading Fuel, while order history — which
- * reads name and sku separately — still said Petrol. Same product, two answers,
- * depending on the screen.
- *
- * `sku` is where the trade code actually lives, so that is what this reads.
- * The hyphen is stripped because clients key their product metadata on JETA1,
- * not JET-A1, and `initials(name)` is the last resort for a product whose sku
- * was never filled in — "Cooking Gas" is a better badge than an empty one.
+ * `sku` doesn't exist on consumer_product at all — the closest live column
+ * is `abbreviation`. See order.repository.js's header comment for the wider
+ * pattern of what got renamed/dropped in the cutover.
  */
 const tradeCode = (product) => {
-  const sku = String(product?.sku || "").trim();
+  const sku = String(product?.abbreviation || "").trim();
   if (sku) return sku.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 
   return String(product?.name || "")
@@ -33,70 +24,88 @@ const tradeCode = (product) => {
 /**
  * The single definition of "orderable" — shared by every sales channel.
  *
- * The WhatsApp engine and the portal must never disagree about what can be
- * bought where and at what price, so both load through here. The filtering
- * rule channels lean on: a depot with no priced, in-stock product simply is
- * not in the catalog. Validity is a filtering problem at load time, not an
- * error-handling problem at confirm time.
+ * consumer_depots has no state FK (just a free-text location string), and
+ * pricing/stock are both state-scoped live, not depot-scoped (see
+ * repositories/depot.repository.js and pfi.repository.js) — every depot in
+ * the same state now shows identical price/stock, which is the live data
+ * model's reality, not a display choice made here.
+ *
+ * Stock is computed from the PFI ledger (starting - SUM(consumer_pfimovement)),
+ * the same pool placeOrder reserves from — not consumer_productprice's own
+ * stock_quantity column, which is a separate Django-native counter. Using
+ * the PFI ledger keeps the catalog and order placement from disagreeing
+ * about whether something is actually available.
  */
 
 /** All orderable depots, each with its priced + in-stock products. */
 const loadCatalog = async () => {
-  const [depotRows, priceRows, stockRows] = await Promise.all([
-    db.select({ id: depots.id, name: depots.name, state: depots.state }).from(depots),
+  const [depotRows, stateRows, priceRows, stockRows] = await Promise.all([
+    db.select({ id: consumerDepots.id, name: consumerDepots.name, location: consumerDepots.location }).from(consumerDepots),
+    db.select({ id: consumerStates.id, name: consumerStates.name }).from(consumerStates),
     db
       .select({
-        depotId: depotProductPrices.depotId,
-        productId: depotProductPrices.productId,
-        price: depotProductPrices.currentPrice,
-        name: products.name,
-        unit: products.unit,
-        sku: products.sku,
-        category: products.category,
+        stateId: consumerProductprice.stateId,
+        productId: consumerProductprice.productId,
+        price: consumerProductprice.price,
+        name: consumerProduct.name,
+        unit: consumerProduct.unit,
+        abbreviation: consumerProduct.abbreviation,
       })
-      .from(depotProductPrices)
-      .innerJoin(products, eq(products.id, depotProductPrices.productId))
-      .where(gt(depotProductPrices.currentPrice, "0")),
-    // Sellable stock = active PFIs' remaining litres, per depot × product —
+      .from(consumerProductprice)
+      .innerJoin(consumerProduct, eq(consumerProduct.id, consumerProductprice.productId))
+      .where(gt(consumerProductprice.price, "0")),
+    // Sellable stock = active PFIs' remaining litres, per state × product —
     // the same pool placeOrder reserves from.
     db
       .select({
-        depotId: pfis.locationId,
-        productId: pfis.productId,
-        stock: sql`sum(${pfis.startingQtyLitres} - ${pfis.soldQtyLitres})`.mapWith(Number),
+        stateId: consumerPfi.locationId,
+        productId: consumerPfi.productId,
+        stock: sql`SUM(${consumerPfi.startingQtyLitres}::numeric - COALESCE((
+          SELECT SUM(${consumerPfimovement.qtyLitres}::numeric) FROM ${consumerPfimovement}
+          WHERE ${consumerPfimovement.pfiId} = ${consumerPfi.id}
+        ), 0))`.mapWith(Number),
       })
-      .from(pfis)
-      .where(eq(pfis.status, "active"))
-      .groupBy(pfis.locationId, pfis.productId),
+      .from(consumerPfi)
+      .where(eq(consumerPfi.status, "active"))
+      .groupBy(consumerPfi.locationId, consumerPfi.productId),
   ]);
 
-  const stockByKey = new Map(stockRows.map((r) => [`${r.depotId}:${r.productId}`, r.stock]));
+  const stateIdByName = new Map(stateRows.map((s) => [s.name, s.id]));
+  const stockByKey = new Map(stockRows.map((r) => [`${r.stateId}:${r.productId}`, r.stock]));
+  const pricesByState = new Map();
+  for (const p of priceRows) {
+    if (!pricesByState.has(p.stateId)) pricesByState.set(p.stateId, []);
+    pricesByState.get(p.stateId).push(p);
+  }
 
   return depotRows
-    .map((depot) => ({
-      id: depot.id,
-      name: depot.name,
-      state: depot.state,
-      products: priceRows
-        .filter((p) => p.depotId === depot.id)
-        .map((p) => ({
-          id: p.productId,
-          name: p.name,
-          sku: p.sku || "",
-          // The badge every sales channel shows beside the name: PMS, AGO, LPG.
-          code: tradeCode(p),
-          // Legacy alias. Clients read `category` for the badge today, from when
-          // the category column held the trade code, so it keeps carrying the
-          // code rather than "Fuel" — that way this fix needs no coordinated
-          // client release. New code should read `code`; this can go once the
-          // shipped mobile builds have aged out.
-          category: tradeCode(p),
-          unit: p.unit || "Liters",
-          price: Number(p.price),
-          stock: stockByKey.get(`${p.depotId}:${p.productId}`) || 0,
-        }))
-        .filter((p) => p.stock > 0),
-    }))
+    .map((depot) => {
+      const stateId = stateIdByName.get(depot.location);
+      const statePrices = stateId ? pricesByState.get(stateId) || [] : [];
+      return {
+        id: depot.id,
+        name: depot.name,
+        state: depot.location,
+        products: statePrices
+          .map((p) => ({
+            id: p.productId,
+            name: p.name,
+            sku: p.abbreviation || "",
+            // The badge every sales channel shows beside the name: PMS, AGO, LPG.
+            code: tradeCode(p),
+            // Legacy alias. Clients read `category` for the badge today, from when
+            // the category column held the trade code, so it keeps carrying the
+            // code rather than "Fuel" — that way this fix needs no coordinated
+            // client release. New code should read `code`; this can go once the
+            // shipped mobile builds have aged out.
+            category: tradeCode(p),
+            unit: p.unit || "Liters",
+            price: Number(p.price),
+            stock: stateId ? stockByKey.get(`${stateId}:${p.productId}`) || 0 : 0,
+          }))
+          .filter((p) => p.stock > 0),
+      };
+    })
     .filter((depot) => depot.products.length > 0);
 };
 

@@ -1,7 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const { truckRepo, driverRepo } = require("../../repositories");
 const { db } = require("../../config/db");
-const { fleetTrucks: trucks, drivers } = require("../../db/schema");
+const { consumerFleettruck: trucks, drivers } = require("../../db/schema");
 const { eq } = require("drizzle-orm");
 
 const parseDate = (val) => {

@@ -1,6 +1,6 @@
 const { eq, and, or, ilike, desc, count, sql } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { drivers, fleetTrucks: trucks, driverTruckHistory } = require("../db/schema");
+const { drivers, consumerFleettruck: trucks, driverTruckHistory } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db.select().from(drivers).where(eq(drivers.id, id)).limit(1);
@@ -24,7 +24,8 @@ const findByIdWithTruck = async (id) => {
       createdAt: drivers.createdAt,
       updatedAt: drivers.updatedAt,
       assignedTruckPlate: trucks.plateNumber,
-      assignedTruckModel: trucks.model,
+      // consumer_fleettruck has no separate "model" column, only truck_make.
+      assignedTruckModel: trucks.truckMake,
       assignedTruck: trucks.plateNumber,
     })
     .from(drivers)

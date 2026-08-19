@@ -1,21 +1,21 @@
 const asyncHandler = require("express-async-handler");
 const { db } = require("../../config/db");
 const {
-  fleetTrucks: trucks,
+  consumerFleettruck: trucks,
   drivers,
-  depots,
-  products,
-  orders,
-  customers,
-  deposits,
-  offlineSales,
-  deliverySales,
-  deliveryCustomers,
+  consumerDepots: depots,
+  depotExtras,
+  consumerProduct: products,
+  consumerOrder: orders,
+  consumerCustomer: customers,
+  consumerOrderpaymentrecord: deposits,
+  administrationOfflinesales: offlineSales,
+  administrationDeliverysale: deliverySales,
+  administrationDeliverycustomer: deliveryCustomers,
   auditEvents,
   walletHolds,
   dangoteOrderRequests,
-  lpgOrderRequests,
-  lpgStations,
+  consumerLpgplant: lpgStations,
 } = require("../../db/schema");
 const { eq, and, not, count, sql, gte, lte, desc } = require("drizzle-orm");
 const {
@@ -80,7 +80,7 @@ async function getDailyRevenueTrend(dateFrom, dateTo) {
     db
       .select({
         date: sql`DATE(${offlineSales.createdAt})`.mapWith(String),
-        total: sql`COALESCE(SUM(${offlineSales.totalAmount}), 0)`.mapWith(Number),
+        total: sql`COALESCE(SUM(${offlineSales.totalPrice}), 0)`.mapWith(Number),
       })
       .from(offlineSales)
       .where(

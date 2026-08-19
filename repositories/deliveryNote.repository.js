@@ -1,6 +1,6 @@
 const { eq, and, desc, count } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { deliveryNotes, deliveryCustomers, orders } = require("../db/schema");
+const { deliveryNotes, administrationDeliverycustomer: deliveryCustomers } = require("../db/schema");
 
 const findById = async (id) => {
   const [row] = await db
@@ -52,8 +52,9 @@ const findAll = async ({ customer, page = 1, limit = 50 } = {}) => {
         createdBy: deliveryNotes.createdBy,
         createdAt: deliveryNotes.createdAt,
         updatedAt: deliveryNotes.updatedAt,
-        customerName: deliveryCustomers.name,
-        customerCode: deliveryCustomers.customerCode,
+        // administration_deliverycustomer has customerName, not name, and no
+        // customer_code column at all (see deliveryCustomer.repository.js).
+        customerName: deliveryCustomers.customerName,
       })
       .from(deliveryNotes)
       .leftJoin(

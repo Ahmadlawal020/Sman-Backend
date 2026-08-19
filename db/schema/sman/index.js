@@ -12,7 +12,17 @@ const customerOtpSchema = require("./customerOtp");
 // Fleet / depot
 const driverSchema = require("./driver");
 const driverTruckHistorySchema = require("./driverTruckHistory");
+const truckExtrasSchema = require("./truckExtras");
+const dailyReportExtrasSchema = require("./dailyReportExtras");
+const sessionSchema = require("./session");
+const deliveryNoteSchema = require("./deliveryNote");
+
+// System-wide audit trail (no live Django counterpart — see sman/auditLog.js)
+const auditLogSchema = require("./auditLog");
+const auditEventSchema = require("./auditEvent");
 const depotStaffSchema = require("./depotStaff");
+const lpgStationStaffSchema = require("./lpgStationStaff");
+const pfiStaffSchema = require("./pfiStaff");
 const depotPriceHistorySchema = require("./depotPriceHistory");
 const depotProductCapacitiesSchema = require("./depotProductCapacities");
 const depotProductCommissionSchema = require("./depotProductCommission");
@@ -24,6 +34,7 @@ const walletHoldSchema = require("./walletHold");
 const webhookEventSchema = require("./webhookEvent");
 const expectedPaymentSchema = require("./expectedPayment");
 const orderDepositAllocationSchema = require("./orderDepositAllocation");
+const orderIdempotencySchema = require("./orderIdempotency");
 
 // Commissions
 const commissionSchema = require("./commission");
@@ -46,6 +57,7 @@ const lpgStationExtrasSchema = require("./lpgStationExtras");
 const customerLicenseSchema = require("./customerLicense");
 const dangoteProductSchema = require("./dangoteProduct");
 const dangoteOrderRequestSchema = require("./dangoteOrderRequest");
+const lpgOrderRequestSchema = require("./lpgOrderRequest");
 
 // Staff UI customisation + password reset
 const staffPageOverrideSchema = require("./staffPageOverride");
@@ -69,7 +81,15 @@ module.exports = {
   ...customerOtpSchema,
   ...driverSchema,
   ...driverTruckHistorySchema,
+  ...truckExtrasSchema,
+  ...dailyReportExtrasSchema,
+  ...sessionSchema,
+  ...deliveryNoteSchema,
+  ...auditLogSchema,
+  ...auditEventSchema,
   ...depotStaffSchema,
+  ...lpgStationStaffSchema,
+  ...pfiStaffSchema,
   ...depotPriceHistorySchema,
   ...depotProductCapacitiesSchema,
   ...depotProductCommissionSchema,
@@ -79,6 +99,7 @@ module.exports = {
   ...webhookEventSchema,
   ...expectedPaymentSchema,
   ...orderDepositAllocationSchema,
+  ...orderIdempotencySchema,
   ...commissionSchema,
   ...vendorSchema,
   ...pfiExpenseExtrasSchema,
@@ -91,6 +112,7 @@ module.exports = {
   ...customerLicenseSchema,
   ...dangoteProductSchema,
   ...dangoteOrderRequestSchema,
+  ...lpgOrderRequestSchema,
   ...staffPageOverrideSchema,
   ...staffPasswordResetSchema,
   ...deviceTokenSchema,

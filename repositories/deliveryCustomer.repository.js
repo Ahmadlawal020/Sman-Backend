@@ -1,6 +1,20 @@
 const { eq, and, or, ilike, desc, count, sql, ne, inArray } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { deliveryCustomers, deliverySales, staff } = require("../db/schema");
+const {
+  administrationDeliverycustomer: deliveryCustomers,
+  administrationDeliverysale: deliverySales,
+} = require("../db/schema");
+
+/**
+ * administration_deliverycustomer (live, canonical) has no customer_code or
+ * paystack/virtual-account columns at all — those were a clean-room-only
+ * concept (and the DVA fields are moot now that Paystack funding is
+ * disabled, see payment.service.js). `name` -> `customerName`,
+ * `virtualAccountNumber` -> `accountNumber` (a plain bank account field on
+ * the live table, unrelated to Paystack). findByCode/generateCustomerCode
+ * are kept as no-ops rather than removed, since callers still reference
+ * them — there is nowhere left to persist a customer code.
+ */
 
 const findById = async (id) => {
   const [row] = await db
@@ -11,14 +25,8 @@ const findById = async (id) => {
   return row || null;
 };
 
-const findByCode = async (customerCode) => {
-  const [row] = await db
-    .select()
-    .from(deliveryCustomers)
-    .where(eq(deliveryCustomers.customerCode, customerCode))
-    .limit(1);
-  return row || null;
-};
+// No customer_code column on the live table — nothing to look up.
+const findByCode = async () => null;
 
 const findByVirtualAccount = async (accountNumber) => {
   if (!accountNumber) return null;
@@ -26,7 +34,7 @@ const findByVirtualAccount = async (accountNumber) => {
   const [row] = await db
     .select()
     .from(deliveryCustomers)
-    .where(eq(deliveryCustomers.virtualAccountNumber, cleanAcc))
+    .where(eq(deliveryCustomers.accountNumber, cleanAcc))
     .limit(1);
   return row || null;
 };
@@ -56,9 +64,8 @@ const findAll = async ({
     const pattern = `%${search}%`;
     conditions.push(
       or(
-        ilike(deliveryCustomers.name, pattern),
+        ilike(deliveryCustomers.customerName, pattern),
         ilike(deliveryCustomers.phoneNumber, pattern),
-        ilike(deliveryCustomers.customerCode, pattern),
         ilike(deliveryCustomers.contactPerson, pattern)
       )
     );
@@ -115,9 +122,8 @@ const findAllWithSalesAggregation = async ({
     const pattern = `%${search}%`;
     conditions.push(
       or(
-        ilike(deliveryCustomers.name, pattern),
+        ilike(deliveryCustomers.customerName, pattern),
         ilike(deliveryCustomers.phoneNumber, pattern),
-        ilike(deliveryCustomers.customerCode, pattern),
         ilike(deliveryCustomers.contactPerson, pattern)
       )
     );

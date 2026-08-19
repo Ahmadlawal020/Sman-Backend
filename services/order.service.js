@@ -1,7 +1,6 @@
-const { v4: uuidv4 } = require("uuid");
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
+const { orderIdempotency } = require("../db/schema");
 const {
   orderRepo,
   customerRepo,
@@ -38,6 +37,20 @@ const { orderExpiryHours, orderExpiryMs } = require("../config/orderExpiry");
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
+}
+
+/**
+ * consumer_truckallocation.ticket_number is NOT NULL + UNIQUE with no DB
+ * default — Django's own TruckAllocation.save() override auto-generates it
+ * (soroman_backend-2/consumer/models.py) as TKT-<createdDate>-<orderId>-T<n>
+ * when absent. Writing straight to Postgres bypasses that override, so this
+ * mirrors it exactly rather than inventing a different format.
+ */
+function truckAllocationTicketNumber(orderId, truckNumber, when = new Date()) {
+  const y = when.getFullYear();
+  const m = String(when.getMonth() + 1).padStart(2, "0");
+  const d = String(when.getDate()).padStart(2, "0");
+  return `TKT-${y}${m}${d}-${orderId}-T${truckNumber}`;
 }
 
 /**
@@ -147,21 +160,27 @@ async function replayResult(orderId) {
     isPaidWithWallet: fullOrder.paymentStatus === "Paid",
     alreadyProcessed: true,
     payment: {
-      accountNumber: fullOrder.virtualAccountNumber,
-      bankName: fullOrder.virtualAccountBank,
-      accountName: fullOrder.virtualAccountName,
+      // consumer_order has no customer-DVA-style virtual account of its
+      // own — paidToAccountNumber/Bank/Name is where WE told the customer
+      // to pay (the depot's bank account), which is what the replay's
+      // caller actually needs to show again.
+      accountNumber: fullOrder.paidToAccountNumber,
+      bankName: fullOrder.paidToBankName,
+      accountName: fullOrder.paidToAccountName,
       emailSent: false,
       smsSent: false,
     },
   };
 }
 
-// Only the idempotency-key index counts — an orderNumber collision (or any
-// other 23505) must still surface as the error it is.
+// Only sman.order_idempotency's own unique index counts — an unrelated
+// 23505 (e.g. a truck-allocation ticket-number collision further down the
+// same transaction) must still surface as the error it is, not be
+// swallowed as a replay.
 const isIdempotencyConflict = (err) => {
   const code = err?.code || err?.cause?.code;
   const constraint = err?.constraint_name || err?.cause?.constraint_name || "";
-  return code === "23505" && constraint === "orders_idempotency_key_idx";
+  return code === "23505" && constraint === "order_idempotency_key_idx";
 };
 
 async function placeOrder({
@@ -268,16 +287,24 @@ async function placeOrder({
   }
   const productUnit = product.unit || "Liters";
 
-  // Server-side pricing — the client never supplies price/total.
-  const priceEntry = await depotRepo.getProductPrice(depotId, productId);
-  if (!priceEntry || Number(priceEntry.currentPrice) <= 0) {
+  // Server-side pricing — the client never supplies price/total. Pricing is
+  // state-scoped live (consumer_productprice keys on state, not depot — see
+  // depot.repository.js's header comment), so resolve the depot's own state
+  // first (where the product is priced/dispensed from), not the customer's
+  // declared delivery state.
+  const depotStateId = await depotRepo.getStateIdForDepot(depotId);
+  const priceEntry = depotStateId ? await depotRepo.getProductPrice(depotStateId, productId) : null;
+  if (!priceEntry || Number(priceEntry.price) <= 0) {
     throw httpError(400, "No price configured for this product at this depot");
   }
-  const serverPrice = Number(priceEntry.currentPrice);
+  const serverPrice = Number(priceEntry.price);
   const totalAmount = serverPrice * Number(quantity);
 
+  // consumer_pfi.locationId is a state id, not a depot id (see
+  // pfi.repository.js) — PFI stock is pooled per state, same resolution as
+  // the price lookup above.
   const { allocations, totalAvailableStock } = await findPfiForOrder(
-    depotId,
+    depotStateId,
     productId,
     quantity
   );
@@ -316,131 +343,161 @@ async function placeOrder({
     }
   }
 
-  const orderNumber = `ORD-${uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
+  // The live schema supports exactly ONE pfi per order (consumer_order.pfi_id
+  // is a single FK, and consumer_pfimovement's unique constraint is on
+  // (action, order_id) — one RELEASE row per order). findPfiForOrder can
+  // still propose a greedy multi-PFI split when a single PFI falls short;
+  // that split has no live representation, and silently reserving only the
+  // first PFI would under-reserve the order without covering its full
+  // quantity — refused rather than guessed.
+  if (allocations.length > 1) {
+    throw httpError(
+      400,
+      `This depot's available stock for ${productUnit} is split across ${allocations.length} separate batches (PFIs) and cannot be combined into one order on this schema. Reduce the quantity to fit within a single batch, or contact support.`
+    );
+  }
+  const [{ pfi: reservedPfi, quantity: reservedQuantity }] = allocations;
+
+  // consumer_order.state_id is a real FK, unlike consumer_depots' free-text
+  // location — resolve the caller's declared state name to it, falling back
+  // to the depot's own state (already resolved above for pricing) when the
+  // name doesn't match a known state.
+  const orderStateId = (await depotRepo.findStateIdByName(state)) || depotStateId;
 
   // --- Atomic order creation -------------------------------------------------
-  // Stock reservation, the order row and the declared pickup loads are ONE
-  // unit: a failure anywhere rolls all of it back. Orders
-  // are always created Unpaid — payment happens later via a manual "Pay Now"
-  // action (staff or customer) that places a wallet hold.
+  // The order row must exist before stock can be reserved against it
+  // (consumer_pfimovement.order_id is NOT NULL) — created first with pfiId
+  // null, then backfilled once the reservation succeeds. Order, reservation
+  // and declared pickup loads are ONE unit: a failure anywhere rolls all of
+  // it back. Orders are always created Unpaid — payment happens later via a
+  // manual "Pay Now" action (staff or customer) that places a wallet hold.
   let order;
   try {
-    ({ order } = await db.transaction(async (tx) => {
-    // Reserve stock from each PFI in the allocation list. If any PFI runs
-    // out concurrently the transaction rolls back — no partial reservations.
-    const reservedPfis = [];
-    for (const alloc of allocations) {
-      const updatedPfi = await pfiRepo.reserveStock(alloc.pfi.id, alloc.quantity, tx);
-      if (!updatedPfi) {
+    order = await db.transaction(async (tx) => {
+      const created = await orderRepo.create(
+        {
+          userId: customerId,
+          stateId: orderStateId,
+          quantity: Number(quantity),
+          price: serverPrice,
+          totalPrice: String(totalAmount),
+          productId,
+          pfiId: null,
+          releaseType: deliveryType,
+          releaseStatus: "pending",
+          orderType: "regular",
+          deliveryAddress:
+            deliveryType === "delivery" && typeof deliveryAddress === "string"
+              ? deliveryAddress.trim()
+              : null,
+          customerName: `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || null,
+          customerPhone: customer.phoneNumber || null,
+          status: "pending",
+          paidToAccountNumber: virtualAccountNumber,
+          paidToBankName: virtualAccountBank,
+          paidToAccountName: virtualAccountName,
+          // Full key kept only in sman.order_idempotency (below), which is
+          // what actually enforces uniqueness — this is a best-effort,
+          // truncated copy so Django's own admin can see the fingerprint too.
+          orderFingerprint: idempotencyKey ? String(idempotencyKey).slice(0, 64) : null,
+          truckExited: false,
+          truckEntered: false,
+          overpaymentFlagged: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        tx
+      );
+
+      const movement = await pfiRepo.reserveStock(reservedPfi.id, reservedQuantity, created.id, tx);
+      if (!movement) {
         throw httpError(
           400,
-          `Insufficient stock in PFI ${alloc.pfi.pfiNumber || alloc.pfi.id} (may have been claimed by another order)`
+          `Insufficient stock in PFI ${reservedPfi.pfiNumber || reservedPfi.id} (may have been claimed by another order)`
         );
       }
-      await pfiRepo.markFinishedIfComplete(updatedPfi.id, tx);
-      reservedPfis.push({ pfiId: updatedPfi.id, quantity: alloc.quantity });
-    }
+      await pfiRepo.markFinishedIfComplete(reservedPfi.id, tx);
+      await orderPfiAllocationRepo.create([{ pfiId: reservedPfi.id, quantity: reservedQuantity }], created.id, tx);
 
-    const created = await orderRepo.create(
-      {
-        orderNumber,
-        customerId,
-        state,
-        depotId,
-        productId,
-        pfiId: reservedPfis[0].pfiId,
-        quantity: Number(quantity),
-        price: String(serverPrice),
-        totalAmount: String(totalAmount),
-        deliveryType,
-        deliveryAddress:
-          deliveryType === "delivery" && typeof deliveryAddress === "string"
-            ? deliveryAddress.trim()
-            : "",
-        companyName: typeof companyName === "string" ? companyName.trim() : "",
-        status: "Pending",
-        paymentStatus: "Unpaid",
-        virtualAccountNumber,
-        virtualAccountBank,
-        virtualAccountName,
-        idempotencyKey,
-      },
-      tx
-    );
+      const finalOrder = await orderRepo.update(created.id, { pfiId: reservedPfi.id }, tx);
+      finalOrder.orderProductId = created.orderProductId;
 
-    // Record per-PFI allocations so cancel/expire can release correctly.
-    if (reservedPfis.length > 0) {
-      await orderPfiAllocationRepo.create(reservedPfis, created.id, tx);
-    }
+      // A concurrent duplicate throws 23505 here; the outer catch below
+      // recognises it via isIdempotencyConflict and replays the winner's
+      // order instead of surfacing the error.
+      if (idempotencyKey) {
+        await tx.insert(orderIdempotency).values({ idempotencyKey: String(idempotencyKey), orderId: created.id });
+      }
 
-    await auditLogRepo.record(
-      {
-        entityType: "order",
-        entityId: created.id,
-        action: "order.created",
-        actor,
-        metadata: {
-          orderNumber,
-          deliveryType,
-          quantity: Number(quantity),
-          totalAmount: String(totalAmount),
-        },
-      },
-      tx
-    );
-
-    // Pickup: materialise the customer's declared trucks as pending loads now,
-    // one row per truck (plate + its quantity), inside the same transaction.
-    // The gate flow later flips each to gated_in → loaded → gated_out, and the
-    // plate can be corrected at the gate and at ticketing. Delivery declares no
-    // trucks here (allocated at release).
-    for (let i = 0; i < declaredTrucks.length; i += 1) {
-      const t = declaredTrucks[i];
-      const load = await orderTruckRepo.create(
-        {
-          orderId: created.id,
-          truckIndex: i + 1,
-          truckId: null,
-          truckNumber: t.truckNumber || null,
-          quantity: String(t.quantity),
-          driverName: t.driverName || null,
-          driverPhone: t.driverPhone || null,
-          status: "pending",
-        },
-        tx
-      );
       await auditLogRepo.record(
         {
-          entityType: "order_truck",
-          entityId: load.id,
-          action: "order_truck.allocated",
+          entityType: "order",
+          entityId: created.id,
+          action: "order.created",
           actor,
-          metadata: { orderId: created.id, truckIndex: i + 1, truckNumber: load.truckNumber, quantity: String(t.quantity), via: "pickup-declaration" },
+          metadata: {
+            deliveryType,
+            quantity: Number(quantity),
+            totalAmount: String(totalAmount),
+          },
         },
         tx
       );
-    }
 
-    return { order: created };
-    }));
+      // Pickup: materialise the customer's declared trucks as pending
+      // consumer_truckallocation rows now, one per truck (plate + its
+      // quantity), inside the same transaction — this IS the live model's
+      // "created at order time" allocation (soroman_backend-2/consumer/
+      // models.py's TruckAllocation), not a Sman-only concept. Gate-in/load/
+      // gate-out tracking happens on a SEPARATE consumer_truckticket row
+      // (generated later, see ticket.service.js/generateTicketForTruck),
+      // not on this one. Delivery declares no trucks here (allocated at
+      // release).
+      for (let i = 0; i < declaredTrucks.length; i += 1) {
+        const t = declaredTrucks[i];
+        const truckNumber = i + 1;
+        const load = await orderTruckRepo.create(
+          {
+            orderId: created.id,
+            orderProductId: created.orderProductId,
+            truckNumber,
+            quantity: String(t.quantity),
+            ticketNumber: truckAllocationTicketNumber(created.id, truckNumber),
+            ticketStatus: "pending",
+            driverName: t.driverName || null,
+            plateNumber: t.truckNumber || null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          tx
+        );
+        await auditLogRepo.record(
+          {
+            entityType: "order_truck",
+            entityId: load.id,
+            action: "order_truck.allocated",
+            actor,
+            metadata: { orderId: created.id, truckNumber, plateNumber: load.plateNumber, quantity: String(t.quantity), via: "pickup-declaration" },
+          },
+          tx
+        );
+      }
+
+      return finalOrder;
+    });
   } catch (err) {
     if (idempotencyKey && isIdempotencyConflict(err)) {
-      const existing = await orderRepo.findByIdempotencyKey(idempotencyKey);
-      if (existing) return replayResult(existing.id);
+      const [existing] = await db
+        .select({ orderId: orderIdempotency.orderId })
+        .from(orderIdempotency)
+        .where(eq(orderIdempotency.idempotencyKey, String(idempotencyKey)))
+        .limit(1);
+      if (existing) return replayResult(existing.orderId);
     }
     throw err;
   }
 
   const fullOrder = await orderRepo.findByIdFull(order.id);
-
-  // The reference every surface shows — "SO600", not the raw ORD-… column.
-  //
-  // `orderNumber` in this scope is the opaque internal value minted at line
-  // ~305, before the row (and therefore its id) existed. It must never reach a
-  // customer: the app, portal, admin dashboard and WhatsApp all render the
-  // computed reference, so an invoice or SMS quoting ORD-BB464940706C names an
-  // order the customer cannot find on any screen. findByIdFull() applies the
-  // same decoration every other read path does.
   const reference = fullOrder.orderNumber;
 
   if (customer.email) {
@@ -455,12 +512,12 @@ async function placeOrder({
         sku: fullOrder.productSku || "",
         quantity: order.quantity,
         unit: fullOrder.productUnit || "Liters",
-        price: order.price,
-        totalAmount: order.totalAmount,
+        price: serverPrice,
+        totalAmount: order.totalPrice,
         deliveryType: order.deliveryType,
         depotName: depot.name,
         depotCode: depot.code,
-        state: order.state,
+        state: fullOrder.stateName || "",
         accountNumber: virtualAccountNumber,
         bankName: virtualAccountBank,
         accountName: virtualAccountName,
@@ -478,7 +535,7 @@ async function placeOrder({
       product: fullOrder.productName || "N/A",
       quantity: order.quantity,
       unit: fullOrder.productUnit || "Liters",
-      totalAmount: order.totalAmount,
+      totalAmount: order.totalPrice,
       accountNumber: virtualAccountNumber,
       bankName: virtualAccountBank,
       accountName: virtualAccountName,
@@ -504,7 +561,7 @@ async function placeOrder({
       product: fullOrder.productName || "",
       quantity: order.quantity,
       unit: fullOrder.productUnit || "Liters",
-      totalAmount: order.totalAmount,
+      totalAmount: order.totalPrice,
       depotName: depot.name,
       deliveryType: order.deliveryType,
     },
@@ -521,7 +578,7 @@ async function placeOrder({
       product: fullOrder.productName || "",
       quantity: order.quantity,
       unit: fullOrder.productUnit || "Liters",
-      totalAmount: order.totalAmount,
+      totalAmount: order.totalPrice,
       depotName: depot.name,
     },
   });
@@ -545,17 +602,13 @@ async function placeOrder({
  * restitution logic lives in one place.
  */
 async function releaseOrderResources(order, tx) {
+  // The live schema supports exactly one PFI per order (see placeOrder's
+  // header note) — releaseStock(pfiId, orderId, tx) deletes the single
+  // RELEASE movement row for this order directly, no per-allocation loop
+  // needed anymore.
   if (order.pfiId) {
-    const allocations = await orderPfiAllocationRepo.findByOrderId(order.id, tx);
-    if (allocations.length > 0) {
-      for (const alloc of allocations) {
-        await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
-      }
-      await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
-    } else {
-      // Fallback for orders created before multi-PFI
-      await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
-    }
+    await pfiRepo.releaseStock(order.pfiId, order.id, tx);
+    await orderPfiAllocationRepo.deleteByOrderId(order.id, tx);
   }
   await orderTruckRepo.deleteByOrder(order.id, tx);
   await walletService.releaseHold(order.id, tx);
@@ -727,7 +780,7 @@ async function updatePickupTrucks({
     // is no longer the customer's to rewrite — the ticket already names a plate,
     // and deleting the load below would take that ticket with it.
     const existing = await orderTruckRepo.findByOrder(order.id, tx);
-    const locked = existing.find((l) => l.status !== "pending");
+    const locked = existing.find((l) => l.ticketStatus !== "pending");
     if (locked) {
       throw httpError(
         409,
@@ -754,19 +807,23 @@ async function updatePickupTrucks({
 
     await orderTruckRepo.deleteByOrder(order.id, tx);
 
+    const orderProductId = await orderRepo.getLineItemId(order.id, tx);
     const loads = [];
     for (let i = 0; i < declared.length; i += 1) {
       const t = declared[i];
+      const truckNumber = i + 1;
       const load = await orderTruckRepo.create(
         {
           orderId: order.id,
-          truckIndex: i + 1,
-          truckId: null,
-          truckNumber: t.truckNumber || null,
+          orderProductId,
+          truckNumber,
           quantity: String(t.quantity),
+          ticketNumber: truckAllocationTicketNumber(order.id, truckNumber),
+          ticketStatus: "pending",
           driverName: t.driverName || null,
-          driverPhone: t.driverPhone || null,
-          status: "pending",
+          plateNumber: t.truckNumber || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         },
         tx
       );
@@ -778,8 +835,8 @@ async function updatePickupTrucks({
           actor,
           metadata: {
             orderId: order.id,
-            truckIndex: i + 1,
-            truckNumber: load.truckNumber,
+            truckNumber,
+            plateNumber: load.plateNumber,
             quantity: String(t.quantity),
             via: "customer-update",
           },
@@ -904,12 +961,13 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
   await expireIfStale({ orderId, customerId });
 
   return db.transaction(async (tx) => {
-    const [order] = await tx
-      .select()
-      .from(orders)
-      .where(eq(orders.id, orderId))
-      .for("update")
-      .limit(1);
+    // orderRepo.lockById (not a raw select) so the row comes back through
+    // formatOrderRow's translation — status/paymentStatus in Sman
+    // vocabulary, customerId aliased from userId, totalAmount from
+    // totalPrice. A raw select here previously read Django's live
+    // lowercase status directly ("pending" !== "Pending"), which made
+    // every payment attempt fail this function's own status check.
+    const order = await orderRepo.lockById(orderId, tx);
 
     if (!order) throw httpError(404, "Order not found");
     // Customer-initiated payment may only ever touch the caller's OWN order; a
@@ -927,7 +985,7 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
     const customer = await customerRepo.findById(order.customerId);
     if (!customer) throw httpError(404, "Customer not found");
 
-    const orderTotal = Number(order.totalAmount);
+    const orderTotal = Number(order.totalPrice);
     if (orderTotal <= 0) throw httpError(400, "Order total is invalid");
 
     const holdResult = await walletService.placeHold(
@@ -942,7 +1000,10 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
 
     if (!holdResult.success) {
       if (holdResult.insufficient) {
-        throw httpError(400, `Insufficient wallet balance. Required: ₦${orderTotal.toLocaleString()}, Available: ₦${Number(customer.balance).toLocaleString()}`);
+        // consumer_customer has no balance column — computed from the sman
+        // wallet ledger, same as everywhere else (see wallet.service.js).
+        const available = await customerRepo.getBalance(customer.id, tx);
+        throw httpError(400, `Insufficient wallet balance. Required: ₦${orderTotal.toLocaleString()}, Available: ₦${Number(available).toLocaleString()}`);
       }
       if (holdResult.alreadyHeld) {
         throw httpError(409, "A payment hold already exists for this order");
@@ -954,7 +1015,9 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
       tx,
       actor,
       action: "order.paid",
-      set: { paymentConfirmedAt: new Date(), paymentStatus: "Paid" },
+      // No live paymentStatus column — status/release_status alone carry
+      // this now (see utils/orderStatusMapping.js).
+      set: { paymentConfirmedAt: new Date().toISOString() },
       metadata: { via: "wallet", amount: String(orderTotal) },
     });
 

@@ -9,6 +9,7 @@ const {
   consumerProduct,
   consumerProductprice,
   administrationUser,
+  consumerStates,
 } = require("../db/schema");
 
 /**
@@ -240,6 +241,40 @@ const setProductCapacities = async (depotId, capacitiesList) => {
 
 // ─── Product prices — state-scoped on the live schema, not depot-scoped ─────
 
+/**
+ * consumer_depots.location is a free-text state name (no FK at all — see
+ * this file's header comment), so pricing/stock, which live per
+ * consumer_states.id, has to resolve through it by name. Callers that used
+ * to pass a depotId into a price/stock lookup now need this first.
+ */
+const getStateIdForDepot = async (depotId) => {
+  const depot = await findById(depotId);
+  if (!depot?.location) return null;
+  const [state] = await db
+    .select({ id: consumerStates.id })
+    .from(consumerStates)
+    .where(eq(consumerStates.name, depot.location))
+    .limit(1);
+  return state?.id || null;
+};
+
+/**
+ * Same by-name lookup, for a caller (placeOrder) that has a free-text state
+ * name of its own — the customer's declared delivery state — rather than a
+ * depot to resolve one from. consumer_order.state_id is a real FK, unlike
+ * consumer_depots' free-text location, so this is the one place order
+ * placement needs to turn a name into that id.
+ */
+const findStateIdByName = async (name) => {
+  if (!name) return null;
+  const [state] = await db
+    .select({ id: consumerStates.id })
+    .from(consumerStates)
+    .where(eq(consumerStates.name, name))
+    .limit(1);
+  return state?.id || null;
+};
+
 const getProductPricesByState = async (stateId) => {
   const rows = await db
     .select({
@@ -323,6 +358,8 @@ module.exports = {
   getProductCapacities,
   setProductCapacities,
   upsertProductCapacity,
+  getStateIdForDepot,
+  findStateIdByName,
   getProductPricesByState,
   getProductPrice,
   upsertProductPrice,
