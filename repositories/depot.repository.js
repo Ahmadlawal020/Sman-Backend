@@ -299,6 +299,18 @@ const getProductPricesByState = async (stateId) => {
   }));
 };
 
+/**
+ * consumer_productprice is keyed by state, not depot — depot.controller.js's
+ * getDepots/getDepotById call this by depot id, so it resolves the depot's
+ * state first. No state on the depot (getStateIdForDepot returns null) means
+ * no prices to show, not an error.
+ */
+const getProductPrices = async (depotId) => {
+  const stateId = await getStateIdForDepot(depotId);
+  if (!stateId) return [];
+  return getProductPricesByState(stateId);
+};
+
 const getProductPrice = async (stateId, productId, tx = db) => {
   const [row] = await tx
     .select()
@@ -361,6 +373,7 @@ module.exports = {
   getStateIdForDepot,
   findStateIdByName,
   getProductPricesByState,
+  getProductPrices,
   getProductPrice,
   upsertProductPrice,
   getPriceHistory,

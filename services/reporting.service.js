@@ -30,6 +30,19 @@ const dateConditions = (column, dateFrom, dateTo) => {
   return conditions;
 };
 
+// customer_credits.createdAt (sman schema) has no mode:'string' — unlike
+// every Django-native table this file otherwise queries, Drizzle's default
+// timestamp mode expects a real Date instance and calls .toISOString() on it
+// internally, so passing an already-stringified value (dateConditions above)
+// crashes with "value.toISOString is not a function". This variant passes
+// the Date object through as-is instead.
+const dateConditionsForDateMode = (column, dateFrom, dateTo) => {
+  const conditions = [];
+  if (dateFrom) conditions.push(gte(column, new Date(dateFrom)));
+  if (dateTo) conditions.push(lte(column, new Date(dateTo)));
+  return conditions;
+};
+
 /**
  * consumer_order has no separate paymentStatus axis (see
  * utils/orderStatusMapping.js) — grouped raw by (status, releaseStatus) and
@@ -84,7 +97,7 @@ const salesSummary = async ({ dateFrom, dateTo } = {}) => {
  * (deposit), a negative one a debit (applied to an order).
  */
 const walletSummary = async ({ dateFrom, dateTo } = {}) => {
-  const conditions = dateConditions(customerCredits.createdAt, dateFrom, dateTo);
+  const conditions = dateConditionsForDateMode(customerCredits.createdAt, dateFrom, dateTo);
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [movement] = await db
@@ -156,8 +169,11 @@ const pfiSummary = async () => {
 // gap between them.
 const deliverySalesTotals = async ({ dateFrom, dateTo, customerType } = {}) => {
   const conditions = [];
-  if (dateFrom) conditions.push(gte(administrationDeliverysale.dateLoaded, dateFrom));
-  if (dateTo) conditions.push(lte(administrationDeliverysale.dateLoaded, dateTo));
+  // date_loaded is a DATE column (not timestamp) — expects a plain
+  // YYYY-MM-DD string, not a Date instance (the pg driver rejects the
+  // latter outright: "must be of type string... Received an instance of Date").
+  if (dateFrom) conditions.push(gte(administrationDeliverysale.dateLoaded, new Date(dateFrom).toISOString().slice(0, 10)));
+  if (dateTo) conditions.push(lte(administrationDeliverysale.dateLoaded, new Date(dateTo).toISOString().slice(0, 10)));
   if (customerType) conditions.push(eq(administrationDeliverycustomer.customerType, customerType));
 
   const [totals] = await db

@@ -79,6 +79,12 @@ const formatOrderRow = (row) => {
     loadingStartedAt: row.loadingDatetime,
     completedAt: row.securityExitedAt,
     cancelledAt: row.status === "canceled" ? row.updatedAt : null,
+    // The dashboard's orders pages read order.depotName || order.state for
+    // the "Location" column — there is no depot on a live order (see this
+    // file's header comment), but the state name is available and joined in
+    // as stateName above; aliased here so the existing frontend fallback
+    // actually finds it instead of showing blank.
+    state: row.stateName,
   };
 };
 
