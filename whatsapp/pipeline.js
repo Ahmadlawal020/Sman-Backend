@@ -133,6 +133,16 @@ const performEffect = async (effect, { wamid, waPhone, inboundMessageId = null }
         // expired). The engine keeps unpaid orders on the transfer path, and
         // offers reorder when the window has closed.
         console.error("[wa-pipeline] PAY_ORDER failed:", err.message);
+        // Already paid — typically a bank-transfer settlement flipped the
+        // order to Paid between the menu render and this tap. That is a
+        // SUCCESS from the customer's view, not a failure: confirm it rather
+        // than telling them "we couldn't take the payment".
+        if (/already paid/i.test(err.message || "")) {
+          const order = await orderRepo
+            .findByIdFull(effect.payload.orderId)
+            .catch(() => null);
+          if (order) return { type: INBOUND.PAYMENT_CONFIRMED, order };
+        }
         if (/expired/i.test(err.message || "")) {
           return { type: INBOUND.ORDER_FAILED, reason: "expired", message: err.message };
         }
