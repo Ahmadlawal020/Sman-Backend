@@ -18,7 +18,7 @@ const {
  */
 const getAuthContext = async (staffId) => {
   const [staffRow, depotRows, stationRows, pfiRows, overrideRows] = await Promise.all([
-    db.select({ canViewAllLocations: staff.canViewAllLocations }).from(staff).where(eq(staff.id, staffId)).limit(1),
+    db.select({ canViewAllLocations: staff.canViewAllLocations, roles: staff.roles }).from(staff).where(eq(staff.id, staffId)).limit(1),
     db.select({ depotId: depotStaff.depotId }).from(depotStaff).where(eq(depotStaff.staffId, staffId)),
     db.select({ lpgStationId: lpgStationStaff.lpgStationId }).from(lpgStationStaff).where(eq(lpgStationStaff.staffId, staffId)),
     db.select({ pfiId: pfiStaff.pfiId }).from(pfiStaff).where(eq(pfiStaff.staffId, staffId)),
@@ -27,8 +27,17 @@ const getAuthContext = async (staffId) => {
       .where(eq(staffPageOverrides.staffId, staffId)),
   ]);
 
+  // A super_admin sees everything by role, regardless of the
+  // can_view_all_locations flag. That flag is a per-user location filter for
+  // ordinary staff; a super admin who happens to have it unset (or who has no
+  // depot/PFI assignments) must never be scoped down to nothing. This mirrors
+  // Django's is_superuser bypass and is the single place scope is derived, so
+  // it covers every scoped resource at once.
+  const roles = staffRow[0]?.roles || [];
+  const isSuperAdmin = roles.includes("super_admin");
+
   return {
-    canViewAllLocations: staffRow[0]?.canViewAllLocations ?? true,
+    canViewAllLocations: isSuperAdmin || (staffRow[0]?.canViewAllLocations ?? true),
     scope: {
       depotIds: depotRows.map((r) => r.depotId),
       lpgStationIds: stationRows.map((r) => r.lpgStationId),
