@@ -3528,12 +3528,10 @@ CREATE INDEX "administration_offlinesales_trucks_truck_id_b7951bfa" ON "administ
 CREATE INDEX "administration_record_reviewed_by_id_21c842b0" ON "administration_record" USING btree ("reviewed_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "administration_record_submitted_by_id_bf85d70b" ON "administration_record" USING btree ("submitted_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "administration_reportrecipient_email_c2436747_like" ON "administration_reportrecipient" USING btree ("email" varchar_pattern_ops);--> statement-breakpoint
-CREATE INDEX "administrat_date_2fe750_idx" ON "administration_staffdailysalesreport" USING btree ("date" date_ops,"location" date_ops);--> statement-breakpoint
 CREATE INDEX "administration_staffdailysalesreport_date_1d30368b" ON "administration_staffdailysalesreport" USING btree ("date" date_ops);--> statement-breakpoint
 CREATE INDEX "administration_staffdailysalesreport_location_d593306d" ON "administration_staffdailysalesreport" USING btree ("location" text_ops);--> statement-breakpoint
 CREATE INDEX "administration_staffdailysalesreport_location_d593306d_like" ON "administration_staffdailysalesreport" USING btree ("location" varchar_pattern_ops);--> statement-breakpoint
 CREATE INDEX "administration_staffdailysalesreport_submitted_by_id_fdc20360" ON "administration_staffdailysalesreport" USING btree ("submitted_by_id" int8_ops);--> statement-breakpoint
-CREATE INDEX "administrat_id_fe5ec4_idx" ON "administration_user" USING btree ("id" text_ops,"email" int8_ops);--> statement-breakpoint
 CREATE INDEX "administration_user_email_1d334039_like" ON "administration_user" USING btree ("email" varchar_pattern_ops);--> statement-breakpoint
 CREATE INDEX "administration_user_phone_number_45df971d_like" ON "administration_user" USING btree ("phone_number" varchar_pattern_ops);--> statement-breakpoint
 CREATE INDEX "administration_user_fillin_deliverycustomer_id_9b285a15" ON "administration_user_filling_stations" USING btree ("deliverycustomer_id" int8_ops);--> statement-breakpoint
@@ -3576,7 +3574,6 @@ CREATE INDEX "customer_licenses_customer_id_idx" ON "customer_licenses" USING bt
 CREATE INDEX "customer_licenses_status_idx" ON "customer_licenses" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "consumer_agent_location_id_81f36b58" ON "consumer_agent" USING btree ("location_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_agent_phone_9cf6c3c3_like" ON "consumer_agent" USING btree ("phone" varchar_pattern_ops);--> statement-breakpoint
-CREATE INDEX "audit_ord_act_ts" ON "consumer_auditlog" USING btree ("order_id" timestamptz_ops,"action" int8_ops,"timestamp" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "consumer_auditlog_actor_id_fa079501" ON "consumer_auditlog" USING btree ("actor_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_auditlog_order_id_dc6c79ae" ON "consumer_auditlog" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_bankacct_acct_no_6a4701a1_like" ON "consumer_bankacct" USING btree ("acct_no" varchar_pattern_ops);--> statement-breakpoint
@@ -3592,7 +3589,6 @@ CREATE INDEX "consumer_bankstatementline_matched_by_id_605ad10f" ON "consumer_ba
 CREATE INDEX "consumer_bankstatementline_matched_order_id_b2520e81" ON "consumer_bankstatementline" USING btree ("matched_order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_bankstatementline_matched_payment_record_id_b2f56ecb" ON "consumer_bankstatementline" USING btree ("matched_payment_record_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_bankstatementline_statement_id_13b4c42e" ON "consumer_bankstatementline" USING btree ("statement_id" int8_ops);--> statement-breakpoint
-CREATE INDEX "consumer_cu_id_5634de_idx" ON "consumer_customer" USING btree ("id" int8_ops,"email" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_deliveryorders_delivery_state_id_44ba3748" ON "consumer_deliveryorders" USING btree ("delivery_state_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_deliveryorders_order_id_b9c187e7" ON "consumer_deliveryorders" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_ex_is_syst_9fd317_idx" ON "consumer_expensecategory" USING btree ("is_system_category" bool_ops);--> statement-breakpoint
@@ -3611,7 +3607,6 @@ CREATE INDEX "consumer_lpgsale_plant_id_d1f1981c" ON "consumer_lpgsale" USING bt
 CREATE INDEX "consumer_lpgstockentry_plant_id_76489617" ON "consumer_lpgstockentry" USING btree ("plant_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_lpgstockentry_recorded_by_id_8df38296" ON "consumer_lpgstockentry" USING btree ("recorded_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_or_id_642470_idx" ON "consumer_order" USING btree ("id" int8_ops);--> statement-breakpoint
-CREATE INDEX "consumer_or_status_b5f36a_idx" ON "consumer_order" USING btree ("status" timestamptz_ops,"created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "consumer_order_assigned_agent_id_85f408a3" ON "consumer_order" USING btree ("assigned_agent_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_order_commission_paid_by_id_30ee53ab" ON "consumer_order" USING btree ("commission_paid_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_order_order_fingerprint_18d15027" ON "consumer_order" USING btree ("order_fingerprint" text_ops);--> statement-breakpoint
@@ -3650,7 +3645,6 @@ CREATE INDEX "consumer_paymentfile_order_id_cdd06dcb" ON "consumer_paymentfile" 
 CREATE INDEX "consumer_pa_order_i_262730_idx" ON "consumer_paymentsplit" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_paymentsplit_order_id_7a2d67d1" ON "consumer_paymentsplit" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pf_created_61ea80_idx" ON "consumer_pfi" USING btree ("created_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "consumer_pf_status_48f26b_idx" ON "consumer_pfi" USING btree ("status" text_ops,"location_id" int8_ops,"product_id" text_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfi_audit_officer_id_92963914" ON "consumer_pfi" USING btree ("audit_officer_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfi_commission_officer_id_b955bccd" ON "consumer_pfi" USING btree ("commission_officer_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfi_created_by_id_a9ca7415" ON "consumer_pfi" USING btree ("created_by_id" int8_ops);--> statement-breakpoint
@@ -3666,7 +3660,6 @@ CREATE INDEX "consumer_pfi_security_exit_officer_id_55bcda50" ON "consumer_pfi" 
 CREATE INDEX "consumer_pfi_allowed_locations_pfi_id_1b1283ab" ON "consumer_pfi_allowed_locations" USING btree ("pfi_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfi_allowed_locations_states_id_e5116c02" ON "consumer_pfi_allowed_locations" USING btree ("states_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pf_deleted_3e38b3_idx" ON "consumer_pfiexpense" USING btree ("deleted_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "consumer_pf_pfi_id_2f1400_idx" ON "consumer_pfiexpense" USING btree ("pfi_id" int8_ops,"date" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pf_pfi_id_688b26_idx" ON "consumer_pfiexpense" USING btree ("pfi_id" int8_ops,"category_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpense_added_by_id_f696ea64" ON "consumer_pfiexpense" USING btree ("added_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpense_admin_approved_by_id_ddaea4f9" ON "consumer_pfiexpense" USING btree ("admin_approved_by_id" int8_ops);--> statement-breakpoint
@@ -3679,15 +3672,12 @@ CREATE INDEX "consumer_pfiexpense_reviewed_by_id_0cdae3e9" ON "consumer_pfiexpen
 CREATE INDEX "consumer_pfiexpense_status_b6f290c2" ON "consumer_pfiexpense" USING btree ("status" text_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpense_status_b6f290c2_like" ON "consumer_pfiexpense" USING btree ("status" varchar_pattern_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpense_verified_by_id_fb7c8e9a" ON "consumer_pfiexpense" USING btree ("verified_by_id" int8_ops);--> statement-breakpoint
-CREATE INDEX "consumer_pf_expense_2ea477_idx" ON "consumer_pfiexpenseattachment" USING btree ("expense_id" int8_ops,"uploaded_at" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpenseattachment_expense_id_a4da6eae" ON "consumer_pfiexpenseattachment" USING btree ("expense_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpenseattachment_uploaded_by_id_a1f0da1d" ON "consumer_pfiexpenseattachment" USING btree ("uploaded_by_id" int8_ops);--> statement-breakpoint
-CREATE INDEX "consumer_pf_action_4855c9_idx" ON "consumer_pfiexpenseaudit" USING btree ("action" timestamptz_ops,"performed_at" text_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pf_expense_bb88ea_idx" ON "consumer_pfiexpenseaudit" USING btree ("expense_id" int8_ops,"performed_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpenseaudit_expense_id_11474495" ON "consumer_pfiexpenseaudit" USING btree ("expense_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfiexpenseaudit_performed_by_id_52a514fe" ON "consumer_pfiexpenseaudit" USING btree ("performed_by_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pf_order_i_7e31da_idx" ON "consumer_pfimovement" USING btree ("order_id" int8_ops,"action" text_ops);--> statement-breakpoint
-CREATE INDEX "consumer_pf_pfi_id_bffd45_idx" ON "consumer_pfimovement" USING btree ("pfi_id" int8_ops,"timestamp" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfimovement_order_id_e5c957e2" ON "consumer_pfimovement" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfimovement_pfi_id_05fbfca2" ON "consumer_pfimovement" USING btree ("pfi_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_pfimovement_user_id_7e293198" ON "consumer_pfimovement" USING btree ("user_id" int8_ops);--> statement-breakpoint
@@ -3697,7 +3687,6 @@ CREATE INDEX "consumer_pickuptruck_pickup_order_id_65bbd981" ON "consumer_pickup
 CREATE INDEX "consumer_productprice_product_id_af686dda" ON "consumer_productprice" USING btree ("product_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_productprice_state_id_38860880" ON "consumer_productprice" USING btree ("state_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_truck_no_fff21c6f_like" ON "consumer_truck" USING btree ("no" varchar_pattern_ops);--> statement-breakpoint
-CREATE INDEX "consumer_tr_order_i_06f08d_idx" ON "consumer_truckallocation" USING btree ("order_id" int4_ops,"truck_number" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_tr_ticket__4b889f_idx" ON "consumer_truckallocation" USING btree ("ticket_status" text_ops);--> statement-breakpoint
 CREATE INDEX "consumer_truckallocation_order_id_bfa195b5" ON "consumer_truckallocation" USING btree ("order_id" int8_ops);--> statement-breakpoint
 CREATE INDEX "consumer_truckallocation_order_product_id_ac4fe6c0" ON "consumer_truckallocation" USING btree ("order_product_id" int8_ops);--> statement-breakpoint
