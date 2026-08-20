@@ -431,7 +431,17 @@ async function placeOrder({
     throw err;
   }
 
-  const fullOrder = await orderRepo.findByIdFull(order.id);
+  // CRITICAL: the order is already committed above. Nothing from here on may
+  // throw, or the caller sees a failure for an order that actually exists —
+  // and the WhatsApp flow, told "no charge", lets the customer re-tap into a
+  // SECOND real order (a fresh wamid = a fresh idempotency key). So the
+  // post-commit read falls back to the committed row, and the notifications
+  // below are each isolated. Everything the caller needs (reference, totals,
+  // the deposit account) is present on `order` itself.
+  const fullOrder = (await orderRepo.findByIdFull(order.id).catch((err) => {
+    console.error("[placeOrder] post-commit findByIdFull failed (order IS created):", err.message);
+    return null;
+  })) || order;
 
   // The reference every surface shows — "SO600", not the raw ORD-… column.
   //
@@ -494,37 +504,44 @@ async function placeOrder({
   // adds the inbox row and the push that were missing, so the order also shows
   // up in the app. The catalog entry is APP_ONLY for precisely that reason: it
   // must not re-send what the two calls above already sent.
-  notify("order.created", {
-    to: { customer },
-    data: {
-      orderId: order.id,
-      orderNumber: reference,
-      reference,
-      customerName: customer.name,
-      product: fullOrder.productName || "",
-      quantity: order.quantity,
-      unit: fullOrder.productUnit || "Liters",
-      totalAmount: order.totalAmount,
-      depotName: depot.name,
-      deliveryType: order.deliveryType,
-    },
-  });
+  //
+  // Wrapped: a notify() failure (queue hiccup) must not throw out of a
+  // committed placeOrder — see the post-commit note above.
+  try {
+    notify("order.created", {
+      to: { customer },
+      data: {
+        orderId: order.id,
+        orderNumber: reference,
+        reference,
+        customerName: customer.name,
+        product: fullOrder.productName || "",
+        quantity: order.quantity,
+        unit: fullOrder.productUnit || "Liters",
+        totalAmount: order.totalAmount,
+        depotName: depot.name,
+        deliveryType: order.deliveryType,
+      },
+    });
 
-  // Sales and finance want to see the order land without watching the list.
-  notify("staff.order_placed", {
-    to: { roles: ["admin", "super_admin", "sales_manager", "finance_manager"] },
-    data: {
-      orderId: order.id,
-      orderNumber: reference,
-      reference,
-      customerName: customer.name,
-      product: fullOrder.productName || "",
-      quantity: order.quantity,
-      unit: fullOrder.productUnit || "Liters",
-      totalAmount: order.totalAmount,
-      depotName: depot.name,
-    },
-  });
+    // Sales and finance want to see the order land without watching the list.
+    notify("staff.order_placed", {
+      to: { roles: ["admin", "super_admin", "sales_manager", "finance_manager"] },
+      data: {
+        orderId: order.id,
+        orderNumber: reference,
+        reference,
+        customerName: customer.name,
+        product: fullOrder.productName || "",
+        quantity: order.quantity,
+        unit: fullOrder.productUnit || "Liters",
+        totalAmount: order.totalAmount,
+        depotName: depot.name,
+      },
+    });
+  } catch (notifyErr) {
+    console.error("[placeOrder] post-commit notify failed (order IS created):", notifyErr.message);
+  }
 
   return {
     order: fullOrder,
