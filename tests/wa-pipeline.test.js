@@ -283,14 +283,16 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
     const paid = await orderRepo.findById(order.id);
     assert.equal(paid.paymentStatus, "Paid");
 
-    // A stale second tap is refused (already paid), re-entering as ORDER_FAILED
-    // reason=pay — the engine keeps the order and points at transfer.
+    // A stale second tap on an already-paid order RE-CONFIRMS rather than
+    // erroring: an order that is paid — whether by this tap's predecessor or
+    // by a bank-transfer settlement between menu render and tap — should tell
+    // the customer "payment received", never "we couldn't take the payment".
     const repeat = await performEffect(
       { type: "PAY_ORDER", payload: { orderId: order.id, customerId: customer.id } },
       { wamid: `wamid.PIPE-${RUN}-PAYNOW2`, waPhone: PHONE }
     );
-    assert.equal(repeat.type, INBOUND.ORDER_FAILED);
-    assert.equal(repeat.reason, "pay");
+    assert.equal(repeat.type, INBOUND.PAYMENT_CONFIRMED);
+    assert.equal(repeat.order.id, order.id);
   });
 
   test("a stale inbound recovered by the janitor is skipped, never replayed", async () => {

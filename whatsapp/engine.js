@@ -123,20 +123,29 @@ const isUserInput = (inbound) =>
   inbound.type === INBOUND.TEXT || inbound.type === INBOUND.BUTTON || inbound.type === INBOUND.LIST;
 
 /**
- * "30000", "30,000", "30 000", "30000L", "30k" → 30000. NaN when it isn't a
- * quantity at all.
+ * "30000", "30,000", "30 000", "30.000", "30000L", "30k", "30.5k" → whole
+ * litres. NaN when it isn't a quantity at all.
+ *
+ * The `k` suffix is what disambiguates a dot. WITH `k`, the dot is a decimal
+ * point applied before the ×1000 multiplier ("30.5k" → 30500, "1.5k" → 1500).
+ * WITHOUT `k`, litres are always whole numbers, so a dot is a thousands
+ * separator, NOT a decimal — stripped like the comma/space. Without this,
+ * "30.000" parsed as the float 30 (thirty litres, not thirty thousand) and
+ * "1.500" as 1.5 → a silent, badly wrong quantity.
  */
 const parseLitres = (raw) => {
   let s = String(raw ?? "").trim().toLowerCase();
   s = s.replace(/(liters|litres|ltrs|ltr|l)$/i, "").trim();
-  let mult = 1;
   if (s.endsWith("k")) {
-    mult = 1000;
-    s = s.slice(0, -1);
+    // k present → the value is a plain decimal scaled by 1000.
+    const n = s.slice(0, -1).replace(/[,\s]/g, "");
+    if (!/^\d+(\.\d+)?$/.test(n)) return NaN;
+    return Math.round(Number(n) * 1000);
   }
-  s = s.replace(/[,\s]/g, "");
-  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
-  return Math.round(Number(s) * mult);
+  // No multiplier → every dot/comma/space is thousands grouping.
+  s = s.replace(/[,\s.]/g, "");
+  if (!/^\d+$/.test(s)) return NaN;
+  return Number(s);
 };
 
 // Forgiving: real plates vary; the gate audits and can correct them later.
