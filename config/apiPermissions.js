@@ -55,7 +55,11 @@ const API_PERMISSIONS = {
     write: [...OPS, ...SECURITY, "admin"],
   },
   "/api/tickets": { read: [...OPS, ...SECURITY, "audit"], write: OPS },
-  "/api/customers": { read: [...SALES, ...MONEY, ...OPS], write: [...SALES, "admin"] },
+  // Deliberately open, like /api/dashboard above: the page-visibility check
+  // already gates who sees the Customers nav item, and several tiered
+  // sub-roles (e.g. sales_operator, finance_viewer) were passing that check
+  // but 403ing on every fetch because they weren't in SALES/MONEY/OPS.
+  "/api/customers": { read: null },
   "/api/customer-licenses": { read: [...SALES, ...MONEY], write: ["admin"] },
 
   "/api/depots": { read: [...OPS, ...SALES, ...MONEY], write: ["admin"] },
