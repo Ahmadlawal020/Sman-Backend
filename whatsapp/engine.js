@@ -403,10 +403,12 @@ const promptFor = (state, session, context) => {
 /**
  * The Pay now / Cancel buttons for an unpaid order. Pay now is always offered
  * so the customer has a single obvious way to confirm: after their transfer
- * lands, the DVA webhook credits the wallet and the tap settles the order. A
- * tap before the money reflects can't overspend — PAY_ORDER re-checks and, if
- * the balance still falls short, replies with the "transfer first" copy.
- * Cancel is always offered. Always ≤ 3 buttons (WhatsApp's limit).
+ * lands in the depot's account and staff record the deposit (wallet funding
+ * is manual now — Paystack DVAs and their webhook are retired), the tap
+ * settles the order from the credited wallet. A tap before the deposit is
+ * recorded can't overspend — PAY_ORDER re-checks and, if the balance still
+ * falls short, replies with the "transfer first" copy. Cancel is always
+ * offered. Always ≤ 3 buttons (WhatsApp's limit).
  */
 const awaitPaymentButtonDefs = (cart, context) => {
   const total = Number(cart.awaiting?.totalAmount) || 0;
@@ -698,7 +700,7 @@ const reduceInner = (session, inbound, ctx, expired) => {
       if (paidFromWallet) {
         replies.push(text(copy.orderPaidWallet(order)));
       } else {
-        // One message, not two: the order + dedicated-account details ARE the
+        // One message, not two: the order + payment-account details ARE the
         // body of the Pay now / Cancel buttons, so the "how to pay" copy and
         // the buttons that action it can't drift apart or repeat each other.
         replies.push(buttons(copy.orderCreated(order), awaitPaymentButtonDefs(next.cart, ctx)));

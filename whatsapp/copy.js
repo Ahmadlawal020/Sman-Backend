@@ -353,11 +353,11 @@ const orderCreated = (order) => {
     `Your order *${order.orderNumber}* has been created.\n\n` +
     `*Total: ${naira(order.totalAmount)}*\n\n` +
     (deadline ? `${deadline}\n\n` : "") +
-    `To pay by bank transfer, send to your dedicated account:\n` +
+    `To pay by bank transfer, send to the account for this order:\n` +
     `Bank: ${order.virtualAccountBank}\n` +
     `Account Number: *${order.virtualAccountNumber}*\n` +
     `Account Name: ${order.virtualAccountName}\n\n` +
-    "Once your transfer reflects, tap *Pay now* below to confirm your order."
+    "Once Soroman confirms your transfer, tap *Pay now* below to confirm your order."
   );
 };
 
@@ -368,7 +368,7 @@ const orderCreated = (order) => {
  */
 const payFailed = (message) =>
   message && /balance/i.test(message)
-    ? "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the dedicated account above, then tap *Pay now* again."
+    ? "Not yet — there isn't enough in your wallet to cover this order. Please transfer to the account above; once Soroman confirms it, tap *Pay now* again."
     : "We couldn't take the payment. Please try again, or transfer to the account above.";
 
 /**
