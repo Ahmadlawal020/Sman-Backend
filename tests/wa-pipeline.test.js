@@ -164,14 +164,9 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
   });
 
   test("confirm places a REAL order through placeOrder, idempotency key = wamid", async () => {
-    // The engine-created customer has no DVA; give them one so the test never
-    // reaches for Paystack (live flow would create it lazily inside placeOrder).
-    const customer = await customerRepo.findByPhone(PHONE);
-    await customerRepo.update(customer.id, {
-      virtualAccountNumber: `VPIPE${String(RUN).slice(-5)}`,
-      virtualAccountBank: "Test Bank",
-      virtualAccountName: "SOROMANNIGERI/ CO",
-    });
+    // Manual-deposit-only: placeOrder pays into the DEPOT's bank account
+    // (seeded in before()), never a per-customer DVA — the reply must carry
+    // the depot account number.
 
     const { wamid, session, outbound } = await say("confirm");
     assert.equal(session.state, "AWAIT_PAYMENT");
@@ -186,8 +181,8 @@ describe("wa pipeline — a whole order placed over WhatsApp, no Meta required",
 
     // The account details now ride ON the Pay now / Cancel buttons message —
     // one message, not a separate text before it.
-    const paymentMsg = outbound.find((m) => /VPIPE/.test(m.payload.body || ""));
-    assert.ok(paymentMsg, "the reply carries the dedicated account number");
+    const paymentMsg = outbound.find((m) => (m.payload.body || "").includes(`PIPACC${String(RUN).slice(-6)}`));
+    assert.ok(paymentMsg, "the reply carries the depot's deposit account number");
     assert.equal(paymentMsg.payload.kind, "buttons", "details ride on the Pay now / Cancel message");
   });
 

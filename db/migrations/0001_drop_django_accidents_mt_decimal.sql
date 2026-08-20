@@ -209,3 +209,10 @@ DROP TABLE IF EXISTS "django_content_type" CASCADE;--> statement-breakpoint
 DROP TABLE IF EXISTS "django_migrations" CASCADE;--> statement-breakpoint
 DROP TABLE IF EXISTS "django_session" CASCADE;--> statement-breakpoint
 DROP SCHEMA IF EXISTS "sman" CASCADE;
+
+-- The squash also lost the wallet's DB-level backstop (originally migration
+-- 0004_balance_non_negative): nothing at the database layer stopped a raw
+-- write taking a customer's balance negative. All application writes go
+-- through guarded repo code, but the constraint is the last line of defense
+-- and tests/money-path.test.js asserts it by name.
+ALTER TABLE "customers" ADD CONSTRAINT "customers_balance_non_negative" CHECK (balance >= 0);
