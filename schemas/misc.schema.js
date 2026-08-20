@@ -237,14 +237,36 @@ const updateVendor = z.object(vendorBase).partial();
 
 // --- bank statements ------------------------------------------------------
 
+/** A 0-based column index — unlike `id()`, 0 is valid (the first column). */
+const columnIndex = (label) =>
+  numberLike(label).pipe(
+    z.number().int(`${label} must be a whole number`).min(0, `${label} must be zero or greater`)
+  );
+
 const createBankStatement = z.object({
   bankAccountId: id("Bank account"),
-  fileName: optionalString("File name", 255),
-  statementDate: optionalString("Statement date", 40),
-  lines: z.array(z.record(z.unknown())).optional(),
+  filename: optionalString("Filename", 255),
+  rows: z
+    .array(
+      z.object({
+        txnDate: requiredString("Transaction date", 40),
+        amount: numberLike("Amount"),
+        depositor: optionalString("Depositor", 255),
+        bankRef: optionalString("Bank reference", 255),
+        narration: optionalString("Narration", 1000),
+      })
+    )
+    .min(1, "At least one row is required"),
 });
 const bankStatementMapping = z.object({
-  mapping: z.record(z.unknown()),
+  headerRow: columnIndex("Header row").optional(),
+  dateColumn: columnIndex("Date column").optional().nullable(),
+  amountColumn: columnIndex("Amount column").optional().nullable(),
+  creditColumn: columnIndex("Credit column").optional().nullable(),
+  depositorColumn: columnIndex("Depositor column").optional().nullable(),
+  referenceColumn: columnIndex("Reference column").optional().nullable(),
+  narrationColumn: columnIndex("Narration column").optional().nullable(),
+  sampleHeaders: z.array(z.string()).optional(),
 });
 const matchBankLines = z.object({
   lineIds: z.array(id("Line id")).min(1, "At least one line is required"),
