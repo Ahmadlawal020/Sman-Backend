@@ -17,6 +17,7 @@ const {
   getOrderTrucks,
   gateInTruck,
   markTruckLoaded,
+  updateTruckLoad,
   gateOutTruck,
   getPayableOrders,
   payOrder,
@@ -113,6 +114,15 @@ router.post(
   requireRole("ticketing", "super_admin", { message: "Ticketing access required" }),
   validate({ params: orderSchemas.loadParam, body: orderSchemas.loadTruck }),
   markTruckLoaded
+);
+// Correct a load's own details after the fact — quantity, plate, driver.
+// Open to any signed-in staff, same as the order-edit route above; refused
+// once the truck has gated out (see updateTruckLoad).
+router.patch(
+  "/:id/trucks/:loadId",
+  verifyStaff,
+  validate({ params: orderSchemas.loadParam, body: orderSchemas.updateTruckLoad }),
+  updateTruckLoad
 );
 router.post(
   "/:id/trucks/:loadId/gate-out",

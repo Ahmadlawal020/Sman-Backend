@@ -476,6 +476,72 @@ const markTruckLoaded = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Truck loaded and ticket issued", data: result });
 });
 
+// Correct a load's own details after the fact — quantity, plate, driver.
+// Deliberately separate from markTruckLoaded: that endpoint is the ticketing
+// desk's "confirm loaded" action and has side effects (status, a fresh
+// ticket); this one only ever touches the four columns on the load itself.
+const updateTruckLoad = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const loadId = Number(req.params.loadId);
+  const { truckNumber, quantity, driverName, driverPhone } = req.body;
+
+  const updated = await db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) throw httpErr(404, "Order not found");
+
+    const load = await orderTruckRepo.findById(loadId, tx);
+    if (!load || load.orderId !== orderId) throw httpErr(404, "Truck load not found on this order");
+    if (load.status === "gated_out") {
+      throw httpErr(409, "Truck has already left the depot; its ticket can no longer be changed");
+    }
+
+    if (quantity !== undefined) {
+      const others = await orderTruckRepo.findByOrder(orderId, tx);
+      const otherTotal = others
+        .filter((l) => l.id !== loadId)
+        .reduce((s, l) => s + Number(l.quantity), 0);
+      if (otherTotal + quantity > Number(order.quantity)) {
+        throw httpErr(
+          400,
+          `That puts total ticketed quantity at ${otherTotal + quantity}, above the order's ${order.quantity}`
+        );
+      }
+    }
+
+    const row = await orderTruckRepo.update(
+      loadId,
+      {
+        ...(quantity !== undefined ? { quantity: String(quantity) } : {}),
+        ...(truckNumber ? { truckNumber } : {}),
+        ...(driverName ? { driverName } : {}),
+        ...(driverPhone ? { driverPhone } : {}),
+      },
+      tx
+    );
+
+    await auditLogRepo.record(
+      {
+        entityType: "order_truck",
+        entityId: loadId,
+        action: "order_truck.details_corrected",
+        actor: { type: "staff", staffId: req.user.id },
+        metadata: {
+          orderId,
+          from: { truckNumber: load.truckNumber, quantity: load.quantity, driverName: load.driverName, driverPhone: load.driverPhone },
+          to: { truckNumber: row.truckNumber, quantity: row.quantity, driverName: row.driverName, driverPhone: row.driverPhone },
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      },
+      tx
+    );
+
+    return row;
+  });
+
+  res.json({ success: true, message: "Truck details updated", data: { truck: updated } });
+});
+
 // security_exit: the loaded truck leaves the depot.
 const gateOutTruck = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
@@ -996,6 +1062,7 @@ module.exports = {
   getOrderTrucks,
   gateInTruck,
   markTruckLoaded,
+  updateTruckLoad,
   gateOutTruck,
   getPayableOrders,
   deleteOrder,

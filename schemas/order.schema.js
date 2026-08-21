@@ -215,6 +215,17 @@ const loadTruck = z.object({
 // A load-scoped route: /orders/:id/trucks/:loadId/...
 const loadParam = z.object({ id: id("Order id"), loadId: id("Load id") });
 
+// Correcting a load's own details after the fact — quantity, plate, driver.
+// Distinct from loadTruck (the ticketing desk's "confirm loaded" action,
+// which also transitions status and issues the ticket): this only ever
+// touches the four columns, refused once the truck has gated out.
+const updateTruckLoad = z.object({
+  truckNumber: optionalString("Truck number", 100),
+  quantity: quantity("Truck quantity").optional(),
+  driverName: optionalString("Driver name", 255),
+  driverPhone: optionalString("Driver phone", 50),
+});
+
 module.exports = {
   createOrder,
   createMyOrder,
@@ -229,4 +240,5 @@ module.exports = {
   gateIn,
   loadTruck,
   loadParam,
+  updateTruckLoad,
 };
