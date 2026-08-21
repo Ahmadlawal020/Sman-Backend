@@ -32,6 +32,17 @@ const createCustomer = z.object({
 const updateCustomer = createCustomer.partial();
 
 const listCustomers = pagination.extend({
+  // The shared pagination cap (500) is tuned for paged UI lists; customer
+  // pickers (manual deposit, messaging) want the whole book in one request.
+  // customerRepo.findAll already clamps to 5000 at the query level — this
+  // just lets a caller actually reach that ceiling instead of being turned
+  // back at 500.
+  limit: numberLike("Limit")
+    .pipe(
+      z.number().int("Limit must be a whole number").positive("Limit must be 1 or greater").max(5000, "Limit cannot exceed 5000")
+    )
+    .optional()
+    .default(50),
   search: searchTerm,
   searchType: enumOf("Search type", ["name", "email", "phone", "companyName"]).optional(),
   status: enumOf("Status", ["Active", "Inactive", "Pending", "all"]).optional(),

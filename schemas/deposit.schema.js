@@ -1,5 +1,5 @@
 const z = require("zod");
-const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination, typeError } = require("./fields");
+const { id, money, requiredString, optionalString, enumOf, searchTerm, pagination, typeError, numberLike } = require("./fields");
 
 /**
  * `amount` must be strictly positive: a zero-value ledger entry is noise, and
@@ -45,6 +45,16 @@ const syncPaystack = z.object({
 });
 
 const listDeposits = pagination.extend({
+  // The shared pagination cap (500) is tuned for paged UI lists; the
+  // deposits page wants everything in one request. depositRepo.findAll
+  // already clamps to 5000 at the query level — this just lets a caller
+  // actually reach that ceiling instead of being turned back at 500.
+  limit: numberLike("Limit")
+    .pipe(
+      z.number().int("Limit must be a whole number").positive("Limit must be 1 or greater").max(5000, "Limit cannot exceed 5000")
+    )
+    .optional()
+    .default(50),
   search: searchTerm,
   type: enumOf("Type", ["credit", "debit"]).optional(),
   customer: id("Customer").optional(),

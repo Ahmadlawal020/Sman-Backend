@@ -2,7 +2,7 @@ const { eq, and, or, ilike, inArray, desc, asc, count, sql, gte, lte } = require
 const { db } = require("../config/db");
 const {
   orders, customers, depots, products, pfis, orderTrucks,
-  deposits, orderDepositAllocations, staff,
+  deposits, orderDepositAllocations, staff, walletHolds,
 } = require("../db/schema");
 const { generateOrderReference, parseOrderReference } = require("../utils/helpers");
 const { scopeCondition } = require("../lib/scopeFilter");
@@ -325,34 +325,38 @@ const findAll = async ({
 
 /**
  * Every confirmed payment, order by order, with exactly where the money for
- * each one is understood to have come from.
+ * each one is understood to have come from — and, since the wallet is how
+ * every order is actually paid for, the customer's wallet balance immediately
+ * before and after that payment was taken.
+ *
+ * Unbounded and newest-first by design: this report is read a day at a time
+ * (see the default date filter the frontend applies), so there is no
+ * pagination to reconcile against the stat cards — one filtered set, fetched
+ * whole, drives both.
  *
  * `funding` is built from a second, batched query rather than a join on the
  * main select — a LEFT JOIN against order_deposit_allocations would multiply
- * order rows by however many deposits funded them, breaking pagination counts.
- * An order with zero funding rows genuinely predates the allocation ledger
- * (see wallet.service.js) — that's surfaced as fundingTracked: false, not an
- * error.
+ * order rows by however many deposits funded them. An order with zero funding
+ * rows genuinely predates the allocation ledger (see wallet.service.js) —
+ * that's surfaced as fundingTracked: false, not an error.
  */
 const findFinanceReport = async ({
   search,
   paymentStatus = "Paid",
   dateFrom,
   dateTo,
+  depotId,
+  pfiId,
   scopeUser,
-  page = 1,
-  limit = 50,
 } = {}) => {
-  const pageNum = Math.max(1, parseInt(page));
-  const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
-  const offset = (pageNum - 1) * limitNum;
-
   const conditions = [];
   const scope = scopeCondition(scopeUser, { depotColumn: orders.depotId, pfiColumn: orders.pfiId });
   if (scope) conditions.push(scope);
   if (paymentStatus && paymentStatus !== "all") {
     conditions.push(eq(orders.paymentStatus, paymentStatus));
   }
+  if (depotId) conditions.push(eq(orders.depotId, Number(depotId)));
+  if (pfiId) conditions.push(eq(orders.pfiId, Number(pfiId)));
   if (search) {
     const possibleId = parseOrderReference(search);
     const term = `%${search}%`;
@@ -362,8 +366,17 @@ const findFinanceReport = async ({
         : or(ilike(orders.orderNumber, term), ilike(customers.name, term), ilike(customers.phone, term))
     );
   }
-  if (dateFrom) conditions.push(gte(orders.paymentConfirmedAt, new Date(dateFrom)));
-  if (dateTo) conditions.push(lte(orders.paymentConfirmedAt, new Date(dateTo)));
+  // A bare "2026-08-20" from a date input parses as that day's UTC midnight —
+  // compared as-is, dateTo would exclude every order confirmed later that
+  // same day. Widened to the last instant of the day so "today" means today.
+  if (dateFrom) {
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(dateFrom) ? `${dateFrom}T00:00:00.000Z` : dateFrom;
+    conditions.push(gte(orders.paymentConfirmedAt, new Date(start)));
+  }
+  if (dateTo) {
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? `${dateTo}T23:59:59.999Z` : dateTo;
+    conditions.push(lte(orders.paymentConfirmedAt, new Date(end)));
+  }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -371,9 +384,10 @@ const findFinanceReport = async ({
     ...FULL_ORDER_COLUMNS,
     customerVirtualAccountNumber: customers.virtualAccountNumber,
     customerVirtualAccountBank: customers.virtualAccountBank,
+    pfiLocationName: pfis.locationName,
   };
 
-  const [rows, [{ total, totalAmount }], [{ trackedCount }]] = await Promise.all([
+  const [rows, [{ total, totalAmount, totalQuantity }], [{ trackedCount }]] = await Promise.all([
     db
       .select(columns)
       .from(orders)
@@ -382,13 +396,15 @@ const findFinanceReport = async ({
       .leftJoin(products, eq(orders.productId, products.id))
       .leftJoin(pfis, eq(orders.pfiId, pfis.id))
       .where(whereClause)
-      .orderBy(asc(orders.paymentConfirmedAt), asc(orders.id))
-      .limit(limitNum)
-      .offset(offset),
-    // Independent of pagination, over the same filtered set — so the stat
-    // cards can never disagree with the rows a filter/search actually shows.
+      .orderBy(desc(orders.paymentConfirmedAt), desc(orders.id)),
+    // Over the same filtered set as the rows above, so the stat cards can
+    // never disagree with what a filter/search actually shows.
     db
-      .select({ total: count(), totalAmount: sql`COALESCE(SUM(${orders.totalAmount}), 0)` })
+      .select({
+        total: count(),
+        totalAmount: sql`COALESCE(SUM(${orders.totalAmount}), 0)`,
+        totalQuantity: sql`COALESCE(SUM(${orders.quantity}), 0)`,
+      })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(whereClause),
@@ -401,40 +417,96 @@ const findFinanceReport = async ({
   ]);
 
   const orderIds = rows.map((r) => r.id);
-  const funding = orderIds.length
-    ? await db
-        .select({
-          orderId: orderDepositAllocations.orderId,
-          depositId: orderDepositAllocations.depositId,
-          amount: orderDepositAllocations.amount,
-          depositReference: deposits.reference,
-          depositCreatedAt: deposits.createdAt,
-          paystackDetails: deposits.paystackDetails,
-          recorderFirstName: staff.firstName,
-          recorderSurname: staff.surname,
-        })
-        .from(orderDepositAllocations)
-        .innerJoin(deposits, eq(orderDepositAllocations.depositId, deposits.id))
-        .leftJoin(staff, eq(deposits.recordedBy, staff.id))
-        .where(inArray(orderDepositAllocations.orderId, orderIds))
-        .orderBy(asc(orderDepositAllocations.createdAt))
-    : [];
+
+  const [funding, walletRows] = await Promise.all([
+    orderIds.length
+      ? db
+          .select({
+            orderId: orderDepositAllocations.orderId,
+            depositId: orderDepositAllocations.depositId,
+            amount: orderDepositAllocations.amount,
+            depositReference: deposits.reference,
+            depositCreatedAt: deposits.createdAt,
+            paystackDetails: deposits.paystackDetails,
+            recorderFirstName: staff.firstName,
+            recorderSurname: staff.surname,
+          })
+          .from(orderDepositAllocations)
+          .innerJoin(deposits, eq(orderDepositAllocations.depositId, deposits.id))
+          .leftJoin(staff, eq(deposits.recordedBy, staff.id))
+          .where(inArray(orderDepositAllocations.orderId, orderIds))
+          .orderBy(asc(orderDepositAllocations.createdAt))
+      : [],
+    // The wallet hold placed for each order — this is the payment, since a
+    // wallet-funded order is only ever placed once placeHold() has already
+    // taken the money. Its own balanceAfter is only booked once the hold
+    // *converts* (order fully completed, see order.controller.js), which
+    // most just-paid orders haven't reached yet — so instead of reading a
+    // number that mostly isn't there, this replays the customer's own
+    // ledger up to the instant the hold was placed:
+    //
+    //   balance(t) = credits(t) - debits(t) - holds still active at t
+    //
+    // A debit deposit row only exists once its hold has converted, and an
+    // active-hold row only counts while unresolved as of t — so a hold that
+    // converted before t is counted exactly once, via the debit sum, and one
+    // still open at t is counted exactly once, via the active-holds sum.
+    // `t` is this hold's own createdAt, so the sum already includes its own
+    // −amount effect; adding the hold amount back recovers the balance the
+    // instant before it was placed.
+    orderIds.length
+      ? db.execute(sql`
+          SELECT
+            wh.order_id AS "orderId",
+            wh.amount AS "holdAmount",
+            wh.status AS "holdStatus",
+            (
+              COALESCE((
+                SELECT SUM(d.amount) FROM deposits d
+                WHERE d.customer_id = wh.customer_id AND d.type = 'credit' AND d.created_at <= wh.created_at
+              ), 0)
+              - COALESCE((
+                SELECT SUM(d.amount) FROM deposits d
+                WHERE d.customer_id = wh.customer_id AND d.type = 'debit' AND d.created_at <= wh.created_at
+              ), 0)
+              - COALESCE((
+                SELECT SUM(wh2.amount) FROM wallet_holds wh2
+                WHERE wh2.customer_id = wh.customer_id AND wh2.created_at <= wh.created_at
+                  AND (wh2.resolved_at IS NULL OR wh2.resolved_at > wh.created_at)
+              ), 0)
+            ) AS "balanceAfter"
+          FROM wallet_holds wh
+          WHERE wh.order_id IN (${sql.join(orderIds.map((id) => sql`${id}`), sql`, `)})
+        `)
+      : [],
+  ]);
 
   const fundingByOrder = new Map();
   for (const f of funding) {
     if (!fundingByOrder.has(f.orderId)) fundingByOrder.set(f.orderId, []);
     fundingByOrder.get(f.orderId).push(f);
   }
+  const walletByOrder = new Map(walletRows.map((w) => [w.orderId, w]));
 
   const decorated = rows.map((row) => {
     const orderFunding = fundingByOrder.get(row.id) || [];
     const allocated = orderFunding.reduce((sum, f) => sum + Number(f.amount || 0), 0);
     const fundingTracked = orderFunding.length > 0;
+
+    const wallet = walletByOrder.get(row.id);
+    const walletBalanceAfter = wallet?.balanceAfter != null ? Number(wallet.balanceAfter) : null;
+    const walletBalanceBefore =
+      walletBalanceAfter != null && wallet?.holdAmount != null
+        ? walletBalanceAfter + Number(wallet.holdAmount)
+        : null;
+
     return {
       ...row,
       funding: orderFunding,
       fundingTracked,
       unattributedAmount: fundingTracked ? Math.max(0, Number(row.totalAmount || 0) - allocated) : 0,
+      walletBalanceBefore,
+      walletBalanceAfter,
     };
   });
 
@@ -443,14 +515,9 @@ const findFinanceReport = async ({
     totals: {
       count: total,
       totalAmount: Number(totalAmount),
+      totalQuantity: Number(totalQuantity),
       trackedCount: Number(trackedCount),
       notTrackedCount: total - Number(trackedCount),
-    },
-    pagination: {
-      total,
-      page: pageNum,
-      limit: limitNum,
-      pages: Math.ceil(total / limitNum),
     },
   };
 };
