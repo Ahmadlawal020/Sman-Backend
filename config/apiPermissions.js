@@ -76,15 +76,15 @@ const API_PERMISSIONS = {
   // Still gated, read and write: exposes customer bank/sender account
   // details, not just spend totals — same category as bank-accounts below.
   "/api/finance-report": { read: ["admin", "finance", "audit"] },
-  "/api/pfis": { read: null, write: ["admin", "finance"] },
+  "/api/pfis": { read: null, write: ["admin", "finance", "audit"] },
   // Still gated, read and write: this is the raw money-in ledger, same
   // category as bank-accounts/bank-statements/settlements below.
-  "/api/deposits": { read: MONEY, write: ["admin", "finance"] },
+  "/api/deposits": { read: MONEY, write: ["admin", "finance", "audit"] },
   "/api/expected-payments": { read: null },
-  "/api/bank-accounts": { read: MONEY, write: ["admin", "finance"] },
-  "/api/bank-statements": { read: MONEY, write: ["admin", "finance"] },
-  "/api/settlements": { read: MONEY, write: ["admin", "finance"] },
-  "/api/commissions": { read: MONEY, write: ["admin", "commissions", "commission_officer"] },
+  "/api/bank-accounts": { read: MONEY, write: ["admin", "finance", "audit"] },
+  "/api/bank-statements": { read: MONEY, write: ["admin", "finance", "audit"] },
+  "/api/settlements": { read: MONEY, write: ["admin", "finance", "audit"] },
+  "/api/commissions": { read: MONEY, write: ["admin", "audit", "commissions", "commission_officer"] },
 
   "/api/lpg-stations": { read: null, write: LPG },
   "/api/filing-stations": { read: null, write: ["admin", "truck_sales"] },
