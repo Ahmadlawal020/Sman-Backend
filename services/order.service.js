@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const { eq } = require("drizzle-orm");
 const { db } = require("../config/db");
-const { orders } = require("../db/schema");
+const { orders, commissions, pfiMovements } = require("../db/schema");
 const {
   orderRepo,
   customerRepo,
@@ -12,7 +12,9 @@ const {
   orderPfiAllocationRepo,
   auditLogRepo,
   bankAccountRepo,
+  commissionRepo,
 } = require("../repositories");
+const { isWithinScope } = require("../lib/scopeFilter");
 const walletService = require("./wallet.service");
 // Paystack DVA creation/subaccount-switch and the auto-split transfer are
 // disabled — see the "Paystack DVA funding (disabled...)" block below and
@@ -578,6 +580,153 @@ async function releaseOrderResources(order, tx) {
   await walletService.releaseHold(order.id, tx);
 }
 
+// Once an order is finished or dead there is nothing left to correct.
+const EDIT_LOCKED_STATUSES = new Set(["Completed", "Cancelled", "Expired"]);
+// Quantity and PFI both back a physical stock reservation; once release has
+// captured a truck allocation against that reservation, changing either
+// would desync a ticket that already names a real gate action. Everything
+// else about the order (customer, date, price, logistics text) stays
+// editable right up to Completed.
+const STOCK_EDITABLE_STATUSES = new Set(["Pending", "Paid"]);
+
+/**
+ * Edit an order's own fields — reassign it to another customer, move it to a
+ * different PFI, correct its date, quantity, price or logistics text. One
+ * transaction, one audit row, and every place that denormalizes something
+ * about the order (the wallet hold, a commission snapshot, a PFI's stock
+ * ledger) is kept in step rather than left to drift.
+ *
+ * Deliberately excludes `status`/`paymentStatus` — those only ever move
+ * through orderStatus.transition (AUDIT H1). This function is for everything
+ * else a mistake can leave wrong on an order.
+ */
+async function updateOrder(orderId, patch, { actor, ipAddress = null, userAgent = null, scopeUser = null } = {}) {
+  return db.transaction(async (tx) => {
+    const order = await orderRepo.lockById(orderId, tx);
+    if (!order) throw httpError(404, "Order not found");
+    if (EDIT_LOCKED_STATUSES.has(order.status)) {
+      throw httpError(409, `A ${order.status.toLowerCase()} order can no longer be edited`);
+    }
+
+    const changes = {};
+    const set = {};
+
+    // ── Customer reassignment ──────────────────────────────────────────
+    if (patch.customerId !== undefined && Number(patch.customerId) !== order.customerId) {
+      const newCustomerId = Number(patch.customerId);
+      const newCustomer = await customerRepo.findById(newCustomerId, tx);
+      if (!newCustomer) throw httpError(404, "Destination customer not found");
+
+      const result = await walletService.reassignHold({ orderId, toCustomerId: newCustomerId }, tx);
+      if (!result.success) throw httpError(result.insufficient ? 400 : 409, result.message);
+
+      const commission = await commissionRepo.findByOrderId(orderId);
+      if (commission) {
+        await tx
+          .update(commissions)
+          .set({ customerId: newCustomerId, updatedAt: new Date() })
+          .where(eq(commissions.id, commission.id));
+      }
+
+      changes.customerId = [order.customerId, newCustomerId];
+      set.customerId = newCustomerId;
+    }
+
+    // ── Quantity / PFI reassignment — share the same release/reserve path ──
+    const wantsPfiChange = patch.pfiId !== undefined && (patch.pfiId ?? null) !== order.pfiId;
+    const wantsQtyChange = patch.quantity !== undefined && Number(patch.quantity) !== order.quantity;
+    if (wantsPfiChange || wantsQtyChange) {
+      if (!STOCK_EDITABLE_STATUSES.has(order.status)) {
+        throw httpError(409, "Quantity and PFI can only be changed before an order is released for loading");
+      }
+
+      const newPfiId = patch.pfiId !== undefined ? patch.pfiId : order.pfiId;
+      const newQuantity = patch.quantity !== undefined ? Number(patch.quantity) : order.quantity;
+
+      if (newPfiId != null && !isWithinScope(scopeUser, "pfiIds", newPfiId)) {
+        throw httpError(403, "You cannot assign orders to this PFI");
+      }
+
+      // Give back whatever is currently reserved...
+      if (order.pfiId) {
+        const allocations = await orderPfiAllocationRepo.findByOrderId(orderId, tx);
+        if (allocations.length > 0) {
+          for (const alloc of allocations) await pfiRepo.releaseStock(alloc.pfiId, alloc.quantity, tx);
+          await orderPfiAllocationRepo.deleteByOrderId(orderId, tx);
+        } else {
+          // Fallback for orders created before multi-PFI allocations existed.
+          await pfiRepo.releaseStock(order.pfiId, order.quantity, tx);
+        }
+      }
+
+      // ...then reserve the new amount, at the (possibly new) PFI.
+      if (newPfiId != null) {
+        const reserved = await pfiRepo.reserveStock(newPfiId, newQuantity, tx);
+        if (!reserved) {
+          throw httpError(400, "That PFI doesn't have enough remaining stock for this quantity, or is not active");
+        }
+        await orderPfiAllocationRepo.create([{ pfiId: newPfiId, quantity: newQuantity }], orderId, tx);
+      }
+
+      // A ticket already cut for this order recorded stock against whichever
+      // PFI was current at that moment — repoint it too, or the sold-litres
+      // figure stays with a PFI this order no longer credits revenue to.
+      if (wantsPfiChange) {
+        await tx.update(pfiMovements).set({ pfiId: newPfiId }).where(eq(pfiMovements.orderId, orderId));
+      }
+
+      if (wantsPfiChange) { changes.pfiId = [order.pfiId, newPfiId]; set.pfiId = newPfiId; }
+      if (wantsQtyChange) { changes.quantity = [order.quantity, newQuantity]; set.quantity = newQuantity; }
+
+      if (wantsQtyChange) {
+        const commission = await commissionRepo.findByOrderId(orderId);
+        if (commission) {
+          const rate = Number(commission.commissionRate);
+          await tx
+            .update(commissions)
+            .set({
+              quantity: newQuantity,
+              commissionAmount: String((newQuantity * rate).toFixed(2)),
+              updatedAt: new Date(),
+            })
+            .where(eq(commissions.id, commission.id));
+        }
+      }
+    }
+
+    // ── Simple field overrides — nothing else references these directly ──
+    // price/totalAmount arrive already normalised to a "X.XX" string by the
+    // money() schema, matching the numeric(15,2) column's own driver
+    // representation, so a plain string compare is enough — no float
+    // round-tripping either side of it.
+    for (const field of ["price", "totalAmount", "companyName", "deliveryAddress"]) {
+      if (patch[field] === undefined) continue;
+      if (String(order[field]) !== String(patch[field])) {
+        changes[field] = [order[field], patch[field]];
+        set[field] = patch[field];
+      }
+    }
+    if (patch.createdAt !== undefined) {
+      const nextDate = new Date(patch.createdAt);
+      if (nextDate.getTime() !== new Date(order.createdAt).getTime()) {
+        changes.createdAt = [order.createdAt, nextDate];
+        set.createdAt = nextDate;
+      }
+    }
+
+    if (!Object.keys(set).length) return order;
+
+    const updated = await orderRepo.update(orderId, set, tx);
+
+    await auditLogRepo.record(
+      { entityType: "order", entityId: orderId, action: "order.updated", actor, metadata: { changes }, ipAddress, userAgent },
+      tx
+    );
+
+    return updated;
+  });
+}
+
 /**
  * Cancel a live order (any status through Released). One transaction: the
  * state machine locks the row and rejects an illegal or concurrent cancel
@@ -991,6 +1140,7 @@ async function payOrder({ orderId, customerId = null, actor, notifyWhatsApp = tr
 
 module.exports = {
   placeOrder,
+  updateOrder,
   cancelOrder,
   updatePickupTrucks,
   payOrder,

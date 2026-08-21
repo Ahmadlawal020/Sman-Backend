@@ -417,6 +417,63 @@ const reverseDeposit = async ({ depositId, recordedBy = null, description = "" }
 };
 
 /**
+ * Move an order's payment hold to a different customer — the order was
+ * placed against the wrong one and is already paid.
+ *
+ * This is NOT release-then-placeHold: wallet_holds carries one row per
+ * order id, ever (unique on order_id, never re-used even once released), so
+ * a fresh placeHold() for the same order collides with the old row. Instead
+ * the existing row is repointed in place, under the same debit-the-new/
+ * credit-the-old shape transfer() uses.
+ *
+ * The funding trail (order_deposit_allocations, which of the OLD customer's
+ * deposits paid for it) is left exactly as it was — reassigning the order
+ * going forward does not rewrite which cash historically funded it, the same
+ * choice reverseDeposit() makes about remainingAmount.
+ */
+const reassignHold = async ({ orderId, toCustomerId }, tx) => {
+  const run = async (trx) => {
+    const [hold] = await trx
+      .select()
+      .from(walletHolds)
+      .where(eq(walletHolds.orderId, orderId))
+      .for("update")
+      .limit(1);
+
+    if (!hold) return { success: true, hold: null };
+    if (hold.status !== "active") {
+      return {
+        success: false,
+        message: "This order's payment has already been settled and its hold can no longer be reassigned",
+      };
+    }
+    if (String(hold.customerId) === String(toCustomerId)) {
+      return { success: true, hold };
+    }
+
+    const value = money(hold.amount);
+    const updatedTo = await customerRepo.debitBalance(toCustomerId, value, trx);
+    if (!updatedTo) {
+      return {
+        success: false,
+        insufficient: true,
+        message: "The destination customer doesn't have enough wallet balance to take over this order's hold",
+      };
+    }
+    const updatedFrom = await customerRepo.creditBalance(hold.customerId, value, trx);
+
+    const [movedHold] = await trx
+      .update(walletHolds)
+      .set({ customerId: toCustomerId })
+      .where(eq(walletHolds.id, hold.id))
+      .returning();
+
+    return { success: true, hold: movedHold, fromCustomer: updatedFrom, toCustomer: updatedTo };
+  };
+  return tx ? run(tx) : db.transaction(run);
+};
+
+/**
  * Which credit deposit(s) an order's payment drew from, FIFO — oldest
  * unclaimed money first.
  *
@@ -652,6 +709,7 @@ module.exports = {
   debit,
   transfer,
   reverseDeposit,
+  reassignHold,
   placeHold,
   releaseHold,
   convertHold,

@@ -1,6 +1,7 @@
 const z = require("zod");
 const {
   id,
+  money,
   quantity,
   requiredString,
   optionalString,
@@ -8,6 +9,7 @@ const {
   enumOf,
   searchTerm,
   pagination,
+  typeError,
 } = require("./fields");
 
 // A customer-declared PICKUP truck: their own vehicle, so no fleet truckId. The
@@ -62,6 +64,33 @@ const listOrders = pagination.extend({
 });
 
 const idParam = z.object({ id: id("Order id") });
+
+// Everything about an order a mistake can leave wrong, short of its status —
+// status only ever moves through /release, /cancel, /pay (AUDIT H1: see
+// order.service.js's updateOrder). pfiId is nullable (unassign a PFI); every
+// other field just replaces what is there. At least one field is required —
+// an empty PATCH is a caller bug, not a no-op worth accepting silently.
+const updateOrder = z
+  .object({
+    customerId: id("Customer").optional(),
+    pfiId: id("PFI").nullable().optional(),
+    quantity: quantity("Quantity").optional(),
+    price: money("Unit price").optional(),
+    totalAmount: money("Total amount").optional(),
+    companyName: requiredString("Company name", 255).optional(),
+    // optionalString() turns an absent field into "" — right for create, wrong
+    // for a patch, where absent has to mean "leave it" and only an explicit ""
+    // means "clear it". Kept genuinely optional instead.
+    deliveryAddress: z
+      .string({ error: typeError("Delivery address", "text") })
+      .trim()
+      .max(2000, "Delivery address must be 2000 characters or fewer")
+      .optional(),
+    createdAt: z.coerce.date({ invalid_type_error: "Order date is invalid" }).optional(),
+  })
+  .refine((b) => Object.values(b).some((v) => v !== undefined), {
+    message: "Nothing to update",
+  });
 
 // The customer portal's self-order body — createOrder WITHOUT `customer`. A
 // signed-in customer can only order for themselves, so the id is taken from the
@@ -192,6 +221,7 @@ module.exports = {
   listMyOrders,
   listOrders,
   idParam,
+  updateOrder,
   refParam,
   cancelOrder,
   updateMyTrucks,

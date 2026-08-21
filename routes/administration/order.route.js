@@ -8,6 +8,7 @@ const {
   getOrders,
   getOrderById,
   createOrder,
+  updateOrder,
   releaseOrder,
   cancelOrder,
   deleteOrder,
@@ -39,6 +40,17 @@ router.get("/payable", verifyStaff, getPayableOrders);
 router.get("/", verifyStaff, validate({ query: orderSchemas.listOrders }), getOrders);
 router.get("/:id", verifyStaff, validate({ params: orderSchemas.idParam }), getOrderById);
 router.post("/", verifyStaff, validate({ body: orderSchemas.createOrder }), createOrder);
+
+// Edit anything about an order short of its status — customer, PFI, date,
+// quantity, price, logistics text. Open to any signed-in staff, same as the
+// reads/create above; the handler itself gates a PFI reassignment against
+// the caller's own PFI scope (see orderService.updateOrder).
+router.patch(
+  "/:id",
+  verifyStaff,
+  validate({ params: orderSchemas.idParam, body: orderSchemas.updateOrder }),
+  updateOrder
+);
 
 // Lifecycle transitions are role-gated to the desk that owns the action, and
 // each flows through the state machine (see services/orderStatus.service.js).

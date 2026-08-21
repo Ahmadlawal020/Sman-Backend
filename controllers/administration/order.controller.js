@@ -962,10 +962,33 @@ const reconcileOrderEffects = asyncHandler(async (req, res) => {
   });
 });
 
+// Edit anything about an order short of its status — reassign it to another
+// customer, move it to a different PFI, correct its date, quantity, price or
+// logistics text. See orderService.updateOrder for why status/paymentStatus
+// stay out of this (AUDIT H1) and how the wallet hold, commission snapshot
+// and PFI stock ledger are all kept in step with whatever changes.
+const updateOrder = asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+
+  const updated = await orderService.updateOrder(orderId, req.body, {
+    actor: { type: "staff", staffId: req.user.id },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    scopeUser: req.user,
+  });
+
+  res.json({
+    success: true,
+    message: "Order updated",
+    data: { order: await withExpiresAt(await orderRepo.findByIdFull(updated.id)) },
+  });
+});
+
 module.exports = {
   getOrders,
   getOrderById,
   createOrder,
+  updateOrder,
   releaseOrder,
   cancelOrder,
   generateOrderTickets,
