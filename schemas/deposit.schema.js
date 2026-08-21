@@ -66,4 +66,15 @@ const listDeposits = pagination.extend({
 
 const idParam = z.object({ id: id("Deposit id") });
 
-module.exports = { createDeposit, syncPaystack, listDeposits, idParam };
+const transferBalance = z.object({
+  fromCustomer: id("Source customer"),
+  toCustomer: id("Destination customer"),
+  amount: money("Amount", { min: 0.01 }),
+  description: optionalString("Description", 500),
+});
+
+const reverseDeposit = z.object({
+  description: optionalString("Description", 500),
+});
+
+module.exports = { createDeposit, syncPaystack, listDeposits, idParam, transferBalance, reverseDeposit };

@@ -146,6 +146,73 @@ const createDeposit = asyncHandler(async (req, res) => {
   });
 });
 
+/** POST /deposits/transfer — move wallet balance from one customer to another. */
+const transferBalance = asyncHandler(async (req, res) => {
+  const { fromCustomer, toCustomer, amount, description } = req.body;
+
+  if (!fromCustomer || !toCustomer || !amount) {
+    return res.status(400).json({
+      success: false,
+      message: "fromCustomer, toCustomer and amount are required",
+    });
+  }
+
+  const [from, to] = await Promise.all([
+    customerRepo.findById(fromCustomer),
+    customerRepo.findById(toCustomer),
+  ]);
+  if (!from) return res.status(404).json({ success: false, message: "Source customer not found" });
+  if (!to) return res.status(404).json({ success: false, message: "Destination customer not found" });
+
+  const result = await walletService.transfer({
+    fromCustomerId: Number(fromCustomer),
+    toCustomerId: Number(toCustomer),
+    amount: Number(amount),
+    description: description || "",
+    recordedBy: req.user?.id || null,
+  });
+
+  if (!result.success) {
+    return res.status(400).json({ success: false, message: result.message });
+  }
+
+  res.status(201).json({
+    success: true,
+    message: `Transferred to ${to.name || `customer #${to.id}`}`,
+    data: {
+      debit: result.debit,
+      credit: result.credit,
+      fromBalance: result.fromCustomer.balance,
+      toBalance: result.toCustomer.balance,
+    },
+  });
+});
+
+/** POST /deposits/:id/reverse — undo a credit deposit recorded against the wrong customer. */
+const reverseDepositById = asyncHandler(async (req, res) => {
+  const existing = await depositRepo.findByIdFull(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Deposit not found" });
+  }
+
+  const result = await walletService.reverseDeposit({
+    depositId: Number(req.params.id),
+    recordedBy: req.user?.id || null,
+    description: req.body?.description || "",
+  });
+
+  if (!result.success) {
+    return res.status(400).json({ success: false, message: result.message });
+  }
+
+  const fullReversal = await depositRepo.findByIdFull(result.deposit.id);
+  res.json({
+    success: true,
+    message: "Deposit reversed",
+    data: { deposit: fullReversal, newBalance: result.customer.balance },
+  });
+});
+
 const syncPaystackDeposit = asyncHandler(async (req, res) => {
   const { reference } = req.body;
 
@@ -174,4 +241,7 @@ const syncPaystackDeposit = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getDeposits, getDepositById, createDeposit, syncPaystackDeposit };
+module.exports = {
+  getDeposits, getDepositById, createDeposit, syncPaystackDeposit,
+  transferBalance, reverseDepositById,
+};

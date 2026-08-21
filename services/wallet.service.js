@@ -252,28 +252,29 @@ const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, st
  * Debit the wallet directly (no hold involved). Fails rather than allowing
  * the balance to go negative — debitBalance's guard is in the WHERE clause
  * of the UPDATE itself, not in a preceding read, so it cannot be raced.
+ *
+ * An optional `tx` lets a caller (e.g. transfer(), below) commit the debit
+ * atomically with other writes in its own transaction — same pattern as
+ * credit()/placeHold(). Without one, the debit gets its own transaction.
  */
-const debit = async ({
-  customerId,
-  amount,
-  description = "",
-  reference = "",
-  recordedBy = null,
-}) => {
+const debit = async (
+  { customerId, amount, description = "", reference = "", recordedBy = null },
+  tx,
+) => {
   const value = money(amount);
   if (value <= 0) {
     return { success: false, message: "Debit amount must be positive" };
   }
 
-  return db.transaction(async (tx) => {
-    const updated = await customerRepo.debitBalance(customerId, value, tx);
+  const run = async (trx) => {
+    const updated = await customerRepo.debitBalance(customerId, value, trx);
     if (!updated) {
       // Same guarded result whether the customer doesn't exist or simply
       // doesn't have enough — either way, this debit does not happen.
       return { success: false, insufficient: true, message: "Insufficient wallet balance" };
     }
 
-    const [deposit] = await tx
+    const [deposit] = await trx
       .insert(deposits)
       .values({
         customerId,
@@ -287,7 +288,132 @@ const debit = async ({
       .returning();
 
     return { success: true, deposit, customer: updated };
+  };
+
+  if (tx) return run(tx);
+  return db.transaction(run);
+};
+
+/**
+ * Move balance from one customer's wallet to another — e.g. a deposit was
+ * recorded against the wrong customer, or a genuine account-to-account
+ * transfer. One atomic debit + credit, same transaction. The credit leg
+ * isn't `trackDeposit`: it's money moving inside the wallet system, not new
+ * money coming into the business, the same distinction refunds already draw.
+ */
+const transfer = async ({ fromCustomerId, toCustomerId, amount, description = "", recordedBy = null }) => {
+  const value = money(amount);
+  if (value <= 0) {
+    return { success: false, message: "Transfer amount must be positive" };
+  }
+  if (String(fromCustomerId) === String(toCustomerId)) {
+    return { success: false, message: "Cannot transfer a balance to the same customer" };
+  }
+
+  return db.transaction(async (tx) => {
+    const debitResult = await debit(
+      {
+        customerId: fromCustomerId,
+        amount: value,
+        description: description || `Wallet transfer to customer #${toCustomerId}`,
+        recordedBy,
+      },
+      tx,
+    );
+    if (!debitResult.success) return debitResult;
+
+    const creditResult = await credit(
+      {
+        customerId: toCustomerId,
+        amount: value,
+        description: description || `Wallet transfer from customer #${fromCustomerId}`,
+        trackDeposit: false,
+        recordedBy,
+      },
+      tx,
+    );
+    // credit() only returns success:false when the target customer doesn't
+    // exist — that has to abort the whole transaction (including the debit
+    // above), not just report a failure the caller might not roll back on.
+    if (!creditResult.success) {
+      throw Object.assign(new Error(creditResult.message || "Transfer failed"), { status: 400 });
+    }
+
+    return {
+      success: true,
+      debit: debitResult.deposit,
+      credit: creditResult.deposit,
+      fromCustomer: debitResult.customer,
+      toCustomer: creditResult.customer,
+    };
   });
+};
+
+/**
+ * Reverse a credit deposit — e.g. a manual deposit recorded against the
+ * wrong customer. Debits the same amount back out under the same guard every
+ * debit uses, so a deposit already partly spent (its `remainingAmount` drawn
+ * down by orders) can still fail to reverse if the customer's *current*
+ * balance can't cover it — that's surfaced, not hidden, and it means the
+ * reversal would otherwise be clawed back from unrelated funds rather than
+ * "undoing" money that has already left as a completed order.
+ *
+ * There is no dedicated schema column linking a reversal back to the
+ * original deposit — the reversal's own `reference`/`description` carry that
+ * trail instead, the same convention statement-line deposits already use.
+ */
+const reverseDeposit = async ({ depositId, recordedBy = null, description = "" }, tx) => {
+  const run = async (trx) => {
+    const [original] = await trx
+      .select()
+      .from(deposits)
+      .where(eq(deposits.id, depositId))
+      .for("update")
+      .limit(1);
+
+    if (!original) return { success: false, message: "Deposit not found" };
+    if (original.type !== "credit") {
+      return { success: false, message: "Only a credit deposit can be reversed" };
+    }
+    if (String(original.reference || "").startsWith("REV-")) {
+      return { success: false, message: "This is itself a reversal — nothing to reverse" };
+    }
+
+    const value = money(original.amount);
+    const updated = await customerRepo.debitBalance(original.customerId, value, trx);
+    if (!updated) {
+      return {
+        success: false,
+        insufficient: true,
+        message: "The customer's current balance can't cover reversing this deposit — some of it may already be spent on orders.",
+      };
+    }
+
+    const [reversal] = await trx
+      .insert(deposits)
+      .values({
+        customerId: original.customerId,
+        amount: asDecimal(value),
+        type: "debit",
+        description: description || `Reversal of deposit #${original.id}${original.reference ? ` (${original.reference})` : ""}`,
+        reference: `REV-${original.id}`,
+        recordedBy,
+        balanceAfter: asDecimal(updated.balance),
+      })
+      .returning();
+
+    // Cuts the original off as a funding source for any *future* order —
+    // past allocations (order_deposit_allocations rows already written) stay
+    // exactly as they were, since those orders genuinely were funded from it
+    // at the time.
+    await trx
+      .update(deposits)
+      .set({ remainingAmount: "0.00" })
+      .where(eq(deposits.id, original.id));
+
+    return { success: true, deposit: reversal, original, customer: updated };
+  };
+  return tx ? run(tx) : db.transaction(run);
 };
 
 /**
@@ -524,6 +650,8 @@ module.exports = {
   credit,
   creditFromStatementLines,
   debit,
+  transfer,
+  reverseDeposit,
   placeHold,
   releaseHold,
   convertHold,
