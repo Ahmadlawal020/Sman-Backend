@@ -309,7 +309,12 @@ const listExpenses = async ({
   // general expense (pfi_id IS NULL) has no location to check it against, so
   // it fails closed — invisible to a scoped user, same rule as everywhere
   // else in this feature.
-  if (scopeUser && !scopeUser.canViewAllLocations) {
+  //
+  // But NOT when onlySubmitterId is set: "my own requests" must show
+  // everything the caller raised, including a general expense or one whose
+  // PFI has since moved outside their scope — the location check exists to
+  // hide OTHER people's out-of-scope rows, not a person's own submissions.
+  if (onlySubmitterId == null && scopeUser && !scopeUser.canViewAllLocations) {
     const { depotIds = [], lpgStationIds = [], pfiIds = [] } = scopeUser.scope || {};
     base.push(client`(e.pfi_id = ANY(${pfiIds}) OR e.pfi_id IN (
       SELECT id FROM pfis WHERE location_id = ANY(${depotIds}) OR lpg_station_id = ANY(${lpgStationIds})
