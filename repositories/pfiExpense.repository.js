@@ -69,14 +69,23 @@ const aggregatesFor = async (ids) => {
       WHERE pfi_id = ANY(${list})
       GROUP BY pfi_id
     `,
-    // Delivery allocations are a second way stock leaves a batch, and they
-    // count toward sold alongside releases — a litre allocated to a delivery
-    // is no longer available to sell.
+    // Delivery allocations are a second way stock leaves a batch, and count
+    // toward sold alongside releases — but only until a release happens.
+    // placeOrder reserves the full order quantity here and never reduces it,
+    // while ticket generation writes the *actual* (possibly partial,
+    // cumulative) ticketed amount to pfi_movements for that same order — so
+    // once a movement row exists, it is strictly more accurate than the
+    // frozen original reservation, and adding both double-counts every
+    // ticketed order's stock as sold twice over.
     client`
-      SELECT pfi_id, COALESCE(SUM(quantity), 0)::bigint AS qty
-      FROM order_pfi_allocations
-      WHERE pfi_id = ANY(${list})
-      GROUP BY pfi_id
+      SELECT a.pfi_id, COALESCE(SUM(a.quantity), 0)::bigint AS qty
+      FROM order_pfi_allocations a
+      WHERE a.pfi_id = ANY(${list})
+        AND NOT EXISTS (
+          SELECT 1 FROM pfi_movements m
+          WHERE m.order_id = a.order_id AND m.pfi_id = a.pfi_id
+        )
+      GROUP BY a.pfi_id
     `,
   ]);
 
