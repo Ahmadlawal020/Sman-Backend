@@ -1,117 +1,70 @@
 /**
  * Which roles may reach which API resource.
  *
- * Read access is open to any signed-in staff member almost everywhere —
- * matching the dashboard's own rule that page visibility is the only gate a
- * user should feel. Location/PFI scope (see lib/scopeFilter.js) still narrows
- * *which rows* a non-super_admin sees; this file only ever decided whether
- * the endpoint was reachable at all, and for read traffic it mostly no longer
- * does. Write access stays role-gated: fetching an order and cancelling one
- * are different permissions, so mutating verbs still consult `write`.
+ * Role-based gating is off dashboard-wide: any signed-in staff member may
+ * read and write every listed resource, regardless of role. Location/PFI
+ * scope (see lib/scopeFilter.js) still narrows *which rows* a non-super_admin
+ * sees or can act on — that check is independent of this file and stays
+ * fully in force. This file only ever decided whether the endpoint was
+ * reachable at all, and now it says yes to everyone who's logged in.
  *
- * A short list stays fully role-gated on both read and write — staff/account
- * administration, customer broadcast messaging, and anything that exposes
- * bank/settlement/commission money movement — because those pages are not
- * shown to most roles in the dashboard nav in the first place, so "open to
- * anyone who can see the page" would mean opening them to almost nobody's
- * actual page and everybody's actual API access.
+ * An unlisted mount is still closed by default (see checkApiAccess) — that's
+ * not a role restriction, it's a new-route safety net so an endpoint has to
+ * be added here deliberately rather than opening by omission.
  *
  * super_admin is implicit everywhere and never listed.
  */
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-// Role groups, named after what they do rather than who holds them. Still
-// used to gate WRITE access on most resources, and both read+write on the
-// small still-restricted list below.
-const OPS = ["admin", "ticketing", "release", "dispatch", "transport"];
-const MONEY = ["admin", "finance", "audit", "commissions", "commission_officer"];
-const SALES = ["admin", "sales_manager", "truck_sales", "product_manager"];
-const LPG = ["admin", "lpg_dashboard", "lpg_plants", "lpg_stock", "lpg_sales"];
-const SECURITY = ["admin", "security_entry", "security_exit"];
-// Filers of the five daily returns under My Report (see ROLE_REPORT in the
-// dashboard's report-config.ts) plus the roles the Reports Hub is gated to.
-const REPORTS = [
-  "admin",
-  "sales_manager",
-  "product_manager",
-  "security_entry",
-  "commissions",
-  "commission_officer",
-  "it_compliance",
-];
-
 /**
  * mount path -> { read: [...roles] | null, write: [...roles] | null }
  *
- * A missing `write` means the read list governs both. An empty `write: []`
- * means nobody but super_admin may mutate it. `null` means any signed-in
- * staff member.
+ * A missing `write` means the read list governs both. `null` means any
+ * signed-in staff member — every entry below is `null`.
  */
 const API_PERMISSIONS = {
-  // Everyone signed in needs these.
   "/api/dashboard": { read: null },
   "/api/notifications": { read: null },
   "/api/uploads": { read: null },
-
-  // Security is on the write list because gate-in / gate-out are POSTs
-  // against the order.
-  "/api/orders": { read: null, write: [...OPS, ...SECURITY, "admin"] },
-  "/api/tickets": { read: null, write: OPS },
+  "/api/orders": { read: null },
+  "/api/tickets": { read: null },
   "/api/customers": { read: null },
-  "/api/customer-licenses": { read: null, write: ["admin"] },
-
-  "/api/depots": { read: null, write: ["admin"] },
-  "/api/products": { read: null, write: ["admin", "product_manager"] },
-  "/api/trucks": { read: null, write: [...OPS] },
-  "/api/fleet": { read: null, write: [...OPS] },
-  "/api/drivers": { read: null, write: OPS },
-
-  // Expenses/vendors were already open on both read and write: anyone may
-  // raise a request and must be able to see their own; the chain module
-  // decides who can review, and scope narrows non-oversight users to their
-  // own rows.
+  "/api/customer-licenses": { read: null },
+  "/api/depots": { read: null },
+  "/api/products": { read: null },
+  "/api/trucks": { read: null },
+  "/api/fleet": { read: null },
+  "/api/drivers": { read: null },
   "/api/expenses": { read: null },
   "/api/vendors": { read: null },
-  // Still gated, read and write: exposes customer bank/sender account
-  // details, not just spend totals — same category as bank-accounts below.
-  "/api/finance-report": { read: ["admin", "finance", "audit"] },
-  "/api/pfis": { read: null, write: ["admin", "finance", "audit"] },
-  // Still gated, read and write: this is the raw money-in ledger, same
-  // category as bank-accounts/bank-statements/settlements below.
-  "/api/deposits": { read: MONEY, write: ["admin", "finance", "audit"] },
+  "/api/finance-report": { read: null },
+  "/api/pfis": { read: null },
+  "/api/deposits": { read: null },
   "/api/expected-payments": { read: null },
-  "/api/bank-accounts": { read: MONEY, write: ["admin", "finance", "audit"] },
-  "/api/bank-statements": { read: MONEY, write: ["admin", "finance", "audit"] },
-  "/api/settlements": { read: MONEY, write: ["admin", "finance", "audit"] },
-  "/api/commissions": { read: MONEY, write: ["admin", "audit", "commissions", "commission_officer"] },
-
-  "/api/lpg-stations": { read: null, write: LPG },
-  "/api/filing-stations": { read: null, write: ["admin", "truck_sales"] },
-  "/api/delivery-customers": { read: null, write: SALES },
-  "/api/delivery-inventory": { read: null, write: SALES },
-  "/api/delivery-sales": { read: null, write: SALES },
-  "/api/offline-sales": { read: null, write: SALES },
-
-  "/api/incidents": { read: null, write: [...SECURITY, ...OPS] },
-  // audit can view (it's on the Reports Hub's allowed-roles list) but not
-  // file — write stays with the five reporting roles themselves.
-  "/api/daily-reports": { read: null, write: REPORTS },
-  "/api/reports": { read: null, write: [...MONEY, ...OPS, "audit"] },
-  "/api/order-expiry": { read: null, write: ["admin"] },
+  "/api/bank-accounts": { read: null },
+  "/api/bank-statements": { read: null },
+  "/api/settlements": { read: null },
+  "/api/commissions": { read: null },
+  "/api/lpg-stations": { read: null },
+  "/api/filing-stations": { read: null },
+  "/api/delivery-customers": { read: null },
+  "/api/delivery-inventory": { read: null },
+  "/api/delivery-sales": { read: null },
+  "/api/offline-sales": { read: null },
+  "/api/incidents": { read: null },
+  "/api/daily-reports": { read: null },
+  "/api/reports": { read: null },
+  "/api/order-expiry": { read: null },
 
   // These three sit on routers mounted at bare /api, so they are matched on
   // the full request path rather than the mount — see resolveRule.
-  "/api/dangote-order-requests": { read: null, write: [...SALES, "admin"] },
-  "/api/dangote-products": { read: null, write: ["admin", "product_manager"] },
-  "/api/lpg-order-requests": { read: null, write: [...LPG, "admin"] },
+  "/api/dangote-order-requests": { read: null },
+  "/api/dangote-products": { read: null },
+  "/api/lpg-order-requests": { read: null },
 
-  // Staff administration stays with admins: creating a staff account or
-  // assigning super_admin is not something page-visibility should gate.
-  "/api/admin": { read: ["admin"], write: ["admin"] },
-  // Same boundary as /api/notifications' broadcast route — only reachable
-  // from the messaging page, which is itself admin/super_admin only.
-  "/api/message-templates": { read: ["admin"], write: ["admin"] },
+  "/api/admin": { read: null },
+  "/api/message-templates": { read: null },
 };
 
 /**
