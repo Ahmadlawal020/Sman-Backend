@@ -374,30 +374,23 @@ const listExpenses = async ({
   if (onlySubmitterId != null) {
     base.push(client`COALESCE(e.added_by, e.recorded_by) = ${Number(onlySubmitterId)}`);
   }
-  // A location-scoped user sees a line tagged to a PFI they hold directly, or
-  // to a PFI whose depot/LPG-station is in their scope — plus two things this
-  // check must never swallow:
+  // Location/PFI scope, applied only to the all-expenses view. When
+  // onlySubmitterId is set the caller is already restricted to their own
+  // requests, and those are theirs to see wherever they were booked — the
+  // location rule exists to narrow OTHER people's rows, not to hide someone
+  // from themselves.
   //
-  //   · a general expense (pfi_id IS NULL). It has no location, so a location
-  //     test can only ever fail on it. Failing closed made every company-wide
-  //     overhead invisible to every scoped user — nobody outside head office
-  //     could see the electricity bill they were looking at.
-  //   · anything the caller raised themselves, wherever it was booked. You can
-  //     always see your own submissions; the location rule is there to hide
-  //     OTHER people's out-of-scope rows.
-  //
-  // Applies whether or not onlySubmitterId is set, so the same guarantee holds
-  // on the all-expenses page as on My Requests.
-  if (scopeUser && !scopeUser.canViewAllLocations) {
+  // A general expense (pfi_id IS NULL) always passes: it has no location, so
+  // a location test can only ever fail on it, and failing closed hid every
+  // company-wide overhead from everyone outside head office.
+  if (onlySubmitterId == null && scopeUser && !scopeUser.canViewAllLocations) {
     const { depotIds = [], lpgStationIds = [], pfiIds = [] } = scopeUser.scope || {};
-    const selfId = Number(scopeUser.id) || -1;
     base.push(client`(
       e.pfi_id IS NULL
       OR e.pfi_id = ANY(${pfiIds})
       OR e.pfi_id IN (
         SELECT id FROM pfis WHERE location_id = ANY(${depotIds}) OR lpg_station_id = ANY(${lpgStationIds})
       )
-      OR COALESCE(e.added_by, e.recorded_by) = ${selfId}
     )`);
   }
 

@@ -272,9 +272,9 @@ const autoPopulateCategories = asyncHandler(async (req, res) => {
 // ─── Expenses ───────────────────────────────────────────────────────────────
 
 const listExpenses = asyncHandler(async (req, res) => {
-  // Outside the oversight roles you see only what you raised. Applied here so
+  // Outside the visibility roles you see only what you raised. Applied here so
   // every count, total, page and the bank list all inherit it.
-  const oversight = chain.canOversee(req.user);
+  const oversight = chain.canSeeAllExpenses(req.user);
   // The "My Requests" page asks for this explicitly, so even an oversight
   // role — who can otherwise see everyone's spend — gets just their own.
   const mine = req.query.mine === "true" || req.query.mine === "1";
@@ -305,7 +305,9 @@ const listExpenses = asyncHandler(async (req, res) => {
       // Tells the page whose entries are on screen, rather than leaving someone
       // wondering why a colleague's row is missing.
       scope: oversight && !mine ? "all" : "own",
-      can_review: oversight,
+      // Seeing everyone's requests and being able to action them are separate
+      // questions — `audit` reads the queue without acting on it.
+      can_review: chain.canOversee(req.user),
       statuses: Object.entries(chain.STATUS_LABELS).map(([value, label]) => ({ value, label })),
     },
   });

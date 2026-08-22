@@ -10,7 +10,15 @@ const { notifyAndWait } = require("../../notifications");
 // sees their own submissions, no matter what the query string asks for:
 // trusting a client-supplied submittedBy here would let any reporting role
 // read any other filer's numbers by hand-editing the request.
-const CAN_VIEW_ALL_REPORTS = new Set(["admin", "super_admin", "audit"]);
+const CAN_VIEW_ALL_REPORTS = new Set([
+  "admin",
+  "super_admin",
+  "audit",
+  "expenditure_officer",
+  // Owns the CFO stage of the expense chain and is treated as oversight
+  // alongside audit throughout — see ALL_EXPENSES_ROLES in lib/expenseChain.js.
+  "finance",
+]);
 
 const getDailyReports = asyncHandler(async (req, res) => {
   const roles = new Set(req.user?.roles || []);
