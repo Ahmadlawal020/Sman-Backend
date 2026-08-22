@@ -3,6 +3,9 @@ const asyncHandler = require("express-async-handler");
 const { staffRepo, staffScopeRepo } = require("../../repositories");
 const { mapRolesToBackend } = require("../../config/roleMapping");
 const { notifyAndWait } = require("../../notifications");
+const sessionService = require("../../services/session.service");
+
+const REALM = "staff";
 
 const toIdList = (list) => (Array.isArray(list) ? list.map((v) => Number(v)).filter(Number.isFinite) : []);
 
@@ -176,6 +179,28 @@ const updateAdmin = asyncHandler(async (req, res) => {
     });
   }
 
+  // Editing somebody else's row is an administrative act, not self-service.
+  // Without this, any signed-in staff member could PATCH a colleague's
+  // profile — including their email, which is the login identity and the
+  // address a password reset is delivered to, i.e. a full account takeover.
+  // Your own profile goes through PATCH /staff/me, which cannot touch email
+  // at all.
+  if (admin.id !== req.user.id && !isSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: "You can only edit your own profile",
+    });
+  }
+
+  // Email is the login identity: only a super admin reassigns one, never the
+  // account holder themselves.
+  if (email !== undefined && !isSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: "Your email address can only be changed by a super admin",
+    });
+  }
+
   // A super_admin locking themselves out takes everyone with them: the roles
   // that can restore access are exactly the ones being given away.
   if (changesPrivileges && admin.id === req.user.id) {
@@ -234,6 +259,128 @@ const updateAdmin = asyncHandler(async (req, res) => {
       surname: updated.surname,
       roles: updated.roles,
     },
+  });
+});
+
+/**
+ * PATCH /staff/me — a person editing their own profile.
+ *
+ * Name, other names, phone and profile picture only. Email is deliberately
+ * not here: it is the login identity and the address a password reset is
+ * sent to, so letting an account rewrite it is an account-takeover primitive.
+ * Roles, suspension and scope are likewise absent — those belong to
+ * updateAdmin's super_admin path.
+ */
+const updateMyProfile = asyncHandler(async (req, res) => {
+  const { first_name, surname, other_names, phone_number, profile_picture_url, profile_picture_public_id } = req.body;
+
+  const updateData = {};
+  if (first_name !== undefined) {
+    if (!String(first_name).trim()) {
+      return res.status(400).json({ success: false, message: "First name cannot be empty" });
+    }
+    updateData.firstName = String(first_name).trim();
+  }
+  if (surname !== undefined) {
+    if (!String(surname).trim()) {
+      return res.status(400).json({ success: false, message: "Surname cannot be empty" });
+    }
+    updateData.surname = String(surname).trim();
+  }
+  if (other_names !== undefined) updateData.otherNames = String(other_names || "").trim();
+  if (phone_number !== undefined) updateData.phoneNumber = phone_number || null;
+  if (profile_picture_url !== undefined) updateData.profilePictureUrl = profile_picture_url || null;
+  if (profile_picture_public_id !== undefined) updateData.profilePicturePublicId = profile_picture_public_id || null;
+
+  if (Object.keys(updateData).length === 0) {
+    return res.status(400).json({ success: false, message: "Nothing to update" });
+  }
+
+  const updated = await staffRepo.update(req.user.id, updateData);
+
+  res.json({
+    success: true,
+    message: "Profile updated",
+    data: {
+      id: updated.id,
+      email: updated.email,
+      firstName: updated.firstName,
+      surname: updated.surname,
+      otherNames: updated.otherNames,
+      phoneNumber: updated.phoneNumber,
+      roles: updated.roles,
+      profilePicture: {
+        url: updated.profilePictureUrl,
+        publicId: updated.profilePicturePublicId,
+      },
+    },
+  });
+});
+
+/**
+ * POST /staff/me/password — a person changing their own password.
+ *
+ * The current password is required even though the caller is already
+ * authenticated: it is what stops a walked-up-to, still-logged-in browser
+ * from being turned into a permanent takeover.
+ *
+ * Every session is revoked on success, this one included — same posture as
+ * the reset flow. Someone changing their password because they think it is
+ * compromised expects exactly that, and the caller signs back in with the
+ * new one. (revokeAll has no "except this session" mode; adding one for a
+ * nicety here would widen a security-critical function for no real gain.)
+ */
+const changeMyPassword = asyncHandler(async (req, res) => {
+  const { current_password, new_password } = req.body;
+
+  if (!current_password || !new_password) {
+    return res.status(400).json({
+      success: false,
+      message: "Both your current and new password are required",
+    });
+  }
+  if (String(new_password).length < 8) {
+    return res.status(400).json({
+      success: false,
+      message: "Your new password must be at least 8 characters",
+    });
+  }
+
+  const me = await staffRepo.findById(req.user.id);
+  if (!me) return res.status(404).json({ success: false, message: "User not found" });
+
+  const matches = await staffRepo.comparePassword(me, current_password);
+  if (!matches) {
+    return res.status(401).json({ success: false, message: "Your current password is not correct" });
+  }
+  if (current_password === new_password) {
+    return res.status(400).json({
+      success: false,
+      message: "Your new password must be different from the current one",
+    });
+  }
+
+  // staffRepo.update hashes `password` on the way in — never store the raw one.
+  await staffRepo.update(me.id, {
+    password: new_password,
+    isPasswordSet: true,
+    passwordResetToken: null,
+    passwordResetExpires: null,
+  });
+
+  await sessionService.revokeAll(REALM, me.id, "password_change");
+
+  // Best effort: a "your password changed" message is how a takeover gets
+  // noticed, but failing to send one must not fail the change itself.
+  notifyAndWait("account.password_changed", {
+    user: me,
+    data: { credential: "password", at: new Date() },
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    message: "Password changed — please sign in again",
+    data: { reauthRequired: true },
   });
 });
 
@@ -300,6 +447,8 @@ module.exports = {
   getAllAdmins,
   getAdminById,
   updateAdmin,
+  updateMyProfile,
+  changeMyPassword,
   deleteAdmin,
   resendInvite,
 };

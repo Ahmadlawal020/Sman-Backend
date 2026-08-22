@@ -1,7 +1,7 @@
 const z = require("zod");
 const {
   id, money, quantity, numberLike, requiredString, optionalString, optionalEmail,
-  enumOf, searchTerm, pagination,
+  enumOf, searchTerm, pagination, typeError,
 } = require("./fields");
 const { ROLE_MAP } = require("../config/roleMapping");
 
@@ -198,6 +198,34 @@ const createStaff = z.object({
 });
 const updateStaff = z.object(staffBase).partial();
 const listStaff = pagination.extend({ search: searchTerm });
+
+/**
+ * Self-service profile edit. A whitelist, not staffBase.partial(): schemas
+ * strip unknown keys, so email/roles/suspended/scope cannot reach the handler
+ * at all rather than merely being ignored by it.
+ */
+// Genuinely optional, NOT optionalString: that helper turns an absent field
+// into "", which on a partial update reads as "clear it" — saving just a name
+// change would have wiped the person's phone number and profile picture.
+const selfText = (label, max) =>
+  z.string({ error: typeError(label, "text") }).trim().max(max, `${label} must be ${max} characters or fewer`).optional();
+
+const updateMyProfile = z.object({
+  first_name: requiredString("First name", 100).optional(),
+  surname: requiredString("Surname", 100).optional(),
+  other_names: selfText("Other names", 200),
+  phone_number: selfText("Phone number", 30),
+  profile_picture_url: selfText("Profile picture URL", 1000),
+  profile_picture_public_id: selfText("Profile picture id", 255),
+});
+
+const changeMyPassword = z.object({
+  current_password: requiredString("Current password", 200),
+  new_password: requiredString("New password", 200).refine(
+    (v) => v.length >= 8,
+    "Your new password must be at least 8 characters",
+  ),
+});
 
 // --- bank accounts --------------------------------------------------------
 
@@ -579,7 +607,7 @@ module.exports = {
   listTickets, ticketIdOrCode,
   createStation, updateStation, listStations,
   createInventory, updateInventory, listInventory,
-  createStaff, updateStaff, listStaff,
+  createStaff, updateStaff, listStaff, updateMyProfile, changeMyPassword,
   createBankAccount, updateBankAccount,
   createBankStatement, bankStatementMapping, matchBankLines,
   createVendor, updateVendor,

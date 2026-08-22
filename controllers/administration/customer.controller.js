@@ -49,18 +49,44 @@ const createCustomer = asyncHandler(async (req, res) => {
     });
   }
 
-  if (await customerRepo.existsByPhone(normalizedPhone)) {
+  // Names the customer already holding the number rather than just refusing.
+  // "That phone is taken" leaves the desk guessing whether they are looking at
+  // a duplicate of their own customer or somebody else's; the row itself
+  // answers it, and `existingCustomer` lets the form offer to open them.
+  const phoneOwner = await customerRepo.findByPhone(normalizedPhone);
+  if (phoneOwner) {
     return res.status(409).json({
       success: false,
-      message: `A customer with phone ${normalizedPhone} already exists`,
+      message: `${phoneOwner.name}${phoneOwner.companyName ? ` (${phoneOwner.companyName})` : ""} already uses ${normalizedPhone}`,
+      data: {
+        existingCustomer: {
+          id: phoneOwner.id,
+          name: phoneOwner.name,
+          phone: phoneOwner.phone,
+          email: phoneOwner.email,
+          companyName: phoneOwner.companyName,
+          balance: phoneOwner.balance,
+        },
+      },
     });
   }
 
   if (email && email.trim()) {
-    if (await customerRepo.existsByEmail(email)) {
+    const emailOwner = await customerRepo.findByEmail(email);
+    if (emailOwner) {
       return res.status(409).json({
         success: false,
-        message: `A customer with email ${email} already exists`,
+        message: `${emailOwner.name}${emailOwner.companyName ? ` (${emailOwner.companyName})` : ""} already uses ${email}`,
+        data: {
+          existingCustomer: {
+            id: emailOwner.id,
+            name: emailOwner.name,
+            phone: emailOwner.phone,
+            email: emailOwner.email,
+            companyName: emailOwner.companyName,
+            balance: emailOwner.balance,
+          },
+        },
       });
     }
   }
