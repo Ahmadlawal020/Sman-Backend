@@ -413,7 +413,14 @@ const findFinanceReport = async ({
       .leftJoin(products, eq(orders.productId, products.id))
       .leftJoin(pfis, eq(orders.pfiId, pfis.id))
       .where(whereClause)
-      .orderBy(desc(orders.paymentConfirmedAt), desc(orders.id)),
+      // Newest first, by when the money was actually confirmed. COALESCE'd to
+      // the order date so an unpaid order (null paymentConfirmedAt, included
+      // when the status filter is Unpaid/All) sorts by its own date instead
+      // of being dumped at the very top — Postgres sorts NULLs first on DESC.
+      .orderBy(
+        desc(sql`COALESCE(${orders.paymentConfirmedAt}, ${orders.createdAt})`),
+        desc(orders.id),
+      ),
     // Over the same filtered set as the rows above, so the stat cards can
     // never disagree with what a filter/search actually shows. Joined the
     // same way as the rows query — the search condition above can reference

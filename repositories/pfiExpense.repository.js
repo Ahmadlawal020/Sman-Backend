@@ -34,12 +34,13 @@ const aggregatesFor = async (ids) => {
     revenue: 0,
     movementQty: 0,
     allocationQty: 0,
+    soldQty: 0,
     orderCount: 0,
     expenseCount: 0,
   });
   for (const id of list) out.set(id, blank());
 
-  const [expenses, revenue, movements, allocations] = await Promise.all([
+  const [expenses, revenue, movements, allocations, sold] = await Promise.all([
     // Soft-deleted lines are excluded from every total.
     //
     // `total` is PAID ONLY — that is the entire point of the approval chain.
@@ -87,6 +88,71 @@ const aggregatesFor = async (ids) => {
         )
       GROUP BY a.pfi_id
     `,
+    /**
+     * What has actually been sold off each batch — the figure the stock
+     * report lives on.
+     *
+     * Driven by the ORDER, not by the stock ledgers, because the ledgers are
+     * not guaranteed to have a row: an order assigned to a PFI through the
+     * bulk assign-orders action sets orders.pfi_id directly and writes
+     * neither an allocation nor a movement. Summing only the ledgers made
+     * every such order invisible — a batch with 20 million litres of
+     * confirmed sales read as untouched, full tank, nothing sold.
+     *
+     * An order counts once its payment is confirmed (REVENUE_STATUSES —
+     * exactly the set `revenue` above uses, so litres sold and money earned
+     * can never tell different stories). A merely-placed, unpaid order does
+     * NOT count as sold; it still holds its reservation against
+     * pfis.sold_qty_litres, which is the capacity gate, not this.
+     *
+     * Per (batch, order) the most accurate figure available wins:
+     *   1. the movement — what was actually ticketed out, possibly partial
+     *   2. the allocation — this batch's share of a multi-PFI order
+     *   3. the order quantity — single batch, no ledger row written
+     */
+    client`
+      WITH rev AS (
+        SELECT o.id, o.pfi_id, o.quantity
+        FROM orders o
+        WHERE o.pfi_id = ANY(${list}) AND o.status = ANY(${REVENUE_STATUSES})
+      ),
+      parts AS (
+        SELECT m.pfi_id, SUM(m.qty_litres)::bigint AS qty
+        FROM pfi_movements m
+        JOIN rev ON rev.id = m.order_id
+        WHERE m.pfi_id = ANY(${list})
+        GROUP BY m.pfi_id
+
+        UNION ALL
+
+        SELECT a.pfi_id, SUM(a.quantity)::bigint AS qty
+        FROM order_pfi_allocations a
+        JOIN rev ON rev.id = a.order_id
+        WHERE a.pfi_id = ANY(${list})
+          AND NOT EXISTS (
+            SELECT 1 FROM pfi_movements m
+            WHERE m.order_id = a.order_id AND m.pfi_id = a.pfi_id
+          )
+        GROUP BY a.pfi_id
+
+        UNION ALL
+
+        SELECT rev.pfi_id, SUM(rev.quantity)::bigint AS qty
+        FROM rev
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pfi_movements m
+            WHERE m.order_id = rev.id AND m.pfi_id = rev.pfi_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM order_pfi_allocations a
+            WHERE a.order_id = rev.id AND a.pfi_id = rev.pfi_id
+          )
+        GROUP BY rev.pfi_id
+      )
+      SELECT pfi_id, COALESCE(SUM(qty), 0)::bigint AS qty
+      FROM parts
+      GROUP BY pfi_id
+    `,
   ]);
 
   for (const r of expenses) {
@@ -112,6 +178,10 @@ const aggregatesFor = async (ids) => {
   for (const r of allocations) {
     const row = out.get(Number(r.pfi_id));
     if (row) row.allocationQty = Number(r.qty);
+  }
+  for (const r of sold) {
+    const row = out.get(Number(r.pfi_id));
+    if (row) row.soldQty = Number(r.qty);
   }
 
   return out;
