@@ -89,8 +89,12 @@ const findAll = async ({
     const clauses = [];
     if (locationNames.length) clauses.push(inArray(dailyReports.location, locationNames));
     if (pfiNumbers.length) clauses.push(inArray(dailyReports.pfiNumber, pfiNumbers));
-    // Scoped but assigned nothing reachable: fail closed, same rule as
-    // everywhere else this scope system is enforced.
+    // Whatever the scope says, a person always sees the reports they filed
+    // themselves. Without this, someone scoped to a location that has since
+    // been renamed — or assigned nothing at all, which fell through to the
+    // fail-closed branch below — could not find a single report they had
+    // written, which reads as data loss rather than as a permission.
+    if (scopeUser.id != null) clauses.push(eq(dailyReports.submittedBy, Number(scopeUser.id)));
     conditions.push(clauses.length ? or(...clauses) : sql`false`);
   }
 

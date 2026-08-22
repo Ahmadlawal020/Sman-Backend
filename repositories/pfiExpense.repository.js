@@ -374,21 +374,31 @@ const listExpenses = async ({
   if (onlySubmitterId != null) {
     base.push(client`COALESCE(e.added_by, e.recorded_by) = ${Number(onlySubmitterId)}`);
   }
-  // A location-scoped user sees a line if it's tagged to a PFI they hold
-  // directly, OR to a PFI whose depot/LPG-station is in their scope. A
-  // general expense (pfi_id IS NULL) has no location to check it against, so
-  // it fails closed — invisible to a scoped user, same rule as everywhere
-  // else in this feature.
+  // A location-scoped user sees a line tagged to a PFI they hold directly, or
+  // to a PFI whose depot/LPG-station is in their scope — plus two things this
+  // check must never swallow:
   //
-  // But NOT when onlySubmitterId is set: "my own requests" must show
-  // everything the caller raised, including a general expense or one whose
-  // PFI has since moved outside their scope — the location check exists to
-  // hide OTHER people's out-of-scope rows, not a person's own submissions.
-  if (onlySubmitterId == null && scopeUser && !scopeUser.canViewAllLocations) {
+  //   · a general expense (pfi_id IS NULL). It has no location, so a location
+  //     test can only ever fail on it. Failing closed made every company-wide
+  //     overhead invisible to every scoped user — nobody outside head office
+  //     could see the electricity bill they were looking at.
+  //   · anything the caller raised themselves, wherever it was booked. You can
+  //     always see your own submissions; the location rule is there to hide
+  //     OTHER people's out-of-scope rows.
+  //
+  // Applies whether or not onlySubmitterId is set, so the same guarantee holds
+  // on the all-expenses page as on My Requests.
+  if (scopeUser && !scopeUser.canViewAllLocations) {
     const { depotIds = [], lpgStationIds = [], pfiIds = [] } = scopeUser.scope || {};
-    base.push(client`(e.pfi_id = ANY(${pfiIds}) OR e.pfi_id IN (
-      SELECT id FROM pfis WHERE location_id = ANY(${depotIds}) OR lpg_station_id = ANY(${lpgStationIds})
-    ))`);
+    const selfId = Number(scopeUser.id) || -1;
+    base.push(client`(
+      e.pfi_id IS NULL
+      OR e.pfi_id = ANY(${pfiIds})
+      OR e.pfi_id IN (
+        SELECT id FROM pfis WHERE location_id = ANY(${depotIds}) OR lpg_station_id = ANY(${lpgStationIds})
+      )
+      OR COALESCE(e.added_by, e.recorded_by) = ${selfId}
+    )`);
   }
 
   if (search) {
