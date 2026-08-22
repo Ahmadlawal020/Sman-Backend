@@ -36,6 +36,7 @@ const createDeposit = asyncHandler(async (req, res) => {
     paymentDate,
     paystackDetails,
     lineIds,
+    orderId,
   } = req.body;
 
   const fromStatementLines = Array.isArray(lineIds) && lineIds.length > 0;
@@ -77,6 +78,7 @@ const createDeposit = asyncHandler(async (req, res) => {
       lineIds: lineIds.map(Number),
       staffId: req.user?.id || null,
       description,
+      orderId: orderId ? Number(orderId) : null,
     });
 
     if (!result.success) {
@@ -102,6 +104,10 @@ const createDeposit = asyncHandler(async (req, res) => {
     senderName: depositorName || null,
     paidAt: paymentDate || new Date().toISOString(),
     channel: "manual_bank_transfer",
+    // No statement line to stamp matchedOrderId on for a typed-amount
+    // deposit — this is the only trail linking it back to the order it was
+    // recorded to confirm.
+    ...(orderId ? { orderId: Number(orderId) } : {}),
   };
 
   const depositDescription =

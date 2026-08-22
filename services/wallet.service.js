@@ -164,7 +164,7 @@ const credit = async (
  * Amounts are never trusted from the client — each deposit's amount comes
  * from the claimed line itself.
  */
-const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, staffId, description }) => {
+const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, staffId, description, orderId = null }) => {
   if (!Array.isArray(lineIds) || !lineIds.length) {
     return { success: false, message: "No statement lines were selected" };
   }
@@ -172,7 +172,15 @@ const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, st
   return db.transaction(async (tx) => {
     const claimed = await tx
       .update(bankStatementLines)
-      .set({ status: "MATCHED", matchedBy: staffId ?? null, matchedAt: new Date() })
+      .set({
+        status: "MATCHED",
+        matchedBy: staffId ?? null,
+        matchedAt: new Date(),
+        // Stamped here rather than left to FIFO to work out later — this
+        // line is being claimed FOR this order, right now, not just added
+        // to the wallet in general.
+        ...(orderId ? { matchedOrderId: orderId } : {}),
+      })
       .where(
         and(
           inArray(bankStatementLines.id, lineIds),
@@ -214,6 +222,7 @@ const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, st
             paidAt: line.txnDate,
             statementLineIds: [line.id],
             statementLineCount: 1,
+            ...(orderId ? { orderId } : {}),
           },
           recordedBy: staffId ?? null,
         },

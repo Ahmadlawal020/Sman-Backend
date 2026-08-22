@@ -38,6 +38,13 @@ const createDeposit = z.object({
   // dropped it from every request; the statement-line picker in the UI
   // never actually reached the controller's lineIds branch.
   lineIds: z.array(id("Statement line")).optional(),
+  // Set when this deposit is being recorded to confirm payment on a
+  // specific pending order (the Pending Orders → Confirm Payment flow) —
+  // stamps bank_statement_lines.matchedOrderId (when claiming lines) and
+  // rides along in paystackDetails either way, so the funding trail names
+  // the order explicitly rather than relying on FIFO timing to land on the
+  // right one. Absent for an ordinary top-up with no order in mind.
+  orderId: id("Order").optional(),
 });
 
 const syncPaystack = z.object({
