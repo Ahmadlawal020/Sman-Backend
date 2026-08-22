@@ -14,6 +14,7 @@ const getFinanceReport = asyncHandler(async (req, res) => {
     dateTo: req.query.dateTo,
     depotId: req.query.depotId,
     pfiId: req.query.pfiId,
+    productId: req.query.productId,
     scopeUser: req.user,
   });
 

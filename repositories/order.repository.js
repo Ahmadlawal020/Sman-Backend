@@ -347,6 +347,7 @@ const findFinanceReport = async ({
   dateTo,
   depotId,
   pfiId,
+  productId,
   scopeUser,
 } = {}) => {
   const conditions = [];
@@ -357,14 +358,30 @@ const findFinanceReport = async ({
   }
   if (depotId) conditions.push(eq(orders.depotId, Number(depotId)));
   if (pfiId) conditions.push(eq(orders.pfiId, Number(pfiId)));
+  if (productId) conditions.push(eq(orders.productId, Number(productId)));
   if (search) {
     const possibleId = parseOrderReference(search);
     const term = `%${search}%`;
-    conditions.push(
-      possibleId
-        ? or(ilike(orders.orderNumber, term), eq(orders.id, possibleId), ilike(customers.name, term), ilike(customers.phone, term))
-        : or(ilike(orders.orderNumber, term), ilike(customers.name, term), ilike(customers.phone, term))
+    // Reference, customer, company (either side — an order can carry its
+    // own companyName distinct from the customer's), location, PFI, and the
+    // payment reference on whichever deposit(s) actually funded this order
+    // — the same field the finance report's own funding sub-rows show, so a
+    // teller reference typed here finds the order it paid for.
+    const textMatch = or(
+      ilike(orders.orderNumber, term),
+      ilike(customers.name, term),
+      ilike(customers.phone, term),
+      ilike(orders.companyName, term),
+      ilike(customers.companyName, term),
+      ilike(depots.name, term),
+      ilike(pfis.pfiNumber, term),
+      sql`EXISTS (
+        SELECT 1 FROM order_deposit_allocations oda
+        JOIN deposits d ON d.id = oda.deposit_id
+        WHERE oda.order_id = ${orders.id} AND d.reference ILIKE ${term}
+      )`,
     );
+    conditions.push(possibleId ? or(eq(orders.id, possibleId), textMatch) : textMatch);
   }
   // A bare "2026-08-20" from a date input parses as that day's UTC midnight —
   // compared as-is, dateTo would exclude every order confirmed later that
@@ -398,7 +415,10 @@ const findFinanceReport = async ({
       .where(whereClause)
       .orderBy(desc(orders.paymentConfirmedAt), desc(orders.id)),
     // Over the same filtered set as the rows above, so the stat cards can
-    // never disagree with what a filter/search actually shows.
+    // never disagree with what a filter/search actually shows. Joined the
+    // same way as the rows query — the search condition above can reference
+    // depots/pfis columns, so every query sharing whereClause needs them in
+    // scope too, or a search hits a missing-FROM-clause error.
     db
       .select({
         total: count(),
@@ -407,12 +427,16 @@ const findFinanceReport = async ({
       })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(depots, eq(orders.depotId, depots.id))
+      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
       .where(whereClause),
     db
       .select({ trackedCount: sql`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .innerJoin(orderDepositAllocations, eq(orders.id, orderDepositAllocations.orderId))
       .leftJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(depots, eq(orders.depotId, depots.id))
+      .leftJoin(pfis, eq(orders.pfiId, pfis.id))
       .where(whereClause),
   ]);
 

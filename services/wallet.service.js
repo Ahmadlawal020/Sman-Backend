@@ -4,6 +4,7 @@ const {
   customers, deposits, walletHolds, orderDepositAllocations, bankStatementLines,
 } = require("../db/schema");
 const customerRepo = require("../repositories/customer.repository");
+const bankAccountRepo = require("../repositories/bankAccount.repository");
 
 // Every operation here runs inside a single database transaction, and every
 // balance change goes through customerRepo.creditBalance/debitBalance — an
@@ -169,6 +170,13 @@ const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, st
     return { success: false, message: "No statement lines were selected" };
   }
 
+  // Only bankAccountId (the FK) was ever stored on the deposit before —
+  // never the account's own name/number, which is why "paid into" read
+  // blank everywhere downstream (the finance report, this deposit's own
+  // detail view) despite the account being right there in the claim query.
+  // Looked up once, outside the per-line loop below.
+  const bankAccount = await bankAccountRepo.findById(bankAccountId);
+
   return db.transaction(async (tx) => {
     const claimed = await tx
       .update(bankStatementLines)
@@ -218,6 +226,9 @@ const creditFromStatementLines = async ({ customerId, bankAccountId, lineIds, st
             paymentMethod: "manual_bank_transfer",
             channel: "manual_bank_transfer",
             bankAccountId,
+            bankName: bankAccount?.bankName || null,
+            accountName: bankAccount?.accountName || null,
+            accountNumber: bankAccount?.accountNumber || null,
             senderName: line.depositor || null,
             paidAt: line.txnDate,
             statementLineIds: [line.id],
